@@ -48,10 +48,8 @@ import * as unread from "./unread.ts";
 import type {FullUnreadCountsData, StreamCountInfo} from "./unread.ts";
 import {user_settings} from "./user_settings.ts";
 
-let pending_stream_list_rerender = false;
 let zoomed_in = false;
 let update_inbox_channel_view_callback: (channel_id: number) => void;
-let show_channel_feed_callback: (stream_id: number, trigger: string) => void;
 
 export function set_update_inbox_channel_view_callback(value: (channel_id: number) => void): void {
     update_inbox_channel_view_callback = value;
@@ -157,31 +155,22 @@ export function update_streams_sidebar_for_messages(messages: Message[]): void {
     }
 }
 
-function zoom_in(stream_id: number): void {
-    if (narrow_state.stream_id() !== stream_id) {
-        show_channel_feed_callback(stream_id, "sidebar");
-    }
-
+export let show_channel_topics_panel = function (stream_id: number): void {
     zoomed_in = true;
     pm_list.zoom_out();
     popovers.hide_all();
-    pm_list.close();
     zoom_in_topics(stream_id);
-    topic_list.zoom_in(get_stream_li(stream_id)!, stream_id);
-    $("#left-sidebar").addClass("zoom-in");
-    $("#left-sidebar").addClass("zoom-in-topics");
-    $("#left-sidebar-modal").addClass("zoom-in-topics");
-}
+    topic_list.zoom_in(get_stream_li(stream_id, true)!, stream_id);
+    ui_util.enable_left_sidebar_search();
+    $("body, #left-sidebar, #left-sidebar-modal").addClass("channel-topics-panel-open");
+};
 
-export function set_pending_stream_list_rerender(value: boolean): void {
-    pending_stream_list_rerender = value;
+export function rewire_show_channel_topics_panel(value: typeof show_channel_topics_panel): void {
+    show_channel_topics_panel = value;
 }
 
 export function zoom_out(): void {
     zoomed_in = false;
-    if (pending_stream_list_rerender) {
-        update_streams_sidebar(true);
-    }
     popovers.hide_all();
     topic_list.zoom_out();
     zoom_out_topics();
@@ -449,7 +438,9 @@ export function build_stream_list(force_rerender: boolean): void {
         $list.append($li);
     }
 
-    clear_topics();
+    if (!zoomed_in || force_rerender) {
+        clear_topics();
+    }
     $("#stream_filters").empty();
     const can_create_streams =
         settings_data.user_can_create_private_streams() ||
@@ -687,8 +678,7 @@ export function rewire_set_sections_states(value: typeof set_sections_states): v
     set_sections_states = value;
 }
 
-export function get_stream_li(stream_id: number, override_zoomed_in?: boolean): JQuery | undefined {
-    const for_zoomed = override_zoomed_in ?? zoomed_in;
+export function get_stream_li(stream_id: number, for_zoomed = false): JQuery | undefined {
     if (for_zoomed) {
         assert(zoomed_in_row !== undefined);
         if (zoomed_in_row.sub.stream_id !== stream_id) {
@@ -813,6 +803,7 @@ export function zoom_in_topics(stream_id: number): void {
 }
 
 export function zoom_out_topics(): void {
+    $("body, #left-sidebar, #left-sidebar-modal").removeClass("channel-topics-panel-open");
     $("#left-sidebar").removeClass("zoom-in");
     $("#left-sidebar").removeClass("zoom-in-topics");
     $("#left-sidebar-modal").removeClass("zoom-in-topics");
@@ -916,22 +907,12 @@ function set_stream_unread_count(
         stream_has_any_unmuted_unread_mention,
         stream_has_only_muted_unread_mentions,
     );
+    if (zoomed_in_row?.sub.stream_id === stream_id) {
+        zoomed_in_row.update_unread_count();
+    }
 }
 
 export function update_streams_sidebar(force_rerender = false): void {
-    if (!force_rerender && is_zoomed_in()) {
-        // We do our best to update topics that are displayed
-        // in case user zoomed in. Streams list will be updated,
-        // once the user zooms out. This avoids user being zoomed out
-        // when a new message causes streams to re-arrange.
-        const filter = narrow_state.filter();
-        assert(filter !== undefined);
-        update_stream_sidebar_for_narrow(filter);
-        set_pending_stream_list_rerender(true);
-        return;
-    }
-    set_pending_stream_list_rerender(false);
-
     build_stream_list(force_rerender);
 
     const filter = narrow_state.filter();
@@ -1221,6 +1202,9 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
     // by the search term. Otherwise we'll only show the topic list for
     // the current narrow.
     const rerender_topics_for_search = ui_util.is_topic_search();
+    if (rerender_topics_for_search && zoomed_in) {
+        clear_topics();
+    }
     if (rerender_topics_for_search) {
         update_stream_sidebar_for_topic_search();
     }
@@ -1239,9 +1223,7 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
         return undefined;
     }
 
-    if (!info.topic_selected && !zoomed_in) {
-        $stream_li.addClass("active-filter");
-    }
+    $stream_li.addClass("active-filter");
 
     // Always add 'stream-expanded' class irrespective of whether
     // topic is selected or not. This is required for proper styling
@@ -1257,6 +1239,9 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
     update_inbox_channel_view_callback(stream_id);
     if (!rerender_topics_for_search) {
         topic_list.rebuild_left_sidebar($stream_li, stream_id);
+        if (!zoomed_in) {
+            show_channel_topics_panel(stream_id);
+        }
     }
     topic_list.topic_state_typeahead?.lookup(true);
 
@@ -1285,17 +1270,11 @@ export function handle_narrow_activated(
 ): void {
     const previously_expanded_stream_id = topic_list.active_stream_id();
 
-    // Zoom out, if needed, so that get_stream_li returns the correct
-    // value when calling update_stream_sidebar_for_narrow.
-    if (!change_hash && is_zoomed_in() && !show_more_topics) {
-        zoom_out();
-    }
-
     const $stream_li = update_stream_sidebar_for_narrow(filter);
     if ($stream_li && !change_hash && !is_zoomed_in() && show_more_topics) {
         const info = get_sidebar_stream_topic_info(filter);
         assert(info.stream_id !== undefined);
-        zoom_in(info.stream_id);
+        show_channel_topics_panel(info.stream_id);
     }
 
     // Do not auto scroll when switching topics in an already expanded channel.
@@ -1318,7 +1297,6 @@ export function initialize({
     update_inbox_channel_view: (channel_id: number) => void;
 }): void {
     update_inbox_channel_view_callback = update_inbox_channel_view;
-    show_channel_feed_callback = show_channel_feed;
     restore_collapsed_sections_state();
     create_initial_sidebar_rows();
 
@@ -1334,9 +1312,12 @@ export function initialize({
 
     function on_show_more_topics(e: JQuery.ClickEvent | JQuery.KeyDownEvent): void {
         const stream_id = stream_id_for_elt($(e.target).parents("li.narrow-filter"));
-        zoom_in(stream_id);
+        if (narrow_state.stream_id() !== stream_id) {
+            show_channel_feed(stream_id, "sidebar");
+        }
+        show_channel_topics_panel(stream_id);
         // We define the focus behavior for the topic list search box
-        // outside of the `zoom_in` method, since we want the focus
+        // outside of `show_channel_topics_panel`, since we want the focus
         // to only happen when the user clicks on the "SHOW ALL TOPICS"
         // button, and not interfere with the narrow change handling.
         $("#topic_filter_query").trigger("focus");
@@ -1366,7 +1347,7 @@ export function initialize({
         }
     });
 
-    $("body").on("click", ".zoom-in-topics .left-sidebar-modal-close-area", (e) => {
+    $("body").on("click", ".channel-topics-panel-open .left-sidebar-modal-close-area", (e) => {
         zoom_out();
         browser_history.update_current_history_state_data({show_more_topics: false});
 
@@ -1374,7 +1355,7 @@ export function initialize({
         e.stopPropagation();
     });
 
-    $("body").on("keydown", ".zoom-in-topics .left-sidebar-modal-close-area", (e) => {
+    $("body").on("keydown", ".channel-topics-panel-open .left-sidebar-modal-close-area", (e) => {
         if (!keydown_util.is_enter_event(e)) {
             return;
         }

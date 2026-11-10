@@ -487,18 +487,18 @@
     /* Box shadow for overlays across the web app */
     --box-shadow-overlay: none;
 
-    /* Shared sidebar typography and effects values. */
+    /* Sidebar typography and effects values. */
     --font-weight-sidebar-heading: 600;
-    --font-weight-sidebar-action-heading: 370;
-    --font-variant-sidebar-action-heading: all-small-caps;
-    --font-feature-settings-sidebar-action-heading: "c2sc", "smcp";
-    /* 17px at 16px/1em = 1.0625em */
-    --font-size-sidebar-action-heading: 1.0625em;
-    --text-transform-sidebar-action-heading: uppercase;
-    --letter-spacing-sidebar-heading: 0.0469em;
-    --opacity-sidebar-heading: 0.7;
-    --opacity-sidebar-heading-icon: 0.5;
-    --opacity-sidebar-heading-hover: 0.9;
+    --font-weight-sidebar-action-heading: 600;
+    --font-variant-sidebar-action-heading: normal;
+    --font-feature-settings-sidebar-action-heading: normal;
+    /* 15px at 16px/1em */
+    --font-size-sidebar-action-heading: 0.9375em;
+    --text-transform-sidebar-action-heading: none;
+    --letter-spacing-sidebar-heading: 0;
+    --opacity-sidebar-heading: 0.6;
+    --opacity-sidebar-heading-icon: 0.45;
+    --opacity-sidebar-heading-hover: 0.85;
     --opacity-left-sidebar-muted: 0.55;
     --opacity-left-sidebar-muted-hover: 0.75;
     --opacity-unread-mention-info: 0.5;
@@ -887,7 +887,9 @@
         hsl(0deg 0% 0%),
         hsl(0deg 0% 100%)
     );
-    --color-background: light-dark(hsl(0deg 0% 94%), hsl(0deg 0% 11%));
+    /* Soft, slightly warm off-white background for a modern minimal feel.
+       A very subtle blue-grey tint replaces the flat neutral grey. */
+    --color-background: light-dark(hsl(218deg 34% 98%), hsl(220deg 24% 13%));
     --color-background-widget-input: light-dark(
         hsl(0deg 0% 100%),
         hsl(225deg 6% 10%)
@@ -896,7 +898,7 @@
         hsl(0deg 0% 100%),
         hsl(0deg 0% 0% / 20%)
     );
-    --color-background-navbar: light-dark(hsl(0deg 0% 97%), hsl(0deg 0% 13%));
+    --color-background-navbar: light-dark(hsl(218deg 34% 99%), hsl(220deg 24% 14%));
     --color-text-sidebar-row: light-dark(
         hsl(0deg 0% 20%),
         hsl(0deg 0% 100% / 85%)
@@ -952,6 +954,10 @@
     --color-left-sidebar-direct-messages-bottom-divider: light-dark(
         hsl(0deg 0% 0% / 15%),
         hsl(0deg 0% 100% / 15%)
+    );
+    --color-left-sidebar-direct-messages-bottom-divider-shadow: light-dark(
+        hsl(0deg 0% 0% / 10%),
+        hsl(0deg 0% 100% / 10%)
     );
     --color-left-sidebar-inner-box-shadow: light-dark(
         hsl(0deg 0% 0% / 20%),
@@ -1036,7 +1042,9 @@
         hsl(0deg 0% 0% / 19%),
         hsl(0deg 0% 100% / 19%)
     );
-    --color-outline-focus: hsl(215deg 47% 50%);
+    /* A softer, slightly warmer focus ring that reads as contemporary
+       rather than a hard blue outline. */
+    --color-outline-focus: hsl(245deg 65% 62%);
     --focus-ring-width-in-views: 1.5px;
     /* Standard focus ring stroke; used by `:focus-visible`
        outlines on inbox rows, recent-view rows, action-button
@@ -1190,7 +1198,8 @@
         hsl(0deg 0% 0% / 10%),
         hsl(0deg 0% 100% / 10%)
     );
-    --color-border-sidebar: light-dark(hsl(0deg 0% 87%), hsl(0deg 0% 0% / 20%));
+    /* Softer, low-opacity sidebar borders for a less boxy feel. */
+    --color-border-sidebar: light-dark(hsl(218deg 28% 90%), hsl(220deg 24% 20%));
     --color-text-sidebar-base: light-dark(hsl(0deg 0% 0%), hsl(0deg 0% 100%));
     --color-border-sidebar-subheader: light-dark(
         hsl(0deg 0% 0% / 15%),
@@ -1558,7 +1567,7 @@
     );
 
     /* Text colors */
-    --color-text-default: light-dark(hsl(0deg 0% 20%), hsl(0deg 0% 87%));
+    --color-text-default: light-dark(hsl(220deg 25% 18%), hsl(218deg 30% 90%));
     /* Unlike the light theme, the dark theme renders message
        text in the default color. */
     --color-text-message-default: light-dark(
@@ -2466,11 +2475,11 @@
         var(--color-background-zulip-button)
     );
     --color-border-zulip-button: light-dark(
-        hsl(0deg 0% 80%),
+        hsl(218deg 24% 80%),
         hsl(0deg 0% 0% / 60%)
     );
     --color-border-zulip-button-interactive: light-dark(
-        hsl(0deg 0% 60%),
+        hsl(218deg 22% 58%),
         var(--color-border-zulip-button)
     );
 

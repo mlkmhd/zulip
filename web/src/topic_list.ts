@@ -844,12 +844,14 @@ export function initialize({
         previous_search_term = search_term;
         const topic_filter_active = is_topic_filter_active();
 
-        const left_sidebar_scroll_container = scroll_util.get_left_sidebar_scroll_container();
+        const topic_panel_scroll_container = scroll_util.get_scroll_element(
+            $("#more-topics-modal .topic-list-scroll-container"),
+        );
         if (search_term === "") {
             requestAnimationFrame(() => {
                 zoomed_in_widget!.build();
                 // Restore previous scroll position.
-                left_sidebar_scroll_container.scrollTop(pre_search_scroll_position);
+                topic_panel_scroll_container.scrollTop(pre_search_scroll_position);
                 reset_topic_list_cursor({show_highlight: topic_filter_active});
             });
 
@@ -868,12 +870,12 @@ export function initialize({
         } else {
             if (is_previous_search_term_empty) {
                 // Store original scroll position to be restored later.
-                pre_search_scroll_position = left_sidebar_scroll_container.scrollTop()!;
+                pre_search_scroll_position = topic_panel_scroll_container.scrollTop()!;
             }
             requestAnimationFrame(() => {
                 zoomed_in_widget!.build();
                 // Always scroll to top when there is a search term present.
-                left_sidebar_scroll_container.scrollTop(0);
+                topic_panel_scroll_container.scrollTop(0);
                 reset_topic_list_cursor({show_highlight: topic_filter_active});
             });
         }
