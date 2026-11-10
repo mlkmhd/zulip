@@ -72,7 +72,7 @@ class UserBaseSettings(models.Model):
     # Values for it are URL suffix after `#`.
     web_home_view = models.TextField(default="inbox")
     web_escape_navigates_to_home_view = models.BooleanField(default=True)
-    fluid_layout_width = models.BooleanField(default=False)
+    fluid_layout_width = models.BooleanField(default=True)
     high_contrast_mode = models.BooleanField(default=False)
     translate_emoticons = models.BooleanField(default=False)
     display_emoji_reaction_users = models.BooleanField(default=True)

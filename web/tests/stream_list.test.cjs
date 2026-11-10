@@ -392,6 +392,10 @@ test_ui("narrowing", ({override_rewire}) => {
     override_rewire(left_sidebar_navigation_area, "update_dom_with_unread_counts", noop);
     override_rewire(stream_list, "set_sections_states", noop);
 
+    const opened_channels = [];
+    override_rewire(stream_list, "show_channel_topics_panel", (stream_id) => {
+        opened_channels.push(stream_id);
+    });
     initialize_stream_data();
     assert.ok(!$("<devel-sidebar-row-stub>").hasClass("active-filter"));
 
@@ -405,7 +409,7 @@ test_ui("narrowing", ({override_rewire}) => {
     ]);
     stream_list.handle_narrow_activated(filter);
     assert.ok(!$("ul.filters li").hasClass("active-filter"));
-    assert.ok(!$("<cars-sidebar-row-stub>").hasClass("active-filter")); // false because of topic
+    assert.ok($("<cars-sidebar-row-stub>").hasClass("active-filter"));
 
     filter = new Filter([{operator: "stream", operand: carSub.stream_id.toString()}]);
     stream_list.handle_narrow_activated(filter);
@@ -424,6 +428,7 @@ test_ui("narrowing", ({override_rewire}) => {
     assert.ok(!$("ul#stream_filters li").hasClass("active-filter"));
     assert.ok(!$("ul#stream_filters li").hasClass("stream-expanded"));
     assert.ok(topics_closed);
+    assert.deepEqual(opened_channels, [develSub.stream_id, carSub.stream_id, carSub.stream_id]);
 });
 
 test_ui("sort_streams", ({override_rewire, mock_template}) => {
