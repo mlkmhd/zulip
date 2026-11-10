@@ -191,7 +191,6 @@ test("no_subscribed_streams", () => {
                 id: "pinned-streams",
                 folder_id: null,
                 inactive_streams: [],
-                muted_streams: [],
                 section_title: "translated: PINNED CHANNELS",
                 default_visible_streams: [],
             },
@@ -199,7 +198,6 @@ test("no_subscribed_streams", () => {
                 id: "normal-streams",
                 folder_id: null,
                 inactive_streams: [],
-                muted_streams: [],
                 section_title: "translated: CHANNELS",
                 default_visible_streams: [],
             },
@@ -215,26 +213,26 @@ test("basics", ({override}) => {
     let sorted_sections = sort_groups("").sections;
     const pinned = sorted_sections[0];
     assert.deepEqual(pinned.id, "pinned-streams");
-    assert.deepEqual(pinned.default_visible_streams, [scalene.stream_id]);
-    assert.deepEqual(pinned.muted_streams, [muted_pinned.stream_id]);
+    assert.deepEqual(pinned.default_visible_streams, [muted_pinned.stream_id, scalene.stream_id]);
     const normal = sorted_sections[1];
     assert.deepEqual(normal.id, "normal-streams");
     assert.deepEqual(normal.default_visible_streams, [
         clarinet.stream_id,
         fast_tortoise.stream_id,
+        muted.stream_id,
+        muted_active.stream_id,
         stream_hyphen_underscore_slash_colon.stream_id,
     ]);
-    assert.deepEqual(normal.muted_streams, [muted.stream_id, muted_active.stream_id]);
     assert.deepEqual(normal.inactive_streams, [inactive.stream_id, pneumonia.stream_id]);
 
     assert.deepEqual(stream_list_sort.get_stream_ids(), [
-        scalene.stream_id,
         muted_pinned.stream_id,
+        scalene.stream_id,
         clarinet.stream_id,
         fast_tortoise.stream_id,
-        stream_hyphen_underscore_slash_colon.stream_id,
         muted.stream_id,
         muted_active.stream_id,
+        stream_hyphen_underscore_slash_colon.stream_id,
         inactive.stream_id,
         pneumonia.stream_id,
     ]);
@@ -331,7 +329,10 @@ test("basics", ({override}) => {
     sorted_sections = sort_groups("pinned").sections;
     assert.deepEqual(sorted_sections.length, 2);
     assert.deepEqual(sorted_sections[0].id, "pinned-streams");
-    assert.deepEqual(sorted_sections[0].default_visible_streams, [scalene.stream_id]);
+    assert.deepEqual(sorted_sections[0].default_visible_streams, [
+        muted_pinned.stream_id,
+        scalene.stream_id,
+    ]);
     assert.deepEqual(sorted_sections[0].inactive_streams, []);
     assert.deepEqual(sorted_sections[1].id, "normal-streams");
     assert.deepEqual(sorted_sections[1].inactive_streams, []);
@@ -342,46 +343,45 @@ test("basics", ({override}) => {
     assert.deepEqual(sorted_sections.length, 5);
     assert.deepEqual(sorted_sections[0].id, "pinned-streams");
     assert.deepEqual(sorted_sections[0].section_title, "translated: PINNED CHANNELS");
-    assert.deepEqual(sorted_sections[1].id, backend_folder.id.toString());
-    assert.deepEqual(sorted_sections[1].section_title, "BACKEND");
-    assert.deepEqual(sorted_sections[2].id, frontend_folder.id.toString());
-    assert.deepEqual(sorted_sections[2].section_title, "FRONTEND");
-    assert.deepEqual(sorted_sections[3].id, "normal-streams");
-    assert.deepEqual(sorted_sections[3].section_title, "translated: OTHER");
-    assert.deepEqual(sorted_sections[4].id, expect_demoted_folder.id.toString());
-    assert.deepEqual(sorted_sections[4].section_title, "EMPTY");
+    assert.deepEqual(sorted_sections[2].id, backend_folder.id.toString());
+    assert.deepEqual(sorted_sections[2].section_title, "BACKEND");
+    assert.deepEqual(sorted_sections[3].id, frontend_folder.id.toString());
+    assert.deepEqual(sorted_sections[3].section_title, "FRONTEND");
+    assert.deepEqual(sorted_sections[4].id, "normal-streams");
+    assert.deepEqual(sorted_sections[4].section_title, "translated: OTHER");
+    assert.deepEqual(sorted_sections[1].id, expect_demoted_folder.id.toString());
+    assert.deepEqual(sorted_sections[1].section_title, "EMPTY");
 
     // If both `pin_to_top` is true and folder_id is set, as in
     // the channel `scalene`, then the channel ends up in the pinned
     // section and `folder_id` is ignored.
-    assert.deepEqual(sorted_sections[0].default_visible_streams, [scalene.stream_id]);
-    assert.deepEqual(sorted_sections[0].muted_streams, [muted_pinned.stream_id]);
+    assert.deepEqual(sorted_sections[0].default_visible_streams, [
+        muted_pinned.stream_id,
+        scalene.stream_id,
+    ]);
     assert.deepEqual(sorted_sections[0].inactive_streams, []);
-    assert.deepEqual(sorted_sections[1].default_visible_streams, [
+    assert.deepEqual(sorted_sections[2].default_visible_streams, [
         stream_hyphen_underscore_slash_colon.stream_id,
     ]);
-    assert.deepEqual(sorted_sections[1].muted_streams, []);
-    assert.deepEqual(sorted_sections[1].inactive_streams, []);
-    assert.deepEqual(sorted_sections[2].default_visible_streams, [fast_tortoise.stream_id]);
-    assert.deepEqual(sorted_sections[2].muted_streams, [muted_active.stream_id]);
-    assert.deepEqual(sorted_sections[2].inactive_streams, [pneumonia.stream_id]);
-    assert.deepEqual(sorted_sections[3].default_visible_streams, [clarinet.stream_id]);
-    assert.deepEqual(sorted_sections[3].muted_streams, []);
-    assert.deepEqual(sorted_sections[3].inactive_streams, []);
-    assert.deepEqual(sorted_sections[4].default_visible_streams, []);
-    assert.deepEqual(sorted_sections[4].muted_streams, [muted.stream_id]);
-    assert.deepEqual(sorted_sections[4].inactive_streams, [inactive.stream_id]);
+    assert.deepEqual(sorted_sections[2].inactive_streams, []);
+    assert.deepEqual(sorted_sections[3].default_visible_streams, [
+        fast_tortoise.stream_id,
+        muted_active.stream_id,
+    ]);
+    assert.deepEqual(sorted_sections[3].inactive_streams, [pneumonia.stream_id]);
+    assert.deepEqual(sorted_sections[4].default_visible_streams, [clarinet.stream_id]);
+    assert.deepEqual(sorted_sections[4].inactive_streams, []);
+    assert.deepEqual(sorted_sections[1].default_visible_streams, [muted.stream_id]);
+    assert.deepEqual(sorted_sections[1].inactive_streams, [inactive.stream_id]);
 
     // The first and last sections are invariant. The intermediate sections
     // are arranged by the `order` field in the channel folder object.
     assert.deepEqual(stream_list_sort.section_ids(), [
         "pinned-streams",
+        expect_demoted_folder.id.toString(), // order 1
         backend_folder.id.toString(), // order 2
         frontend_folder.id.toString(), // order 3
         "normal-streams",
-        // This folder is at the bottom because no active + unmuted streams,
-        // despite being order 1.
-        expect_demoted_folder.id.toString(),
     ]);
 
     // Only show other channels
@@ -392,7 +392,6 @@ test("basics", ({override}) => {
     assert.deepEqual(sorted_sections[0].inactive_streams, []);
     assert.deepEqual(sorted_sections[1].section_title, "translated: OTHER");
     assert.deepEqual(sorted_sections[1].default_visible_streams, [clarinet.stream_id]);
-    assert.deepEqual(sorted_sections[1].muted_streams, []);
     assert.deepEqual(sorted_sections[1].inactive_streams, []);
 });
 
@@ -442,15 +441,21 @@ test("current_section_id_for_stream", ({override}) => {
             folder_id: null,
             id: "pinned-streams",
             inactive_streams: [],
-            muted_streams: [8],
             section_title: "translated: PINNED CHANNELS",
-            default_visible_streams: [1],
+            default_visible_streams: [8, 1],
+        },
+        {
+            folder_id: 3,
+            id: "3",
+            inactive_streams: [11],
+            order: 1,
+            section_title: "EMPTY",
+            default_visible_streams: [10],
         },
         {
             folder_id: 2,
             id: "2",
             inactive_streams: [],
-            muted_streams: [],
             order: 2,
             section_title: "BACKEND",
             default_visible_streams: [6],
@@ -459,27 +464,16 @@ test("current_section_id_for_stream", ({override}) => {
             folder_id: 1,
             id: "1",
             inactive_streams: [3],
-            muted_streams: [7],
             order: 3,
             section_title: "FRONTEND",
-            default_visible_streams: [2],
+            default_visible_streams: [2, 7],
         },
         {
             folder_id: null,
             id: "normal-streams",
             inactive_streams: [],
-            muted_streams: [],
             section_title: "translated: OTHER",
             default_visible_streams: [4],
-        },
-        {
-            folder_id: 3,
-            id: "3",
-            inactive_streams: [11],
-            muted_streams: [10],
-            order: 1,
-            section_title: "EMPTY",
-            default_visible_streams: [],
         },
     ]);
 });

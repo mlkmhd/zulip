@@ -3,12 +3,16 @@ import _ from "lodash";
 import * as z from "zod/mini";
 
 import * as blueslip from "./blueslip.ts";
+import * as channel from "./channel.ts";
 import type {Filter} from "./filter.ts";
 import {$t} from "./i18n.ts";
 import * as keydown_util from "./keydown_util.ts";
 import {ListCursor} from "./list_cursor.ts";
 import {localstorage} from "./localstorage.ts";
 import * as mouse_drag from "./mouse_drag.ts";
+import * as muted_users from "./muted_users.ts";
+import * as people from "./people.ts";
+import * as pm_conversations from "./pm_conversations.ts";
 import * as pm_list_data from "./pm_list_data.ts";
 import type {DisplayObject} from "./pm_list_data.ts";
 import * as pm_list_dom from "./pm_list_dom.ts";
@@ -119,13 +123,112 @@ export function set_temporarily_collapsed(value: boolean): void {
     temporarily_collapsed = value;
 }
 
+const preview_response_schema = z.object({
+    messages: z.array(z.object({id: z.number(), content: z.string()})),
+});
+
+type DMPreview = {
+    conversation_version: number;
+    pending: boolean;
+    message_id?: number | undefined;
+    text?: string | undefined;
+};
+
+const dm_previews = new Map<string, DMPreview>();
+
+export function invalidate_message_previews(message_ids: ReadonlySet<number>): boolean {
+    if (message_ids.size === 0) {
+        return false;
+    }
+
+    let changed = false;
+    for (const [key, preview] of dm_previews) {
+        if (
+            preview.pending ||
+            (preview.message_id !== undefined && message_ids.has(preview.message_id))
+        ) {
+            dm_previews.delete(key);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+function conversation_node(conversation: DisplayObject): vdom.Node<PMNode> {
+    const key = conversation.user_ids_string;
+    const sender_id = Number(key);
+    const version = pm_conversations.recent.recent_message_ids.get(key)?.max_message_id;
+    if (
+        zoomed ||
+        conversation.is_group ||
+        people.is_my_user_id(sender_id) ||
+        muted_users.is_user_muted(sender_id) ||
+        version === undefined
+    ) {
+        return pm_list_dom.keyed_pm_li(conversation);
+    }
+
+    const cached = dm_previews.get(key);
+    if (cached?.conversation_version === version) {
+        return pm_list_dom.keyed_pm_li({...conversation, preview: cached.text});
+    }
+
+    // Keep the previous received message visible while checking for a newer one.
+    const preview: DMPreview = {...cached, conversation_version: version, pending: true};
+    dm_previews.set(key, preview);
+    void channel.get({
+        url: "/json/messages",
+        data: {
+            narrow: JSON.stringify([
+                {operator: "dm", operand: [sender_id]},
+                {operator: "sender", operand: sender_id},
+            ]),
+            anchor: "newest",
+            num_before: 1,
+            num_after: 0,
+        },
+        success(raw_data) {
+            if (dm_previews.get(key) !== preview) {
+                return;
+            }
+
+            const {messages} = preview_response_schema.parse(raw_data);
+            const message = messages[0];
+            preview.pending = false;
+            preview.message_id = message?.id;
+            preview.text = undefined;
+            if (message !== undefined) {
+                const template = document.createElement("template");
+                template.innerHTML = message.content;
+                for (const image of template.content.querySelectorAll("img")) {
+                    image.replaceWith(image.alt);
+                }
+                for (const block of template.content.querySelectorAll(
+                    "p, li, br, pre, blockquote",
+                )) {
+                    block.after(" ");
+                }
+                const text = (template.content.textContent ?? "").replaceAll(/\s+/g, " ").trim();
+                preview.text = text === "" ? $t({defaultMessage: "Attachment"}) : text;
+            }
+            update_private_messages();
+        },
+        error() {
+            if (dm_previews.get(key) === preview) {
+                dm_previews.delete(key);
+            }
+        },
+    });
+    return pm_list_dom.keyed_pm_li({...conversation, preview: preview.text});
+}
+
 export function _build_direct_messages_list(opts: {
     all_conversations_shown: boolean;
     conversations_to_be_shown: DisplayObject[];
     search_term: string;
 }): vdom.Tag<PMNode> {
     const pm_list_nodes = opts.conversations_to_be_shown.map((conversation) =>
-        pm_list_dom.keyed_pm_li(conversation),
+        conversation_node(conversation),
     );
     const pm_list_info = pm_list_data.get_list_info(zoomed, opts.search_term);
     const more_conversations_unread_count = pm_list_info.more_conversations_unread_count;
@@ -222,7 +325,7 @@ export function update_private_messages(): void {
         );
 
         if (active_conversation) {
-            const node = [pm_list_dom.keyed_pm_li(active_conversation)];
+            const node = [conversation_node(active_conversation)];
             const new_dom = pm_list_dom.pm_ul(node);
             set_dom_to(new_dom, zoomed);
         } else {

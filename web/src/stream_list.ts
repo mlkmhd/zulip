@@ -410,14 +410,6 @@ export function update_collapsed_state_on_show_channel_folders_change(): void {
 }
 
 export function build_stream_list(force_rerender: boolean): void {
-    // The stream list in the left sidebar contains 3 sections:
-    // pinned, normal, and dormant streams, with headings above them
-    // as appropriate.
-    //
-    // Within the first two sections, muted streams are sorted to the
-    // bottom; we skip that for dormant streams to simplify discovery.
-    //
-    // The main logic to build the list is in stream_list_sort.ts
     const streams = stream_data.subscribed_stream_ids();
     const search_term =
         ui_util.get_left_sidebar_topic_search_term() ?? ui_util.get_left_sidebar_search_term();
@@ -451,49 +443,25 @@ export function build_stream_list(force_rerender: boolean): void {
             $(stream_list_section_container_html(section, can_create_streams)),
         );
         const is_empty =
-            section.default_visible_streams.length === 0 &&
-            section.muted_streams.length === 0 &&
-            section.inactive_streams.length === 0;
+            section.default_visible_streams.length === 0 && section.inactive_streams.length === 0;
         $(`#stream-list-${section.id}-container`).toggleClass("no-display", is_empty);
 
         for (const stream_id of section.default_visible_streams) {
             add_sidebar_li(stream_id, $(`#stream-list-${section.id}`));
         }
-        const muted_and_inactive_streams = [...section.muted_streams, ...section.inactive_streams];
-        if (section.id !== "pinned-streams" && muted_and_inactive_streams.length > 0) {
-            let button_text;
-            if (section.muted_streams.length > 0 && section.inactive_streams.length > 0) {
-                button_text = $t(
-                    {defaultMessage: "{count} INACTIVE OR MUTED"},
-                    {count: muted_and_inactive_streams.length},
-                );
-            } else if (section.muted_streams.length > 0) {
-                button_text = $t(
-                    {defaultMessage: "{count} MUTED"},
-                    {count: section.muted_streams.length},
-                );
-            } else {
-                button_text = $t(
-                    {defaultMessage: "{count} INACTIVE"},
-                    {count: section.inactive_streams.length},
-                );
-            }
+        if (section.inactive_streams.length > 0) {
+            const button_text = $t(
+                {defaultMessage: "{count} INACTIVE"},
+                {count: section.inactive_streams.length},
+            );
             $(`#stream-list-${section.id}`).append(
-                $(
-                    render_show_inactive_or_muted_channels({
-                        button_text,
-                    }),
-                ),
+                $(render_show_inactive_or_muted_channels({button_text})),
             );
         }
-        for (const stream_id of muted_and_inactive_streams) {
-            add_sidebar_li(
-                stream_id,
-                $(`#stream-list-${section.id}`),
-                section.id !== "pinned-streams",
-            );
+        for (const stream_id of section.inactive_streams) {
+            add_sidebar_li(stream_id, $(`#stream-list-${section.id}`), true);
         }
-        // If a section appears empty, due to only having inactive or muted channels,
+        // If a section appears empty, due to only having inactive channels,
         // we collapse it, since there's nothing to easily see. But don't do this during
         // search, since sections can enter that state temporarily.
         if (!searching()) {
@@ -1004,14 +972,14 @@ export let update_dom_with_unread_counts = function (counts: FullUnreadCountsDat
             const unread_counts = folder_unread_counts.get(sub.folder_id)!;
             unread_counts.unmuted += stream_count_info.unmuted_count;
             unread_counts.muted += stream_count_info.muted_count;
-            if (sub.is_muted || !stream_list_sort.has_recent_activity(sub)) {
+            if (!stream_list_sort.has_recent_activity(sub)) {
                 unread_counts.hidden_unmuted += stream_count_info.unmuted_count;
                 unread_counts.hidden_muted += stream_count_info.muted_count;
             }
         } else {
             normal_section_unread_counts.unmuted += stream_count_info.unmuted_count;
             normal_section_unread_counts.muted += stream_count_info.muted_count;
-            if (sub.is_muted || !stream_list_sort.has_recent_activity(sub)) {
+            if (!stream_list_sort.has_recent_activity(sub)) {
                 normal_section_unread_counts.hidden_unmuted += stream_count_info.unmuted_count;
                 normal_section_unread_counts.hidden_muted += stream_count_info.muted_count;
             }
@@ -1121,11 +1089,7 @@ export function refresh_pinned_or_unpinned_stream(sub: StreamSubscription): void
 
 export function refresh_muted_or_unmuted_stream(sub: StreamSubscription): void {
     build_stream_sidebar_row(sub);
-    // If a stream is inactive, it'll stay in the same inactive list in its
-    // StreamListSection (so `same_as_before` will be true), so we need to
-    // force the rerender to change its faded/unfaded appearance.
-    const force_rerender = !stream_list_sort.has_recent_activity(sub);
-    update_streams_sidebar(force_rerender);
+    update_streams_sidebar(true);
 }
 
 export function get_sidebar_stream_topic_info(filter: Filter): {
@@ -1230,8 +1194,10 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
     // masked unread counts.
     $stream_li.addClass("stream-expanded");
 
-    if (stream_id !== topic_list.active_stream_id()) {
-        clear_topics_if_not_searching();
+    const channel_changed = stream_id !== topic_list.active_stream_id();
+    if (channel_changed && !rerender_topics_for_search) {
+        // Keep the panel open while replacing the previous channel's topics.
+        topic_list.close();
     }
 
     // We want to update channel view for inbox for the same reasons
@@ -1239,7 +1205,7 @@ export function update_stream_sidebar_for_narrow(filter: Filter): JQuery | undef
     update_inbox_channel_view_callback(stream_id);
     if (!rerender_topics_for_search) {
         topic_list.rebuild_left_sidebar($stream_li, stream_id);
-        if (!zoomed_in) {
+        if (!zoomed_in || channel_changed) {
             show_channel_topics_panel(stream_id);
         }
     }
@@ -1801,11 +1767,7 @@ export function get_sorted_channel_ids_for_next_unread_navigation(): {
     // Get sorted section ids.
     const sections = stream_list_sort.get_current_sections().map((section) => ({
         id: section.id,
-        channels: [
-            ...section.default_visible_streams,
-            ...section.muted_streams,
-            ...section.inactive_streams,
-        ],
+        channels: [...section.default_visible_streams, ...section.inactive_streams],
         is_collapsed: collapsed_sections.has(section.id),
     }));
 

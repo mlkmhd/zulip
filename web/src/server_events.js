@@ -6,6 +6,7 @@ import * as echo from "./echo.ts";
 import * as message_events from "./message_events.ts";
 import * as message_feed_loading from "./message_feed_loading.ts";
 import {page_params} from "./page_params.ts";
+import * as pm_list from "./pm_list.ts";
 import * as popup_banners from "./popup_banners.ts";
 import * as reload from "./reload.ts";
 import * as reload_state from "./reload_state.ts";
@@ -134,6 +135,13 @@ function get_events_success(events) {
 
     if (update_message_events.length > 0) {
         try {
+            pm_list.invalidate_message_previews(
+                new Set(
+                    update_message_events
+                        .filter((event) => event.rendered_content !== undefined)
+                        .map((event) => event.message_id),
+                ),
+            );
             message_events.update_messages(update_message_events);
         } catch (error) {
             blueslip.error("Failed to update messages", undefined, error);
