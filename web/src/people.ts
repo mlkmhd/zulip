@@ -1,4 +1,5 @@
 import md5 from "blueimp-md5";
+import _ from "lodash";
 import assert from "minimalistic-assert";
 import * as z from "zod/mini";
 
@@ -698,6 +699,11 @@ export function gravatar_url_for_email(email: string): string {
 }
 
 export function small_avatar_url_for_person(person: User | CurrentUser): string {
+    const initials_url = initials_avatar_url(person);
+    if (initials_url) {
+        return initials_url;
+    }
+
     if (person.avatar_url) {
         return person.avatar_url;
     }
@@ -710,11 +716,47 @@ export function small_avatar_url_for_person(person: User | CurrentUser): string 
     return `/avatar/${person.user_id}`;
 }
 
+export function default_avatar_initials(person: User | CurrentUser): string | undefined {
+    if (
+        ("is_system_bot" in person && person.is_system_bot) ||
+        (person.avatar_source !== "J" && person.avatar_source !== "G")
+    ) {
+        return undefined;
+    }
+
+    const words = person.full_name.trim().split(/\s+/u);
+    const first_and_last = words.length > 1 ? [words[0]!, words.at(-1)!] : words;
+    return first_and_last.map((word) => [...word][0]?.toUpperCase()).join(" ") || undefined;
+}
+
+function initials_avatar_url(person: User | CurrentUser): string | undefined {
+    const initials = default_avatar_initials(person);
+    if (!initials) {
+        return undefined;
+    }
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="50" fill="#36559b"/>
+        <text x="50" y="50" text-anchor="middle" dominant-baseline="central"
+            fill="#fff" font-family="sans-serif" font-size="38" font-weight="600">${_.escape(initials)}</text>
+    </svg>`;
+    return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+export function medium_avatar_url_for_current_user(): string | null | undefined {
+    return initials_avatar_url(current_user) ?? current_user.avatar_url_medium;
+}
+
 export function small_avatar_url_for_user_id(user_id: number): string {
     return small_avatar_url_for_person(get_by_user_id(user_id));
 }
 
 export function medium_avatar_url_for_person(person: User): string {
+    const initials_url = initials_avatar_url(person);
+    if (initials_url) {
+        return initials_url;
+    }
+
     /* Unlike the small avatar URL case, we don't generally have a
      * medium avatar URL included in person objects. So only have the
      * gravatar and server endpoints here. */
@@ -773,10 +815,11 @@ export function small_avatar_url(message: Message): string {
         person = maybe_get_user_by_id(message.sender_id);
     }
 
-    // The first time we encounter a sender in a message, we may
-    // not have person.avatar_url set, but if we do, then use that.
-    if (person?.avatar_url) {
-        return small_avatar_url_for_person(person);
+    if (person) {
+        const avatar_url = initials_avatar_url(person) ?? person.avatar_url;
+        if (avatar_url) {
+            return avatar_url;
+        }
     }
 
     // Try to get info from the message if we didn't have a `person` object

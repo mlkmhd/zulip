@@ -124,13 +124,9 @@ function upload_avatar(file: File): void {
         success() {
             dialog_widget.close();
             $("#user-avatar-upload-widget .image-delete-button").show();
-            $("#user-avatar-source").hide();
             // Rest of the work is done via the user_events -> avatar_url event we will get
         },
         error(xhr) {
-            if (current_user.avatar_source === "G") {
-                $("#user-avatar-source").show();
-            }
             ui_report.error($t_html({defaultMessage: "Failed"}), xhr, $("#dialog_error"));
             dialog_widget.hide_dialog_spinner();
         },

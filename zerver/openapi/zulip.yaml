@@ -203,6 +203,7 @@ paths:
                               timezone: {}
                               avatar_url:
                                 nullable: true
+                              avatar_source: {}
                               avatar_version: {}
                               is_imported_stub: {}
                     example:
@@ -12020,6 +12021,8 @@ paths:
 
                           **Changes**: New in Zulip 2.1.0.
                         example: "x"
+                      avatar_source:
+                        $ref: "#/components/schemas/UserBase/properties/avatar_source"
                       avatar_version:
                         type: integer
                         description: |
@@ -23115,6 +23118,7 @@ paths:
                                 timezone: {}
                                 avatar_url:
                                   nullable: true
+                                avatar_source: {}
                                 avatar_version: {}
                                 is_imported_stub: {}
                       server_report_message_types:
@@ -30418,6 +30422,7 @@ components:
             timezone: {}
             avatar_url:
               nullable: true
+            avatar_source: {}
             avatar_version: {}
             is_imported_stub: {}
             is_deleted: {}
@@ -30565,6 +30570,16 @@ components:
             In Zulip 3.0 (feature level 18), if the client has the
             `user_avatar_url_field_optional` capability, this will be missing at
             the server's sole discretion.
+        avatar_source:
+          type: string
+          description: |
+            The source of the user's avatar. Possible values are:
+
+            - "G" = Hosted by Gravatar
+            - "J" = Generated using Jdenticon
+            - "U" = Uploaded by user
+
+            **Changes**: New in Zulip 13.0 (feature level ZF-9708bb).
         avatar_version:
           type: integer
           description: |

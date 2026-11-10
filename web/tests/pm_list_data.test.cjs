@@ -52,6 +52,7 @@ const me = make_user({
     email: "me@zulip.com",
     user_id: 103,
     full_name: "Me Myself",
+    avatar_source: "J",
 });
 const zoe = make_user({
     email: "zoe@zulip.com",
@@ -67,6 +68,8 @@ const iago = make_user({
     email: "iago@zulip.com",
     user_id: 106,
     full_name: "Iago",
+    avatar_url: "/user_avatars/iago.png",
+    avatar_source: "U",
 });
 const bot_test = make_bot({
     email: "outgoingwebhook@zulip.com",
@@ -124,6 +127,8 @@ test("get_conversations", ({override}) => {
             recipients: "Me Myself",
             unread: 1,
             url: "#narrow/dm/103-Me-Myself",
+            avatar_url: undefined,
+            avatar_initials: "M M",
             user_circle_class: "user-circle-offline",
             user_ids_string: "103",
             status_emoji_info: {
@@ -140,6 +145,8 @@ test("get_conversations", ({override}) => {
             is_active: false,
             includes_deactivated_user: false,
             url: "#narrow/dm/101,102-group",
+            avatar_url: undefined,
+            avatar_initials: undefined,
             user_circle_class: undefined,
             is_group: true,
             is_bot: false,
@@ -173,6 +180,8 @@ test("get_conversations", ({override}) => {
         is_current_user: false,
         url: "#narrow/dm/106-Iago",
         status_emoji_info: {emoji_code: "20"},
+        avatar_url: "/user_avatars/iago.png",
+        avatar_initials: undefined,
         user_circle_class: "user-circle-offline",
         is_group: false,
         is_bot: false,
@@ -215,6 +224,8 @@ test("get_conversations bot", ({override}) => {
             includes_deactivated_user: false,
             url: "#narrow/dm/314-Outgoing-webhook",
             status_emoji_info: undefined,
+            avatar_url: "/avatar/314",
+            avatar_initials: undefined,
             user_circle_class: "user-circle-offline",
             is_group: false,
             is_bot: true,
@@ -229,6 +240,8 @@ test("get_conversations bot", ({override}) => {
             is_active: false,
             includes_deactivated_user: false,
             url: "#narrow/dm/101,102-group",
+            avatar_url: undefined,
+            avatar_initials: undefined,
             user_circle_class: undefined,
             status_emoji_info: undefined,
             is_group: true,

@@ -76,12 +76,6 @@ export function build_user_avatar_widget(upload_function: UploadFunction): void 
         $("#user-avatar-upload-widget .image-delete-button").hide();
     }
 
-    if (current_user.avatar_source === "G") {
-        $("#user-avatar-source").show();
-    } else {
-        $("#user-avatar-source").hide();
-    }
-
     if (!settings_data.user_can_change_avatar()) {
         return;
     }

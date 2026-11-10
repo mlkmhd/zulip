@@ -210,7 +210,7 @@ function initialize_bottom_whitespace() {
 function initialize_navbar() {
     const rendered_navbar = render_navbar({
         embedded: page_params.narrow_stream !== undefined,
-        user_avatar: current_user.avatar_url_medium,
+        user_avatar: people.medium_avatar_url_for_current_user(),
         realm_icon_url: realm.realm_icon_url,
         realm_name: realm.realm_name,
     });

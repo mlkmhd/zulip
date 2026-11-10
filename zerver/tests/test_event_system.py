@@ -979,6 +979,8 @@ class FetchInitialStateDataTest(ZulipTestCase):
         )
 
         raw_users = result["raw_users"]
+        for user in [hamlet, aaron, *users]:
+            self.assertEqual(raw_users[user.id]["avatar_source"], user.avatar_source)
 
         for user_dict in raw_users.values():
             if user_dict["user_id"] in long_term_idle_users_ids:

@@ -399,6 +399,7 @@ test("insert_one_user_into_empty_list", ({override}) => {
             is_current_user: false,
             num_unread: 0,
             profile_picture: "/avatar/1",
+            avatar_initials: undefined,
             user_circle_class: "user-circle-active",
             status_emoji_info: undefined,
             status_text: undefined,

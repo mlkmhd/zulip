@@ -102,6 +102,7 @@ export function build_page(): void {
         profile_picture: people.small_avatar_url_for_user_id(people.my_current_user_id()),
         date_joined_text: get_parsed_date_of_joining(),
         current_user,
+        user_avatar: people.medium_avatar_url_for_current_user(),
         page_params,
         realm,
         enable_sound_select:

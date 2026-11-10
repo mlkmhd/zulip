@@ -282,11 +282,16 @@ run_test("updates", ({override}) => {
     person = people.get_by_email(isaac.email);
     assert.equal(person.delivery_email, null);
 
-    user_events.update_person({user_id: isaac.user_id, avatar_url: "http://gravatar.com/123456"});
+    user_events.update_person({
+        user_id: isaac.user_id,
+        avatar_source: "G",
+        avatar_url: "http://gravatar.com/123456",
+    });
     person = people.get_by_email(isaac.email);
     assert.equal(person.full_name, "Sir Isaac");
     assert.equal(user_id, isaac.user_id);
     assert.equal(person.avatar_url, avatar_url);
+    assert.equal(person.avatar_source, "G");
     assert.deepEqual(inserted_or_moved_user_ids, [isaac.user_id]);
     // The user list style preview shows the current user's avatar, so
     // another user's avatar change must not update it.

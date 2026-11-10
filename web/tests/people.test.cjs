@@ -2215,6 +2215,29 @@ run_test("small_avatar_url_for_person", () => {
     );
 });
 
+run_test("initials avatar in messages and profiles", () => {
+    initialize();
+    const user = make_user({
+        full_name: "John Middle Smith",
+        avatar_source: "J",
+        avatar_url: "/generated-avatar.png",
+    });
+    people.add_active_user(user);
+
+    const message = {sender_id: user.user_id, avatar_url: "/old-avatar.png"};
+    const avatar_url = people.small_avatar_url(message);
+    assert.match(avatar_url, /^data:image\/svg\+xml,/);
+    assert.match(decodeURIComponent(avatar_url), />J S<\/text>/);
+    assert.equal(people.small_avatar_url_for_person(user), avatar_url);
+    assert.equal(people.medium_avatar_url_for_person(user), avatar_url);
+
+    people.set_full_name(user, "Alex &");
+    assert.match(decodeURIComponent(people.small_avatar_url(message)), />A &amp;<\/text>/);
+    user.avatar_source = "U";
+    user.avatar_url = "/uploaded-avatar.png";
+    assert.equal(people.small_avatar_url(message), "/uploaded-avatar.png");
+});
+
 run_test("sender_is_bot", () => {
     initialize();
     people.add_active_user(bot_botson);

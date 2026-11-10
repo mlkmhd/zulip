@@ -3514,6 +3514,7 @@ class GetProfileTest(ZulipTestCase):
 
         (my_user,) = (user for user in response_dict["members"] if user["email"] == hamlet.email)
 
+        self.assertEqual(my_user["avatar_source"], hamlet.avatar_source)
         self.assertEqual(
             my_user["avatar_url"],
             avatar_url(hamlet),
