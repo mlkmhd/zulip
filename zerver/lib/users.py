@@ -594,6 +594,7 @@ class APIUserDict(TypedDict):
     timezone: NotRequired[str]
     is_active: bool
     date_joined: str
+    avatar_source: NotRequired[str]
     avatar_url: NotRequired[str | None]
     delivery_email: str | None
     bot_type: NotRequired[int | None]
@@ -633,6 +634,7 @@ def format_user_row(
     result = APIUserDict(
         email=row["email"],
         user_id=row["id"],
+        avatar_source=row["avatar_source"],
         avatar_version=row["avatar_version"],
         is_admin=is_admin,
         is_owner=is_owner,

@@ -63,6 +63,7 @@ const alice = make_user({
     email: "alice@zulip.com",
     user_id: 1002,
     full_name: "Alice Smith",
+    avatar_source: "G",
 });
 
 const fred = make_user({
@@ -674,6 +675,7 @@ test("get_items_for_users", ({override}) => {
             name: "Human Myself",
             num_unread: 0,
             profile_picture: "/avatar/1001",
+            avatar_initials: undefined,
             status_emoji_info,
             status_text: undefined,
             has_status_text: false,
@@ -687,7 +689,8 @@ test("get_items_for_users", ({override}) => {
             is_current_user: false,
             name: "Alice Smith",
             num_unread: 0,
-            profile_picture: "/avatar/1002",
+            profile_picture: undefined,
+            avatar_initials: "A S",
             status_emoji_info,
             status_text: undefined,
             has_status_text: false,
@@ -702,6 +705,7 @@ test("get_items_for_users", ({override}) => {
             name: "Fred Flintstone",
             num_unread: 0,
             profile_picture: "/avatar/1003",
+            avatar_initials: undefined,
             status_emoji_info,
             status_text: undefined,
             has_status_text: false,

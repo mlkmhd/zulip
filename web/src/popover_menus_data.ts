@@ -421,7 +421,7 @@ export function get_personal_menu_content_context(): PersonalMenuContext {
         spectator_view: page_params.is_spectator,
 
         // user information
-        user_avatar: current_user.avatar_url_medium,
+        user_avatar: people.medium_avatar_url_for_current_user(),
         is_active: people.is_active_user_or_system_bot(my_user_id),
         user_circle_class: buddy_data.get_user_circle_class(my_user_id),
         user_last_seen_time_status: buddy_data.user_last_seen_time_status(my_user_id),

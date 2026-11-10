@@ -65,6 +65,16 @@ export const user_update_schema = z.intersection(
 
 type UserUpdate = z.output<typeof user_update_schema>;
 
+function refresh_current_user_avatar(): void {
+    const avatar_url = people.medium_avatar_url_for_current_user();
+    $(
+        "#user-avatar-upload-widget .image-block, #personal-menu-dropdown .avatar-image, .header-button-avatar-image",
+    ).attr("src", avatar_url ?? null);
+    settings_preferences.update_user_list_style_preview_avatar(
+        people.small_avatar_url_for_person(current_user),
+    );
+}
+
 export const update_person = function update(event: UserUpdate): void {
     const user = people.maybe_get_user_by_id(event.user_id);
 
@@ -116,6 +126,9 @@ export const update_person = function update(event: UserUpdate): void {
             current_user.full_name = event.full_name;
             settings_account.update_full_name(event.full_name);
             settings_preferences.update_user_list_style_preview_name(event.full_name);
+            if (people.default_avatar_initials(current_user)) {
+                refresh_current_user_avatar();
+            }
         }
         if (user.is_bot && bot_data.get(event.user_id) !== undefined) {
             bot_data.update(event.user_id, {user_id: event.user_id, full_name: event.full_name});
@@ -185,6 +198,7 @@ export const update_person = function update(event: UserUpdate): void {
 
     if ("avatar_url" in event) {
         const url = event.avatar_url;
+        user.avatar_source = event.avatar_source;
         user.avatar_url = url;
         user.avatar_version = event.avatar_version;
 
@@ -192,22 +206,11 @@ export const update_person = function update(event: UserUpdate): void {
             current_user.avatar_source = event.avatar_source;
             current_user.avatar_url = url;
             current_user.avatar_url_medium = event.avatar_url_medium;
-            $("#user-avatar-upload-widget .image-block").attr("src", event.avatar_url_medium);
-            $("#personal-menu-dropdown .avatar-image, .header-button-avatar-image").attr(
-                "src",
-                `${event.avatar_url_medium}`,
-            );
-            if (current_user.avatar_source === "G") {
-                $("#user-avatar-source").show();
-            } else {
-                $("#user-avatar-source").hide();
-            }
-            settings_preferences.update_user_list_style_preview_avatar(
-                people.small_avatar_url_for_person(user),
-            );
+            refresh_current_user_avatar();
         }
 
         message_live_update.update_avatar(user.user_id, event.avatar_url);
+        pm_list.update_private_messages();
         buddy_list.insert_or_move([event.user_id], activity_ui.get_filter_text());
         user_profile.update_profile_modal_ui(user, event);
     }

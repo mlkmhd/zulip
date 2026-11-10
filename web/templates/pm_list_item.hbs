@@ -4,7 +4,16 @@
         {{#if is_group}}
         <span class="conversation-partners-icon zulip-icon zulip-icon-dm-groups-3"></span>
         {{else}}
-        <span class="conversation-partners-icon zulip-icon zulip-icon-{{user_circle_class}} {{user_circle_class}} user-circle"></span>
+        <span class="dm-avatar">
+            {{#if avatar_initials}}
+                {{> sidebar_avatar_initials .}}
+            {{else}}
+                <img src="{{avatar_url}}" alt="" loading="lazy" draggable="false" />
+            {{/if}}
+            <span class="dm-avatar-presence">
+                <span class="zulip-icon zulip-icon-{{user_circle_class}} {{user_circle_class}} user-circle"></span>
+            </span>
+        </span>
         {{/if}}
 
         <span class="conversation-partners">

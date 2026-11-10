@@ -174,7 +174,10 @@ export function update_profile_modal_ui(
         const $bot_owner_field = $(".bot_owner_user_field");
         $bot_owner_field.attr("data-field-id", new_data.bot_owner_id);
     }
-    if (new_data.avatar_url !== undefined) {
+    if (
+        new_data.avatar_url !== undefined ||
+        (new_data.full_name !== undefined && people.default_avatar_initials(user))
+    ) {
         $("#avatar").css(
             "background-image",
             `url(${CSS.escape(people.medium_avatar_url_for_person(user))})`,
@@ -866,7 +869,7 @@ export function show_edit_bot_info_modal(user_id: number, $container: JQuery): v
         user_role_values: settings_config.user_role_values,
         disable_role_dropdown: !current_user.is_admin || (bot.is_owner && !current_user.is_owner),
         disable_owner_dropdown: !current_user.is_admin,
-        bot_avatar_url: bot.avatar_url,
+        bot_avatar_url: people.small_avatar_url_for_person(bot),
         bot_type: settings_data.bot_type_id_to_string(bot.bot_type),
         is_incoming_webhook_bot: bot.bot_type === INCOMING_WEBHOOK_BOT_TYPE_INT,
         max_bot_name_length: people.MAX_USER_NAME_LENGTH,

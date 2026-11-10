@@ -48,6 +48,8 @@ export type DisplayObject = {
     is_active: boolean;
     url: string;
     status_emoji_info: UserStatusEmojiInfo | undefined;
+    avatar_url: string | undefined;
+    avatar_initials: string | undefined;
     user_circle_class: string | undefined;
     is_group: boolean;
     is_bot: boolean;
@@ -97,6 +99,8 @@ export function get_conversations(search_string = ""): DisplayObject[] {
             (id) => !people.is_active_user_or_system_bot(id),
         );
 
+        let avatar_url: string | undefined;
+        let avatar_initials: string | undefined;
         let user_circle_class: string | undefined;
         let status_emoji_info: UserStatusEmojiInfo | undefined;
         let is_bot = false;
@@ -109,6 +113,10 @@ export function get_conversations(search_string = ""): DisplayObject[] {
                 includes_deactivated_user,
             );
             const recipient_user_obj = people.get_by_user_id(user_id);
+            avatar_initials = people.default_avatar_initials(recipient_user_obj);
+            if (!avatar_initials) {
+                avatar_url = people.small_avatar_url_for_person(recipient_user_obj);
+            }
 
             if (recipient_user_obj.is_bot) {
                 is_bot = true;
@@ -126,6 +134,8 @@ export function get_conversations(search_string = ""): DisplayObject[] {
             is_active,
             url: hash_util.pm_with_url(user_ids_string),
             status_emoji_info,
+            avatar_url,
+            avatar_initials,
             user_circle_class,
             is_group,
             is_bot,

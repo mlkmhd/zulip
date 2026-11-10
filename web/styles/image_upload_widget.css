@@ -168,12 +168,6 @@
     }
 }
 
-#user-avatar-source {
-    font-size: 1em;
-    z-index: 99;
-    margin-top: 10px;
-}
-
 /* CSS related to settings page realm icon upload widget only */
 #realm-icon-upload-widget {
     width: 100px;
