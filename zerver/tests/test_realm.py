@@ -102,6 +102,22 @@ if settings.ZILENCER_ENABLED:
 
 
 class RealmTest(ZulipTestCase):
+    def test_full_width_default_for_new_users(self) -> None:
+        realm = do_create_realm("fullwidth", "Full width")
+        realm_user_default = RealmUserDefault.objects.get(realm=realm)
+        self.assertTrue(realm_user_default.fluid_layout_width)
+
+        user = do_create_user("wide@example.com", "password", realm, "Wide User", acting_user=None)
+        self.assertTrue(user.fluid_layout_width)
+
+        do_set_realm_user_default_setting(
+            realm_user_default, "fluid_layout_width", False, acting_user=None
+        )
+        user = do_create_user(
+            "narrow@example.com", "password", realm, "Narrow User", acting_user=None
+        )
+        self.assertFalse(user.fluid_layout_width)
+
     def assert_user_profile_cache_gets_new_name(
         self, user_profile: UserProfile, new_realm_name: str
     ) -> None:
