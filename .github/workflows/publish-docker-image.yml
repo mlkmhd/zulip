@@ -1,0 +1,83 @@
+name: Publish Zulip Docker image
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Docker image tag (independent of the Zulip application version)
+        required: true
+        default: "12.5"
+        type: string
+      publish:
+        description: Push the image to GHCR (disable for a build-only check)
+        default: true
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: "${{ github.workflow }}-${{ inputs.image_tag }}"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    if: github.repository == 'mlkmhd/zulip'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Validate image tag
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          if [[ ! "$IMAGE_TAG" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Invalid Docker image tag."
+            exit 1
+          fi
+
+      - name: Check out production Docker build
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: zulip/docker-zulip
+          ref: 458fdf168b5276ef0d21076722f3982ad083be98
+          path: docker-zulip
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        if: inputs.publish
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Zulip image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./docker-zulip
+          platforms: linux/amd64
+          push: ${{ inputs.publish }}
+          load: ${{ !inputs.publish }}
+          build-args: |
+            ZULIP_GIT_URL=${{ github.server_url }}/${{ github.repository }}.git
+            ZULIP_GIT_REF=${{ github.sha }}
+          tags: |
+            ghcr.io/mlkmhd/zulip:${{ inputs.image_tag }}
+            ghcr.io/mlkmhd/zulip:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ inputs.image_tag }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha,scope=zulip-production-amd64
+          cache-to: type=gha,mode=max,scope=zulip-production-amd64
