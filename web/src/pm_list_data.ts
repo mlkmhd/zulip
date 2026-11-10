@@ -37,6 +37,7 @@ export function get_active_user_ids_string(): string | undefined {
 
 export type PMListConversation = {
     user_ids_string: string;
+    preview?: string | undefined;
 };
 
 export type DisplayObject = {

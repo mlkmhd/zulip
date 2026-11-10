@@ -125,14 +125,7 @@ function choose_topics(
                 return true;
             }
 
-            // We unconditionally skip showing muted topics
-            // when not zoomed, even if they have unread
-            // messages.
-            if (is_topic_muted) {
-                return false;
-            }
-
-            // We include the most recent, unmuted MAX_TOPICS topics,
+            // We include the most recent MAX_TOPICS topics,
             // even if there are no unread messages.
             if (topics_selected < MAX_TOPICS) {
                 return true;
@@ -280,15 +273,6 @@ export function get_list_info(
 
     if (zoomed) {
         show_all_topics(stream_id, topic_names, topic_choice_state);
-    } else if (stream_muted) {
-        const unmuted_or_followed_topics = topic_names.filter((topic) =>
-            user_topics.is_topic_unmuted_or_followed(stream_id, topic),
-        );
-        const other_topics = topic_names.filter(
-            (topic) => !user_topics.is_topic_unmuted_or_followed(stream_id, topic),
-        );
-        const reordered_topics = [...unmuted_or_followed_topics, ...other_topics];
-        choose_topics(stream_id, reordered_topics, topic_choice_state);
     } else {
         choose_topics(stream_id, topic_names, topic_choice_state);
     }

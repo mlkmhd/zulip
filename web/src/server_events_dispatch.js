@@ -213,7 +213,15 @@ export function dispatch_normal_event(event) {
                     max_removed_msg_id: Math.max(...msg_ids),
                 });
                 stream_list.update_streams_sidebar();
-            } else if (deleted_dm_user_ids !== undefined) {
+            } else {
+                const previews_changed = pm_list.invalidate_message_previews(new Set(msg_ids));
+                if (deleted_dm_user_ids === undefined) {
+                    if (previews_changed) {
+                        pm_list.update_private_messages();
+                    }
+                    break;
+                }
+
                 // We may have emptied a DM conversation; remove it from the
                 // sidebar if so.  The recent conversations view is updated
                 // separately, by message_events.remove_messages.

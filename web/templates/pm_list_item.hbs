@@ -24,7 +24,9 @@
                     <i class="zulip-icon zulip-icon-bot" aria-label="{{t 'Bot' }}"></i>
                 {{/if}}
             </span>
-
+            {{#if preview}}
+                <span class="dm-message-preview" dir="auto">{{preview}}</span>
+            {{/if}}
         </span>
         <div class="dm-markers-and-unreads">
             {{#if has_unread_mention}}
