@@ -2809,3 +2809,36 @@ body:not(.spectator-view)
         }
     }
 }
+
+@media (width >= 1440px) and (prefers-reduced-motion: no-preference) {
+    body.channel-topics-panel-open:not(.hide-left-sidebar) {
+        .column-middle,
+        #compose-content {
+            animation: make-room-for-channel-topics 200ms ease-out;
+        }
+
+        #left-sidebar.channel-topics-panel-open #left-sidebar-modal {
+            animation: reveal-channel-topics 200ms ease-out;
+        }
+    }
+}
+
+@keyframes make-room-for-channel-topics {
+    from {
+        /* The chat content needs to reflow as its available width changes. */
+        /* stylelint-disable-next-line plugin/no-low-performance-animation-properties */
+        margin-left: calc(
+            var(--left-sidebar-width) + var(--left-sidebar-padding-left)
+        );
+    }
+}
+
+@keyframes reveal-channel-topics {
+    from {
+        clip-path: inset(0 100% 0 0);
+    }
+
+    to {
+        clip-path: inset(0);
+    }
+}
