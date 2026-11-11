@@ -2406,11 +2406,9 @@ li.topic-list-item {
 
     .unread_count {
         grid-area: markers-and-unreads;
-        /* Use flexbox to vertically center
-           the 12px-high text node within the
-           16px-high unread box. */
         display: flex;
         align-items: center;
+        justify-content: center;
 
         &:empty {
             margin-right: 0;
