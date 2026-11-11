@@ -2416,6 +2416,27 @@ li.topic-list-item {
         background-color: var(--color-background);
     }
 
+    .dm-avatar-typing {
+        position: absolute;
+        inset-block-end: -2px;
+        inset-inline-start: 0;
+        padding: 2px 3px;
+        border: 1px solid var(--color-background);
+        border-radius: 1em;
+        background-color: var(--color-background);
+        line-height: 0;
+
+        .typing_notification_dots {
+            gap: 2px;
+            margin: 0;
+
+            span {
+                width: 3px;
+                height: 3px;
+            }
+        }
+    }
+
     .dm-name {
         grid-area: action-heading;
     }

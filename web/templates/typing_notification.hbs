@@ -1,1 +1,8 @@
-<li data-email="{{this.email}}" class="typing_notification">{{t "{full_name} is typing…" }}</li>
+<li {{#unless several_users}}data-email="{{this.email}}"{{/unless}} class="typing_notification">
+    {{> typing_notification_dots}}
+    {{#if several_users}}
+        {{t "Several people are typing…" }}
+    {{else}}
+        {{t "{full_name} is typing…" }}
+    {{/if}}
+</li>

@@ -8,6 +8,7 @@ import render_typing_notifications from "../templates/typing_notifications.hbs";
 import * as message_lists from "./message_lists.ts";
 import * as narrow_state from "./narrow_state.ts";
 import * as people from "./people.ts";
+import * as pm_list_dom from "./pm_list_dom.ts";
 import {current_user, realm} from "./state_data.ts";
 import * as typing_data from "./typing_data.ts";
 
@@ -162,6 +163,9 @@ export function hide_notification(event: TypingEvent): void {
     const removed = typing_data.remove_typist(key, event.sender.user_id);
 
     if (removed) {
+        if (event.message_type === "direct") {
+            pm_list_dom.update_typing_indicators();
+        }
         render_notifications_for_narrow();
     }
 }
@@ -182,6 +186,9 @@ export function display_notification(event: TypingEvent): void {
     const key = get_key(event);
     typing_data.add_typist(key, sender_id);
 
+    if (event.message_type === "direct") {
+        pm_list_dom.update_typing_indicators();
+    }
     render_notifications_for_narrow();
 
     typing_data.kickstart_inbound_timer(
@@ -209,5 +216,6 @@ export function display_message_edit_notification(event: TypingMessageEditEvent)
 
 export function disable_typing_notification(): void {
     typing_data.clear_typing_data();
+    pm_list_dom.update_typing_indicators();
     render_notifications_for_narrow();
 }

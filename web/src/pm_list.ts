@@ -156,6 +156,7 @@ function set_dom_to(new_dom: vdom.Tag<PMNode>): void {
 
     vdom.update(replace_content, find, new_dom, prior_dom);
     prior_dom = new_dom;
+    pm_list_dom.update_typing_indicators();
 
     preview_observer?.disconnect();
     if (preview_observer) {

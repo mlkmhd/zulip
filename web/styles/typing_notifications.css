@@ -10,6 +10,46 @@
     margin: 0;
 }
 
+.typing_notification_dots {
+    display: inline-flex;
+    gap: 3px;
+    margin-inline-end: 4px;
+    vertical-align: middle;
+
+    span {
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background-color: currentcolor;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+        span {
+            animation: typing-notification-pulse 1.2s ease-in-out infinite;
+        }
+
+        span:nth-child(2) {
+            animation-delay: 150ms;
+        }
+
+        span:nth-child(3) {
+            animation-delay: 300ms;
+        }
+    }
+}
+
+@keyframes typing-notification-pulse {
+    0%,
+    60%,
+    100% {
+        opacity: 0.45;
+    }
+
+    30% {
+        opacity: 1;
+    }
+}
+
 #mark_as_read_turned_off_banner {
     /* override the margin of main-view-banner since it causes
        more gap than we want between mark as read banner and typing

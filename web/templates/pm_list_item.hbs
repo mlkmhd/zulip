@@ -13,6 +13,9 @@
             <span class="dm-avatar-presence">
                 <span class="zulip-icon zulip-icon-{{user_circle_class}} {{user_circle_class}} user-circle"></span>
             </span>
+            <span class="dm-avatar-typing" hidden>
+                {{> typing_notification_dots}}
+            </span>
         </span>
         {{/if}}
 
