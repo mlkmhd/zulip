@@ -49,6 +49,8 @@ jobs:
     # the top explain how to build and upload these images.
     # Ubuntu 22.04 ships with Python 3.10.12.
     container: zulip/ci:jammy
+    outputs:
+      release_version: ${{ steps.release_version.outputs.version }}
 
     steps:
       - name: Add required permissions
@@ -100,15 +102,27 @@ jobs:
           key: v1-emoji-jammy-${{ hashFiles('tools/setup/emoji/emoji_map.json') }}-${{ hashFiles('tools/setup/emoji/build_emoji') }}-${{ hashFiles('tools/setup/emoji/emoji_setup_utils.py') }}-${{ hashFiles('tools/setup/emoji/emoji_names.py') }}-${{ hashFiles('package.json') }}
           restore-keys: v1-emoji-jammy
 
+      - name: Identify release tag
+        id: release_version
+        if: github.repository == 'mlkmhd/zulip' && github.ref_type == 'tag' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$TAG" =~ ^[0-9]+\.[0-9]+(-[0-9a-z]+)?$ ]]; then
+              echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build production tarball
-        run: ./tools/ci/production-build
+        env:
+          RELEASE_VERSION: ${{ steps.release_version.outputs.version }}
+        run: ./tools/ci/production-build "${RELEASE_VERSION:-test}"
 
       - name: Upload production build artifacts for install jobs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: production-tarball
           path: /tmp/production-build
-          retention-days: 1
+          retention-days: ${{ steps.release_version.outputs.version != '' && 14 || 1 }}
 
       - name: Verify pnpm store path
         run: |
@@ -338,6 +352,78 @@ jobs:
           topic: ${{ steps.failure_report_string.outputs.topic }}
           type: "stream"
           content: ${{ steps.failure_report_string.outputs.content }}
+
+  publish_release:
+    name: Publish GitHub release
+    needs: [production_build, production_install, production_upgrade]
+    if: github.repository == 'mlkmhd/zulip' && needs.production_build.outputs.release_version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - name: Download tested production tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: production-tarball
+
+      - name: Publish release with tarball and checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.production_build.outputs.release_version }}
+        run: |
+          releases=$(gh api --paginate "repos/$GH_REPO/releases")
+          release_state=$(jq -r --arg tag "$RELEASE_VERSION" \
+              '.[] | select(.tag_name == $tag) | if .draft then "draft" else "published" end' <<< "$releases")
+          if [[ "$release_state" == published ]]; then
+              echo "Release $RELEASE_VERSION is already published."
+              exit 0
+          fi
+
+          prefix="zulip-server-$RELEASE_VERSION"
+          tarball="$prefix.tar.gz"
+          mv zulip-server-test.tar.gz "$tarball"
+          build_id=$(tar -xOzf "$tarball" "$prefix/build_id")
+          tag_commit=$(gh api "repos/$GH_REPO/commits/$RELEASE_VERSION" --jq .sha)
+          [[ "$build_id" == "$tag_commit" ]]
+          sha256sum "$tarball" > SHA256SUMS
+
+          if [[ -z "$release_state" ]]; then
+              prerelease=()
+              if [[ "$RELEASE_VERSION" == *-* ]]; then
+                  prerelease+=(--prerelease)
+              fi
+              cat > release-notes.md <<'EOF'
+          This release is built from the mlkmhd/Zulip fork.
+
+          ## Downloads
+
+          - The server tarball includes the compiled web app and passed the production install and upgrade tests.
+          - Verify the download with `sha256sum -c SHA256SUMS`.
+
+          ## Install or upgrade
+
+          Use the attached tarball with the [installation guide](https://zulip.readthedocs.io/en/stable/production/install.html).
+          For an existing server, [back up your data](https://zulip.readthedocs.io/en/stable/production/export-and-import.html#backups)
+          and follow the [upgrade guide](https://zulip.readthedocs.io/en/stable/production/upgrade.html).
+          EOF
+              printf '\n[Production test run](%s/%s/actions/runs/%s)\n' \
+                  "$GITHUB_SERVER_URL" "$GH_REPO" "$GITHUB_RUN_ID" >> release-notes.md
+              previous_tag=$(jq -rs '[.[][] | select(.draft == false and .prerelease == false)][0].tag_name // empty' <<< "$releases")
+              if [[ "$previous_tag" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                  printf '\n## Commits since %s\n\n' "$previous_tag" >> release-notes.md
+                  gh api --paginate "repos/$GH_REPO/compare/$previous_tag...$RELEASE_VERSION" |
+                      jq -r '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:7] + ")"' >> release-notes.md
+              fi
+              gh release create "$RELEASE_VERSION" --verify-tag --draft "${prerelease[@]}" \
+                  --title "Zulip Server $RELEASE_VERSION (mlkmhd fork)" \
+                  --notes-file release-notes.md --generate-notes
+          fi
+          gh release upload "$RELEASE_VERSION" "$tarball" SHA256SUMS --clobber
+          gh release edit "$RELEASE_VERSION" --draft=false
 
   required-jobs:
     name: "Required jobs"

@@ -57,6 +57,12 @@ Files which define GitHub workflows live in `.github/workflows` directory.
 then installed in a fresh container. Various Nagios and other
 checks are run to confirm the installation worked.
 
+In the `mlkmhd/zulip` fork, pushing a release tag such as `12.7` starts
+the production suite. Once all install and upgrade jobs pass, the workflow
+publishes a GitHub release with generated change notes, the tested server
+tarball, and its SHA-256 checksum. Tags with a suffix such as `12.7-rc1`
+are published as prereleases.
+
 `zulip-ci.yml` is designed to run our main test suites on all of our
 supported platforms. Out of them, only one of them runs the frontend
 tests, since `puppeteer` is slow and unlikely to catch issues that

@@ -6,6 +6,11 @@
 set -e
 set -x
 
+version=${1:-test}
+prefix="zulip-server-$version"
+export OUTPUT_DIR
+OUTPUT_DIR=$(mktemp -d)
+
 # Provisioning may fail due to many issues but most of the times a network
 # connection issue is the reason. So we are going to retry entire provisioning
 # once again if that fixes our problem.
@@ -22,16 +27,16 @@ tools/provision --build-release-tarball-only || {
 
 source tools/ci/activate-venv
 
-if ! ./tools/build-release-tarball test; then
+if ! ./tools/build-release-tarball "$version"; then
     echo "Attempting to output failure logging data"
-    cat /tmp/tmp.*/update-prod-static.log || true
+    cat "$OUTPUT_DIR/update-prod-static.log" || true
     exit 1
 fi
 
 # Move all the required artifacts to /tmp/production-build
 # that will be later sent down to downstream install jobs.
 mkdir /tmp/production-build
-mv /tmp/tmp.*/zulip-server-test.tar.gz /tmp/production-build
+mv "$OUTPUT_DIR/$prefix.tar.gz" /tmp/production-build/zulip-server-test.tar.gz
 cp -a \
     tools/ci/success-http-headers.template.txt \
     tools/ci/production-install \
@@ -46,8 +51,9 @@ cp -a \
 # Check that webpack bundles use only ES2022 syntax.
 # Use the pnpm binary installed by tools/provision.
 PNPM="/usr/local/bin/pnpm"
-tar -C /tmp -xzf /tmp/production-build/zulip-server-test.tar.gz zulip-server-test/prod-static/serve/webpack-bundles
+bundles="/tmp/$prefix/prod-static/serve/webpack-bundles"
+tar -C /tmp -xzf /tmp/production-build/zulip-server-test.tar.gz "$prefix/prod-static/serve/webpack-bundles"
 (
-    GLOBIGNORE="/tmp/zulip-server-test/prod-static/serve/webpack-bundles/katex*.js"
-    "$PNPM" exec es-check es2022 /tmp/zulip-server-test/prod-static/serve/webpack-bundles/*.js
+    GLOBIGNORE="$bundles/katex*.js"
+    "$PNPM" exec es-check es2022 "$bundles"/*.js
 )
