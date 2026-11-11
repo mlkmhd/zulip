@@ -23,7 +23,9 @@ let next_timerender_id = 0;
 export let display_time_zone = browser_time_zone();
 export let display_tz = tz(display_time_zone);
 
+const persian_locale = "fa-IR-u-ca-persian";
 const formatter_map = new Map<string, Intl.DateTimeFormat>();
+let persian_year_formatter: Intl.DateTimeFormat | undefined;
 
 export function browser_time_zone(): string {
     return new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -38,6 +40,15 @@ export function set_display_time_zone(time_zone: string): void {
     display_time_zone = time_zone;
     display_tz = tz(display_time_zone);
     formatter_map.clear();
+    persian_year_formatter = undefined;
+}
+
+function persian_year(date: Date): string {
+    persian_year_formatter ??= new Intl.DateTimeFormat(persian_locale, {
+        timeZone: display_time_zone,
+        year: "numeric",
+    });
+    return persian_year_formatter.format(date);
 }
 
 type DateFormat =
@@ -56,16 +67,7 @@ type TimeFormat = "time" | "time_sec";
 
 type DateOrTimeFormat = DateFormat | TimeFormat | DateWithTimeFormat;
 
-// Translates Zulip-specific format names, documented in the comments
-// below, into the appropriate options to pass to the Intl library
-// along with the user's locale to render date in that style of format.
-//
-// Note that because date/time formats vary with locale, the below
-// examples are what a user with English as their language will see
-// but users in other locales will see something different, especially
-// for any formats that display the name for a month/weekday, but
-// possibly in more subtle ways for languages with different
-// punctuation schemes for date and times.
+// Translates Zulip-specific format names into Intl formatting options.
 export function get_format_options_for_type(
     type: DateOrTimeFormat,
     is_twenty_four_hour_time: boolean,
@@ -105,29 +107,29 @@ export function get_format_options_for_type(
     };
 
     switch (type) {
-        case "time": // 01:30 PM
+        case "time":
             return time_format_options;
-        case "time_sec": // 01:30:42 PM
+        case "time_sec":
             return {...time_format_options, second: "2-digit"};
-        case "weekday": // Wednesday
+        case "weekday":
             return weekday_format_options;
-        case "dayofyear": // Jul 27
+        case "dayofyear":
             return dayofyear_format_options;
-        case "long_dayofyear": // July 27
+        case "long_dayofyear":
             return long_dayofyear_format_options;
-        case "dayofyear_time": // Jul 27, 01:30 PM
+        case "dayofyear_time":
             return {...dayofyear_format_options, ...time_format_options};
-        case "dayofyear_year": // Jul 27, 2016
+        case "dayofyear_year":
             return dayofyear_year_format_options;
-        case "long_dayofyear_year": // July 27, 2016
+        case "long_dayofyear_year":
             return long_dayofyear_year_format_options;
-        case "dayofyear_year_time": // Jul 27, 2016, 01:30 PM
+        case "dayofyear_year_time":
             return {...dayofyear_year_format_options, ...time_format_options};
-        case "weekday_dayofyear_year": // Wednesday, July 27, 2016
+        case "weekday_dayofyear_year":
             return full_format_options;
-        case "weekday_dayofyear_year_time": // Wed, Jul 27, 2016, 13:30
+        case "weekday_dayofyear_year_time":
             return {...long_format_options, ...time_format_options};
-        case "full_weekday_dayofyear_year_time": // Wednesday, July 27, 2016, 13:30
+        case "full_weekday_dayofyear_year_time":
             return {...long_format_options, ...time_format_options, weekday: "long", month: "long"};
         default:
             throw new Error("Wrong format provided.");
@@ -135,8 +137,8 @@ export function get_format_options_for_type(
 }
 
 // Common function for all date/time rendering in the project. Handles
-// localization using the user's configured locale and the
-// twenty_four_hour_time setting.
+// Persian calendar dates, the user's locale for time-only formats,
+// and the twenty_four_hour_time setting.
 //
 // See get_format_options_for_type for details on the supported formats.
 export function get_localized_date_or_time_for_format(
@@ -144,12 +146,16 @@ export function get_localized_date_or_time_for_format(
     format: DateOrTimeFormat,
 ): string {
     const is_twenty_four_hour_time = user_settings.twenty_four_hour_time;
-    const format_key = `${user_settings.default_language}:${is_twenty_four_hour_time}:${format}`;
+    const locale =
+        format === "time" || format === "time_sec"
+            ? user_settings.default_language
+            : persian_locale;
+    const format_key = `${locale}:${is_twenty_four_hour_time}:${format}`;
 
     if (!formatter_map.has(format_key)) {
         formatter_map.set(
             format_key,
-            new Intl.DateTimeFormat(user_settings.default_language, {
+            new Intl.DateTimeFormat(locale, {
                 timeZone: display_time_zone,
                 ...get_format_options_for_type(format, is_twenty_four_hour_time),
             }),
@@ -197,7 +203,7 @@ export function get_tz_with_UTC_offset(time: Date): string {
 // {
 //      time_str:        a string for the current human-formatted version
 //      formal_time_str: a string for the current formally formatted version
-//                          e.g. "Monday, April 15, 2017"
+//                          e.g. "۱۳۹۸ فروردین ۲۳, جمعه"
 //      needs_update:    a boolean for if it will need to be updated when the
 //                       day changes
 // }
@@ -226,7 +232,7 @@ export function render_now(time: Date, today = new Date(), display_year?: boolea
     } else if (days_old === 1) {
         time_str = $t({defaultMessage: "Yesterday"});
         needs_update = true;
-    } else if (time.getFullYear() !== today.getFullYear() || display_year) {
+    } else if (persian_year(time) !== persian_year(today) || display_year) {
         // For long running servers, searching backlog can get ambiguous
         // without a year stamp. Only show year if message is from an older year
         time_str = get_localized_date_or_time_for_format(time, "dayofyear_year");
@@ -276,7 +282,7 @@ export function relative_time_string_from_date(date: Date, use_minutes_short_for
     if (days_old < 90) {
         return $t({defaultMessage: "{days_old} days ago"}, {days_old});
     }
-    if (days_old > 90 && days_old < 365 && date.getFullYear() === current_date.getFullYear()) {
+    if (days_old > 90 && days_old < 365 && persian_year(date) === persian_year(current_date)) {
         // Online more than 90 days ago, in the same year
         return get_localized_date_or_time_for_format(date, "dayofyear");
     }
@@ -318,7 +324,7 @@ export function last_seen_status_from_date(last_active_date: Date): string {
     if (
         days_old > 90 &&
         days_old < 365 &&
-        last_active_date.getFullYear() === current_date.getFullYear()
+        persian_year(last_active_date) === persian_year(current_date)
     ) {
         // Online more than 90 days ago, in the same year
         return $t(
@@ -385,7 +391,7 @@ function render_date_span($elem: JQuery, rendered_time: TimeRender): JQuery {
 
 // Given an Date object 'time', return a DOM node that initially
 // displays the human-formatted date, and is updated automatically as
-// necessary (e.g. changing "Today" to "Yesterday" to "Jul 1").
+// necessary (e.g. changing "Today" to "Yesterday" to "۱ فروردین").
 
 // (What's actually spliced into the message template is the contents
 // of this DOM node as HTML, so effectively a copy of the node. That's
@@ -520,7 +526,7 @@ export function format_time_modern(time: number | Date, today = new Date()): str
 export function absolute_time(timestamp: number): string {
     const today = new Date();
     const date = new Date(timestamp);
-    const is_older_year = today.getFullYear() > date.getFullYear();
+    const is_older_year = date < today && persian_year(today) !== persian_year(date);
 
     return get_localized_date_or_time_for_format(
         date,
@@ -542,7 +548,7 @@ export function get_full_datetime_clarification(
     time: Date,
     time_format: TimeFormat = "time_sec",
 ): string {
-    const date_string = time.toLocaleDateString(user_settings.default_language, {
+    const date_string = time.toLocaleDateString(persian_locale, {
         timeZone: display_time_zone,
     });
     let time_string = get_localized_date_or_time_for_format(time, time_format);

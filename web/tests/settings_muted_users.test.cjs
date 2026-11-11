@@ -40,14 +40,14 @@ run_test("settings", ({override}) => {
         assert.deepEqual(list, [
             {
                 date_muted: 1577836800000,
-                date_muted_str: "Jan 1, 2020",
+                date_muted_str: "۱۱ دی ۱۳۹۸",
                 user_id: 5,
                 user_name: "Feivel Fiverson",
                 can_unmute: true,
             },
             {
                 date_muted: 1577836900000,
-                date_muted_str: "Jan 1, 2020",
+                date_muted_str: "۱۱ دی ۱۳۹۸",
                 user_id: 10,
                 user_name: "translated: Unknown user",
                 can_unmute: false,

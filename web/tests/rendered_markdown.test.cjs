@@ -689,7 +689,7 @@ run_test("audio", ({mock_template}) => {
 
 run_test("timestamp", ({mock_template}) => {
     mock_template("markdown_timestamp.hbs", true, (data, html) => {
-        assert.deepEqual(data, {text: "Thu, Jan 1, 1970, 12:00 AM"});
+        assert.deepEqual(data, {text: "۱۳۴۸ دی ۱۱, پنجشنبه، ۱۲:۰۰ ق.ظ."});
         return html;
     });
 
@@ -711,7 +711,7 @@ run_test("timestamp", ({mock_template}) => {
     // Final asserts
     assert.equal(
         $timestamp.html(),
-        '<span class="timestamp-content-wrapper">\n    <i class="zulip-icon zulip-icon-clock markdown-timestamp-icon"></i>Thu, Jan 1, 1970, 12:00 AM</span>',
+        '<span class="timestamp-content-wrapper">\n    <i class="zulip-icon zulip-icon-clock markdown-timestamp-icon"></i>۱۳۴۸ دی ۱۱, پنجشنبه، ۱۲:۰۰ ق.ظ.</span>',
     );
     assert.equal($timestamp_invalid.text(), "never-been-set");
 });
@@ -719,7 +719,7 @@ run_test("timestamp", ({mock_template}) => {
 run_test("timestamp-twenty-four-hour-time", ({mock_template, override}) => {
     mock_template("markdown_timestamp.hbs", true, (data, html) => {
         // sanity check incoming data
-        assert.ok(data.text.startsWith("Wed, Jul 15, 2020, "));
+        assert.ok(data.text.startsWith("۱۳۹۹ تیر ۲۵, چهارشنبه، "));
         return html;
     });
 
@@ -733,14 +733,14 @@ run_test("timestamp-twenty-four-hour-time", ({mock_template, override}) => {
     rm.update_elements($content);
     assert.equal(
         $timestamp.html(),
-        '<span class="timestamp-content-wrapper">\n    <i class="zulip-icon zulip-icon-clock markdown-timestamp-icon"></i>Wed, Jul 15, 2020, 20:40</span>',
+        '<span class="timestamp-content-wrapper">\n    <i class="zulip-icon zulip-icon-clock markdown-timestamp-icon"></i>۱۳۹۹ تیر ۲۵, چهارشنبه، ۲۰:۴۰</span>',
     );
 
     override(user_settings, "twenty_four_hour_time", false);
     rm.update_elements($content);
     assert.equal(
         $timestamp.html(),
-        '<span class="timestamp-content-wrapper">\n    <i class="zulip-icon zulip-icon-clock markdown-timestamp-icon"></i>Wed, Jul 15, 2020, 8:40 PM</span>',
+        '<span class="timestamp-content-wrapper">\n    <i class="zulip-icon zulip-icon-clock markdown-timestamp-icon"></i>۱۳۹۹ تیر ۲۵, چهارشنبه، ۸:۴۰ ب.ظ.</span>',
     );
 });
 

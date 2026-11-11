@@ -38,7 +38,7 @@ run_test("settings", ({override, override_rewire}) => {
         assert.deepEqual(list, [
             {
                 date_updated: 1577836800000,
-                date_updated_str: "Jan 1, 2020",
+                date_updated_str: "۱۱ دی ۱۳۹۸",
                 stream: frontend.name,
                 stream_id: frontend.stream_id,
                 topic: "js",

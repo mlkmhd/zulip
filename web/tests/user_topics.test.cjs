@@ -224,7 +224,7 @@ test("get_mutes", () => {
     assert.deepEqual(all_muted_topics, [
         {
             date_updated: 1577836700000,
-            date_updated_str: "Dec 31, 2019",
+            date_updated_str: "۱۰ دی ۱۳۹۸",
             stream: devel.name,
             stream_id: devel.stream_id,
             topic: "java",
@@ -232,7 +232,7 @@ test("get_mutes", () => {
         },
         {
             date_updated: 1577836800000,
-            date_updated_str: "Jan 1, 2020",
+            date_updated_str: "۱۱ دی ۱۳۹۸",
             stream: office.name,
             stream_id: office.stream_id,
             topic: "gossip",
@@ -270,7 +270,7 @@ test("get_unmutes", () => {
     assert.deepEqual(all_unmuted_topics, [
         {
             date_updated: 1577836700000,
-            date_updated_str: "Dec 31, 2019",
+            date_updated_str: "۱۰ دی ۱۳۹۸",
             stream: devel.name,
             stream_id: devel.stream_id,
             topic: "java",
@@ -278,7 +278,7 @@ test("get_unmutes", () => {
         },
         {
             date_updated: 1577836800000,
-            date_updated_str: "Jan 1, 2020",
+            date_updated_str: "۱۱ دی ۱۳۹۸",
             stream: office.name,
             stream_id: office.stream_id,
             topic: "gossip",
@@ -316,7 +316,7 @@ test("get_follows", () => {
     assert.deepEqual(all_followed_topics, [
         {
             date_updated: 1577836700000,
-            date_updated_str: "Dec 31, 2019",
+            date_updated_str: "۱۰ دی ۱۳۹۸",
             stream: devel.name,
             stream_id: devel.stream_id,
             topic: "java",
@@ -324,7 +324,7 @@ test("get_follows", () => {
         },
         {
             date_updated: 1577836800000,
-            date_updated_str: "Jan 1, 2020",
+            date_updated_str: "۱۱ دی ۱۳۹۸",
             stream: office.name,
             stream_id: office.stream_id,
             topic: "gossip",
@@ -384,7 +384,7 @@ test("set_user_topics", () => {
         [
             {
                 date_updated: 1577836800000,
-                date_updated_str: "Jan 1, 2020",
+                date_updated_str: "۱۱ دی ۱۳۹۸",
                 stream: social.name,
                 stream_id: social.stream_id,
                 topic: "breakfast",
@@ -392,7 +392,7 @@ test("set_user_topics", () => {
             },
             {
                 date_updated: 1577836800000,
-                date_updated_str: "Jan 1, 2020",
+                date_updated_str: "۱۱ دی ۱۳۹۸",
                 stream: design.name,
                 stream_id: design.stream_id,
                 topic: "typography",
@@ -408,7 +408,7 @@ test("set_user_topics", () => {
         [
             {
                 date_updated: 1577836800000,
-                date_updated_str: "Jan 1, 2020",
+                date_updated_str: "۱۱ دی ۱۳۹۸",
                 stream: office.name,
                 stream_id: office.stream_id,
                 topic: "lunch",
@@ -424,7 +424,7 @@ test("set_user_topics", () => {
         [
             {
                 date_updated: 1577836800000,
-                date_updated_str: "Jan 1, 2020",
+                date_updated_str: "۱۱ دی ۱۳۹۸",
                 stream: devel.name,
                 stream_id: devel.stream_id,
                 topic: "dinner",

@@ -74,12 +74,12 @@ test("get_mutes", () => {
     assert.deepEqual(all_muted_users, [
         {
             date_muted: 1577836800000,
-            date_muted_str: "Jan 1, 2020",
+            date_muted_str: "۱۱ دی ۱۳۹۸",
             id: 6,
         },
         {
             date_muted: 1577836800000,
-            date_muted_str: "Jan 1, 2020",
+            date_muted_str: "۱۱ دی ۱۳۹۸",
             id: 4,
         },
     ]);
@@ -98,12 +98,12 @@ test("initialize", () => {
     assert.deepEqual(muted_users.get_muted_users(), [
         {
             date_muted: 1577836800000,
-            date_muted_str: "Jan 1, 2020",
+            date_muted_str: "۱۱ دی ۱۳۹۸",
             id: 3,
         },
         {
             date_muted: 1577836800000,
-            date_muted_str: "Jan 1, 2020",
+            date_muted_str: "۱۱ دی ۱۳۹۸",
             id: 2,
         },
     ]);
