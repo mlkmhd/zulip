@@ -108,7 +108,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if [[ "$TAG" =~ ^[0-9]+\.[0-9]+(-[0-9a-z]+)?$ ]]; then
+          if [[ "$TAG" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9a-z]+)?$ ]]; then
               echo "version=$TAG" >> "$GITHUB_OUTPUT"
           fi
 
@@ -413,7 +413,7 @@ jobs:
               printf '\n[Production test run](%s/%s/actions/runs/%s)\n' \
                   "$GITHUB_SERVER_URL" "$GH_REPO" "$GITHUB_RUN_ID" >> release-notes.md
               previous_tag=$(jq -rs '[.[][] | select(.draft == false and .prerelease == false)][0].tag_name // empty' <<< "$releases")
-              if [[ "$previous_tag" =~ ^[0-9]+\.[0-9]+$ ]]; then
+              if [[ "$previous_tag" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
                   printf '\n## Commits since %s\n\n' "$previous_tag" >> release-notes.md
                   gh api --paginate "repos/$GH_REPO/compare/$previous_tag...$RELEASE_VERSION" |
                       jq -r '.commits[] | "- " + (.commit.message | split("\n")[0]) + " (" + .sha[0:7] + ")"' >> release-notes.md
