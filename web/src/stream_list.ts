@@ -156,6 +156,7 @@ export function update_streams_sidebar_for_messages(messages: Message[]): void {
 
 export let show_channel_topics_panel = function (stream_id: number): void {
     zoomed_in = true;
+    $("body").removeClass("channel-topics-panel-closing");
     popovers.hide_all();
     zoom_in_topics(stream_id);
     topic_list.zoom_in(get_stream_li(stream_id, true)!, stream_id);
@@ -173,6 +174,26 @@ export function zoom_out(): void {
     topic_list.zoom_out();
     zoom_out_topics();
     scroll_stream_into_view();
+}
+
+async function close_channel_topics_panel(): Promise<void> {
+    const $body = $("body");
+    if ($body.hasClass("channel-topics-panel-closing")) {
+        return;
+    }
+
+    browser_history.update_current_history_state_data({show_more_topics: false});
+    $body.addClass("channel-topics-panel-closing");
+    const row = zoomed_in_row;
+    const animations = document.querySelector("#left-sidebar-modal")?.getAnimations() ?? [];
+    if (animations.length > 0) {
+        await Promise.allSettled(animations.map(async (animation) => animation.finished));
+    }
+
+    // Navigation can replace the panel or cancel the transition during closing.
+    if (zoomed_in_row === row && $body.hasClass("channel-topics-panel-closing")) {
+        zoom_out();
+    }
 }
 
 export function clear_topics(): void {
@@ -769,6 +790,7 @@ export function zoom_in_topics(stream_id: number): void {
 }
 
 export function zoom_out_topics(): void {
+    $("body").removeClass("channel-topics-panel-closing");
     $("body, #left-sidebar, #left-sidebar-modal").removeClass("channel-topics-panel-open");
     $("#left-sidebar").removeClass("zoom-in");
     $("#left-sidebar").removeClass("zoom-in-topics");
@@ -1313,8 +1335,7 @@ export function initialize({
     });
 
     $("body").on("click", ".channel-topics-panel-open .left-sidebar-modal-close-area", (e) => {
-        zoom_out();
-        browser_history.update_current_history_state_data({show_more_topics: false});
+        void close_channel_topics_panel();
 
         e.preventDefault();
         e.stopPropagation();
@@ -1325,8 +1346,7 @@ export function initialize({
             return;
         }
 
-        zoom_out();
-        browser_history.update_current_history_state_data({show_more_topics: false});
+        void close_channel_topics_panel();
 
         e.preventDefault();
         e.stopPropagation();

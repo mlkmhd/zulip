@@ -2765,12 +2765,15 @@ body:not(.spectator-view)
     body.channel-topics-panel-open:not(.hide-left-sidebar) {
         --channel-topics-panel-width: 18em;
 
-        .column-middle,
-        #compose-content {
-            margin-left: calc(
-                var(--left-sidebar-width) + var(--left-sidebar-padding-left) +
-                    var(--channel-topics-panel-width)
-            );
+        &:not(.channel-topics-panel-closing) {
+            .column-middle,
+            #compose-content {
+                margin-left: calc(
+                    var(--left-sidebar-width) +
+                        var(--left-sidebar-padding-left) +
+                        var(--channel-topics-panel-width)
+                );
+            }
         }
 
         #left-sidebar.channel-topics-panel-open #left-sidebar-modal {
@@ -2795,35 +2798,34 @@ body:not(.spectator-view)
 }
 
 @media (width >= 1440px) and (prefers-reduced-motion: no-preference) {
-    body.channel-topics-panel-open:not(.hide-left-sidebar) {
-        .column-middle,
-        #compose-content {
-            animation: make-room-for-channel-topics 200ms ease-out;
-        }
-
-        #left-sidebar.channel-topics-panel-open #left-sidebar-modal {
-            animation: reveal-channel-topics 200ms ease-out;
-        }
-    }
-}
-
-@keyframes make-room-for-channel-topics {
-    from {
-        /* The chat content needs to reflow as its available width changes. */
-        /* stylelint-disable-next-line plugin/no-low-performance-animation-properties */
-        margin-left: calc(
-            var(--left-sidebar-width) + var(--left-sidebar-padding-left)
-        );
-    }
-}
-
-@keyframes reveal-channel-topics {
-    from {
+    #left-sidebar:not(.channel-topics-panel-open, .zoom-in-topics)
+        #left-sidebar-modal {
         clip-path: inset(0 100% 0 0);
     }
 
-    to {
-        clip-path: inset(0);
+    body.channel-topics-panel-open:not(.hide-left-sidebar) {
+        --channel-topics-transition-easing: ease-out;
+
+        &.channel-topics-panel-closing {
+            --channel-topics-transition-easing: ease-in;
+
+            #left-sidebar.channel-topics-panel-open #left-sidebar-modal {
+                clip-path: inset(0 100% 0 0);
+            }
+        }
+
+        .column-middle,
+        #compose-content {
+            /* The chat content needs to reflow as its available width changes. */
+            /* stylelint-disable-next-line plugin/no-low-performance-animation-properties */
+            transition: margin-left 200ms
+                var(--channel-topics-transition-easing);
+        }
+
+        #left-sidebar.channel-topics-panel-open #left-sidebar-modal {
+            clip-path: inset(0);
+            transition: clip-path 200ms var(--channel-topics-transition-easing);
+        }
     }
 }
 
