@@ -800,6 +800,7 @@ function build_stream_sidebar_li(sub: StreamSubscription, for_modal = false): JQ
     const url = hash_util.channel_url_by_user_setting(sub.stream_id);
     const args = {
         name,
+        avatar_initials: [...name.trim()][0]?.toUpperCase(),
         id: sub.stream_id,
         url,
         is_muted,

@@ -577,6 +577,7 @@ test_ui("rename_stream", ({mock_template, override, override_rewire}) => {
     mock_template("stream_sidebar_row.hbs", false, (payload) => {
         assert.deepEqual(payload, {
             name: "Development",
+            avatar_initials: "D",
             id: 1000,
             url: "#narrow/channel/1000-Development",
             is_muted: false,

@@ -1771,11 +1771,35 @@ li.active-sub-filter {
     }
 }
 
+.dm-box.dm-user-status,
+.subscription_block:has(.channel-avatar) {
+    --sidebar-avatar-size: 2.5em;
+
+    box-sizing: border-box;
+    block-size: 3em;
+    border-block-end: 1px solid transparent;
+}
+
+.dm-box .dm-avatar,
+.subscription_block .channel-avatar {
+    grid-area: starting-anchor-element;
+    place-self: center;
+    position: relative;
+    inline-size: var(--sidebar-avatar-size);
+    block-size: var(--sidebar-avatar-size);
+    border-radius: 4px;
+
+    .sidebar-avatar-initials {
+        font-size: 0.85em;
+    }
+}
+
 .subscription_block {
     user-select: text;
     grid-template-columns:
         var(--left-sidebar-toggle-width-offset) var(
-            --left-sidebar-icon-column-width
+            --sidebar-avatar-size,
+            var(--left-sidebar-icon-column-width)
         )
         var(--left-sidebar-icon-content-gap) minmax(0, 1fr) minmax(
             0,
@@ -1829,6 +1853,19 @@ li.active-sub-filter {
         &:hover {
             text-decoration: none;
         }
+    }
+
+    .channel-avatar .channel-privacy-icon {
+        position: absolute;
+        inset-block-end: 0;
+        inset-inline-end: 0;
+        display: grid;
+        place-items: center;
+        padding: 2px;
+        border-radius: 50%;
+        background-color: var(--color-background);
+        font-size: 0.75em;
+        line-height: 1;
     }
 }
 
@@ -2338,7 +2375,7 @@ li.topic-list-item {
     user-select: text;
     grid-template-columns:
         var(--left-sidebar-toggle-width-offset) [action-heading-start] var(
-            --dm-avatar-size,
+            --sidebar-avatar-size,
             var(--left-sidebar-icon-column-width)
         )
         var(--left-sidebar-icon-content-gap) minmax(0, 1fr)
@@ -2347,12 +2384,6 @@ li.topic-list-item {
     grid-template-rows: [action-heading-start] auto [action-heading-end];
 
     &.dm-user-status {
-        --dm-avatar-size: 2.5em;
-
-        box-sizing: border-box;
-        block-size: 3em;
-        border-block-end: 1px solid transparent;
-
         .conversation-partners,
         .dm-markers-and-unreads {
             align-self: center;
@@ -2365,22 +2396,12 @@ li.topic-list-item {
     }
 
     .dm-avatar {
-        grid-area: starting-anchor-element;
-        place-self: center;
-        position: relative;
-        inline-size: var(--dm-avatar-size);
-        block-size: var(--dm-avatar-size);
-
-        .sidebar-avatar-initials {
-            font-size: 0.85em;
-        }
-
         img {
             display: block;
             width: 100%;
             height: 100%;
             object-fit: cover;
-            border-radius: 50%;
+            border-radius: inherit;
         }
     }
 

@@ -736,7 +736,7 @@ function initials_avatar_url(person: User | CurrentUser): string | undefined {
     }
 
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="50" fill="#36559b"/>
+        <rect width="100" height="100" fill="#36559b"/>
         <text x="50" y="50" text-anchor="middle" dominant-baseline="central"
             fill="#fff" font-family="sans-serif" font-size="38" font-weight="600">${_.escape(initials)}</text>
     </svg>`;

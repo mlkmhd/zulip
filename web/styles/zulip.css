@@ -1046,7 +1046,7 @@ div.focused-message-list.is-conversation-view .recipient_row {
     place-items: center;
     width: 100%;
     height: 100%;
-    border-radius: 50%;
+    border-radius: inherit;
     background-color: hsl(224deg 48% 41%);
     color: hsl(0deg 0% 100%);
     font-size: 0.625em;
