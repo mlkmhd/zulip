@@ -137,7 +137,7 @@ tr.admin td:first-child {
         cursor: pointer;
         background-color: hsl(0deg 0% 100%);
         vertical-align: text-bottom;
-        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-family: Vazir, "Helvetica Neue", Helvetica, Arial, sans-serif;
 
         &:focus {
             outline: 1px dotted hsl(0deg 0% 20%);
@@ -235,7 +235,7 @@ tr.admin td:first-child {
     padding: 6px 12px;
     display: inline-block;
     margin-bottom: 0;
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-family: Vazir, "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: 14px;
     font-weight: normal;
     line-height: 1.4286;

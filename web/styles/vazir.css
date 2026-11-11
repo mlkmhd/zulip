@@ -1,0 +1,27 @@
+/* Vazir v30.1.0, restricted to Arabic-script characters in mixed text. */
+@font-face {
+    font-family: Vazir;
+    src: url("../fonts/vazir/Vazir-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-display: swap;
+    unicode-range:
+        U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+@font-face {
+    font-family: Vazir;
+    src: url("../fonts/vazir/Vazir-Medium.woff2") format("woff2");
+    font-weight: 500;
+    font-display: swap;
+    unicode-range:
+        U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}
+
+@font-face {
+    font-family: Vazir;
+    src: url("../fonts/vazir/Vazir-Bold.woff2") format("woff2");
+    font-weight: 700;
+    font-display: swap;
+    unicode-range:
+        U+0600-06FF, U+0750-077F, U+0870-08FF, U+FB50-FDFF, U+FE70-FEFF;
+}

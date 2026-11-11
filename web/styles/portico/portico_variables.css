@@ -8,8 +8,8 @@
     --color-text-marketing-page: hsl(223deg 6% 25%);
     --color-background-solid-hero: var(--color-background-gradient-start);
     --color-text-hero: hsl(0deg 0% 100%);
-    --font-ss3: "Source Sans 3 VF", sans-serif;
-    --font-ops: "Open Sans Variable", sans-serif;
+    --font-ss3: "Vazir", "Source Sans 3 VF", sans-serif;
+    --font-ops: "Vazir", "Open Sans Variable", sans-serif;
     --color-background-box: hsl(210deg 44% 92%);
     --color-background-box-muted: hsl(0deg 0% 100% / 50%);
     --color-background-box-muted-hover: hsl(0deg 0% 100% / 60%);

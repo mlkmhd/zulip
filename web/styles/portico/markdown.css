@@ -372,7 +372,7 @@
 
     & code {
         /* Same font-family as zulip.css */
-        font-family: "Source Code Pro", monospace;
+        font-family: Vazir, "Source Code Pro", monospace;
         /* Same as base rules for code elements in rendered_markdown.css */
         font-size: 0.825em;
         unicode-bidi: embed;
@@ -579,7 +579,7 @@
     & pre {
         padding: 9.5px;
         margin: 15px 0;
-        font-family: "Source Code Pro", monospace;
+        font-family: Vazir, "Source Code Pro", monospace;
         font-size: 14px;
         color: hsl(0deg 0% 0%);
         word-break: break-all;

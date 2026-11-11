@@ -127,7 +127,7 @@ html {
             margin-bottom: 10px;
             cursor: pointer;
             background-color: hsl(0deg 0% 100%);
-            font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+            font-family: Vazir, "Helvetica Neue", Helvetica, Arial, sans-serif;
         }
     }
 
@@ -416,7 +416,7 @@ html {
         vertical-align: top;
         padding: 13px 22px;
 
-        font-family: "Source Sans 3 VF", sans-serif;
+        font-family: Vazir, "Source Sans 3 VF", sans-serif;
 
         font-size: 1.2rem;
         font-weight: 400;
@@ -552,7 +552,7 @@ html {
             padding: 10.5px 32px 10.5px 12px;
             margin: 25px 0 5px;
 
-            font-family: "Source Sans 3 VF", sans-serif;
+            font-family: Vazir, "Source Sans 3 VF", sans-serif;
             font-size: 1.2rem;
             line-height: normal;
             height: auto;

@@ -2444,7 +2444,7 @@ input.settings_text_input:disabled {
     }
 
     .integration-url {
-        font-family: "Source Code Pro", monospace;
+        font-family: Vazir, "Source Code Pro", monospace;
         background-color: var(--color-background-integration-url);
         padding: 10px;
         font-size: 0.85rem;

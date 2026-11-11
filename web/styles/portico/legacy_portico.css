@@ -15,7 +15,7 @@
 body {
     margin: 0;
     background-color: hsl(0deg 0% 98%);
-    font-family: "Source Sans 3 VF", sans-serif;
+    font-family: Vazir, "Source Sans 3 VF", sans-serif;
     line-height: 150%;
     height: 100%;
     font-weight: 300;
@@ -374,7 +374,7 @@ html {
 }
 
 .title {
-    font-family: Helvetica, sans-serif;
+    font-family: Vazir, Helvetica, sans-serif;
     font-size: 100px;
     font-weight: bold;
     margin-top: 50px;
@@ -1033,7 +1033,7 @@ input#terminal:checked ~ #tab-terminal {
     padding: 20px 10px 50px;
     height: 100%;
     background-color: hsl(163deg 42% 85%);
-    font-family: "Source Sans 3 VF", sans-serif;
+    font-family: Vazir, "Source Sans 3 VF", sans-serif;
 }
 
 .error_page img {
@@ -1361,7 +1361,7 @@ label.label-title {
 
 .api-argument {
     .api-argument-name {
-        font-family: "Source Code Pro", monospace;
+        font-family: Vazir, "Source Code Pro", monospace;
 
         .api-argument-hover-link i.fa {
             opacity: 0;
@@ -1461,7 +1461,7 @@ label.label-title {
 
     #desktop-data {
         padding: 13px 12px 12px;
-        font-family: "Source Code Pro", monospace;
+        font-family: Vazir, "Source Code Pro", monospace;
     }
 }
 

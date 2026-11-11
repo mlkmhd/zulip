@@ -35,7 +35,7 @@ body {
         var(--legacy-body-line-height-unitless),
         var(--base-line-height-unitless)
     );
-    font-family: "Source Sans 3 VF", sans-serif;
+    font-family: Vazir, "Source Sans 3 VF", sans-serif;
     color: var(--color-text-default);
     background-color: var(--color-background);
 
@@ -160,7 +160,7 @@ a:focus {
 
 code,
 pre {
-    font-family: "Source Code Pro", monospace;
+    font-family: Vazir, "Source Code Pro", monospace;
 }
 
 .no-select {
@@ -1240,12 +1240,12 @@ nav {
 }
 
 .operator_value {
-    font-family: "Source Code Pro", monospace;
+    font-family: Vazir, "Source Code Pro", monospace;
     color: hsl(353deg 70% 65%);
 }
 
 .operator {
-    font-family: "Source Code Pro", monospace;
+    font-family: Vazir, "Source Code Pro", monospace;
 }
 
 #top-of-feed-gutter {

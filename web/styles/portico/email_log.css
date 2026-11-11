@@ -1,7 +1,7 @@
 #dev-email-log-container {
     .dev-email-log-header {
         position: fixed;
-        font-family: sans-serif;
+        font-family: Vazir, sans-serif;
         font-size: 14px;
     }
 
@@ -48,7 +48,8 @@
         }
 
         .email-text pre {
-            font-family: Monaco, Menlo, Consolas, "Courier New", monospace;
+            font-family:
+                Vazir, Monaco, Menlo, Consolas, "Courier New", monospace;
             color: hsl(0deg 0% 20%);
             display: block;
             padding: 9.5px;
