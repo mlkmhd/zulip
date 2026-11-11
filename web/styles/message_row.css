@@ -5,6 +5,8 @@
 }
 
 .message_row {
+    --message-background: var(--color-background-stream-message-content);
+
     display: grid;
     /* Prevent the messagebox column from overflowing the 1fr
        space allotted by specifying `minmax(0,1fr)`, which
@@ -17,42 +19,30 @@
 
     border-left: 1px solid var(--color-message-list-border);
     border-right: 1px solid var(--color-message-list-border);
-    background-color: var(--color-background-stream-message-content);
+    background-color: var(--message-background);
 
     &.private-message {
-        background-color: var(--color-background-private-message-content);
+        --message-background: var(--color-background-private-message-content);
+    }
 
-        .data-container::after {
-            background: linear-gradient(
-                0deg,
-                var(--color-background-private-message-content),
-                transparent 100%
-            );
-        }
+    &.own-message {
+        --message-background: var(--color-background-own-message-content);
     }
 
     &.direct_mention {
-        background-color: var(--color-background-direct-mention);
-
-        .message_embed .data-container::after {
-            background: linear-gradient(
-                0deg,
-                var(--color-background-direct-mention),
-                transparent 100%
-            );
-        }
+        --message-background: var(--color-background-direct-mention);
     }
 
     &.group_mention {
-        background-color: var(--color-background-group-mention);
+        --message-background: var(--color-background-group-mention);
+    }
 
-        .message_embed .data-container::after {
-            background: linear-gradient(
-                0deg,
-                var(--color-background-group-mention),
-                transparent 100%
-            );
-        }
+    .message_embed .data-container::after {
+        background: linear-gradient(
+            0deg,
+            var(--message-background),
+            transparent 100%
+        );
     }
 
     &.sender_info_hovered {
@@ -1402,5 +1392,178 @@
     .zulip-icon.zulip-icon-hashtag {
         font-size: 0.9286em; /* 13px at 14px/1em */
         vertical-align: -0.1429em; /* -2px at 14px/1em */
+    }
+}
+
+.message-avatar.continuation-avatar {
+    display: none;
+}
+
+.message-feed .recipient_row .message_row {
+    --message-bubble-avatar-size: 2.35em;
+    --message-avatar-gutter: calc(var(--message-bubble-avatar-size) + 1em);
+    --message-bubble-background: var(--message-background);
+
+    background-color: transparent;
+
+    &,
+    &:last-of-type {
+        border: 0;
+    }
+
+    &:not(.own-message, .direct_mention, .group_mention) {
+        --message-bubble-background: var(
+            --color-background-received-message-bubble
+        );
+    }
+
+    .message_embed .data-container::after {
+        background: linear-gradient(
+            0deg,
+            var(--message-bubble-background),
+            transparent 100%
+        );
+    }
+
+    > .messagebox {
+        padding: 0.125em 0.75em 0.125em var(--message-avatar-gutter);
+    }
+
+    > .messagebox:has(.content_edit_mode) {
+        padding-inline: 0.75em;
+    }
+
+    &.messagebox-includes-sender > .messagebox {
+        padding-top: 0.5em;
+    }
+
+    .messagebox-content {
+        background-color: var(--message-bubble-background);
+        border-radius: 1.1em;
+    }
+
+    .messagebox-content:not(.content_edit_mode) {
+        position: relative;
+        width: fit-content;
+        max-width: min(100%, 42em);
+        box-sizing: border-box;
+        padding: 0.35em 0.75em 0.25em;
+        grid-template:
+            "sender    sender    sender" auto
+            "message   message   message" auto
+            "more      more      more" auto
+            "reactions reactions reactions" auto
+            "reminders reminders reminders" auto
+            "edited    controls  time" auto
+            / minmax(0, 1fr) auto auto;
+        align-items: center;
+
+        .message_sender {
+            grid-area: sender;
+        }
+
+        .message_sender:not(:has(.sender_name)) {
+            display: none;
+        }
+
+        .message_content:not(.status-message) {
+            margin-top: 0;
+            padding-top: 0;
+
+            > p:only-child {
+                margin-bottom: 0;
+            }
+        }
+
+        .message-avatar {
+            display: none;
+            position: absolute;
+            bottom: 0;
+            right: calc(100% + 0.5em);
+
+            .inline_profile_picture {
+                width: var(--message-bubble-avatar-size);
+                height: var(--message-bubble-avatar-size);
+                margin: 0;
+            }
+        }
+
+        .message-time {
+            padding: 0 0 0 0.3em;
+            line-height: 1.2;
+            white-space: nowrap;
+        }
+    }
+
+    &.own-message {
+        > .messagebox {
+            padding-right: var(--message-avatar-gutter);
+            padding-left: 0.75em;
+        }
+
+        .messagebox-content:not(.content_edit_mode) {
+            margin-left: auto;
+
+            .message-avatar {
+                right: auto;
+                left: calc(100% + 0.5em);
+            }
+        }
+    }
+
+    /* Show the avatar and bubble tail at the end of the sender's run. */
+    &:not(:has(+ .message_row:not(.messagebox-includes-sender))) {
+        .messagebox-content:not(.content_edit_mode) {
+            border-bottom-left-radius: 0.25em;
+
+            .message-avatar {
+                display: block;
+            }
+
+            &::after {
+                content: "";
+                position: absolute;
+                right: 100%;
+                bottom: 0;
+                width: 0.5em;
+                height: 0.55em;
+                background: radial-gradient(
+                    ellipse at top left,
+                    transparent 69%,
+                    var(--message-bubble-background) 72%
+                );
+                pointer-events: none;
+            }
+        }
+
+        &.own-message .messagebox-content:not(.content_edit_mode) {
+            border-bottom-left-radius: 1.1em;
+            border-bottom-right-radius: 0.25em;
+
+            &::after {
+                right: auto;
+                left: 100%;
+                transform: scaleX(-1);
+            }
+        }
+    }
+
+    .message_feed_divider:has(.date-divider-content):not(:has(.stream-status)) {
+        display: flex;
+        justify-content: center;
+
+        &::before,
+        .date-divider-content::before,
+        .date-divider-content::after {
+            display: none;
+        }
+
+        .date-divider-content {
+            padding: 0.15em 0.85em;
+            border-radius: 1em;
+            background-color: var(--color-background-message-date-pill);
+            text-transform: none;
+            letter-spacing: normal;
+        }
     }
 }

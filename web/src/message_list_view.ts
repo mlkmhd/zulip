@@ -59,6 +59,7 @@ export type MessageContainer = {
     include_recipient: boolean;
     include_sender: boolean;
     is_hidden: boolean;
+    is_own_message?: boolean;
     last_edit_timestamp: number | undefined;
     last_moved_timestamp: number | undefined;
     mention_classname: string | undefined;
@@ -598,6 +599,7 @@ export class MessageListView {
         sender_is_deactivated: boolean;
         should_add_guest_indicator_for_sender: boolean;
         is_hidden: boolean;
+        is_own_message: boolean;
         mention_classname: string | undefined;
         include_sender: boolean;
         status_message: string | false;
@@ -700,6 +702,7 @@ export class MessageListView {
             sender_is_deactivated,
             should_add_guest_indicator_for_sender,
             is_hidden,
+            is_own_message: people.is_my_user_id(message.sender_id),
             mention_classname,
             include_sender,
             ...this._maybe_get_me_message(is_hidden, message),

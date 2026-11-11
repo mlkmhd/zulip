@@ -21,6 +21,7 @@ mock_esm("../src/timerender", {
 });
 
 mock_esm("../src/people", {
+    is_my_user_id: (user_id) => user_id === 1,
     sender_is_bot: () => false,
     sender_is_guest: () => false,
     sender_is_deactivated: () => false,
@@ -354,6 +355,17 @@ test("rerender_messages rebuilds every distinct recipient bar", () => {
 
     // One header rerender per distinct bar; the rowless message is skipped.
     assert.deepEqual(rerendered_group_ids, ["group-A", "group-B"]);
+});
+
+test("own_message_vars", () => {
+    const view = new MessageListView({id: 1}, true, true);
+    view._get_message_edited_and_moved_vars = noop;
+
+    const own_message = view.get_calculated_message_container_variables({sender_id: 1}, true);
+    const received_message = view.get_calculated_message_container_variables({sender_id: 2}, true);
+
+    assert.equal(own_message.is_own_message, true);
+    assert.equal(received_message.is_own_message, false);
 });
 
 test("muted_message_vars", () => {
