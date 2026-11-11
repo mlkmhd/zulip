@@ -1696,6 +1696,7 @@ run_test("delete_message_private", ({override}) => {
     override(emoji_frequency, "update_emoji_frequency_on_messages_deletion", noop);
     override(message_events, "remove_messages", noop);
 
+    override(pm_list, "invalidate_message_previews", () => false);
     const maybe_remove_stub = make_stub();
     override(pm_conversations.recent, "maybe_remove", maybe_remove_stub.f);
     const update_private_messages_stub = make_stub();
@@ -1723,6 +1724,7 @@ run_test("delete_message_private_not_cached", ({override}) => {
     override(emoji_frequency, "update_emoji_frequency_on_messages_deletion", noop);
     override(message_events, "remove_messages", noop);
 
+    override(pm_list, "invalidate_message_previews", () => false);
     const maybe_remove_stub = make_stub();
     override(pm_conversations.recent, "maybe_remove", maybe_remove_stub.f, {
         unused: false,

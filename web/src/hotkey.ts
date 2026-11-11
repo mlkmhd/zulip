@@ -46,7 +46,6 @@ import * as navigate from "./navigate.ts";
 import * as overlays from "./overlays.ts";
 import {page_params} from "./page_params.ts";
 import * as playground_links_popover from "./playground_links_popover.ts";
-import * as pm_list from "./pm_list.ts";
 import * as popover_menus from "./popover_menus.ts";
 import * as popover_menus_data from "./popover_menus_data.ts";
 import * as popovers from "./popovers.ts";
@@ -496,11 +495,6 @@ function process_escape_key(e: JQuery.KeyDownEvent): boolean {
         // will zoom out, handled below.
         if (stream_list.is_zoomed_in() && $("#topic_filter_query").is(":focus")) {
             topic_list.clear_topic_search(e);
-            return true;
-        }
-
-        if (pm_list.is_zoomed_in() && $(".direct-messages-list-filter").is(":focus")) {
-            pm_list.clear_search();
             return true;
         }
 
@@ -1179,9 +1173,7 @@ function process_hotkey(e: JQuery.KeyDownEvent, hotkey: Hotkey): boolean {
             );
             return true;
         case "query_streams":
-            if (pm_list.is_zoomed_in()) {
-                sidebar_ui.focus_pm_search_filter();
-            } else if (stream_list.is_zoomed_in()) {
+            if (stream_list.is_zoomed_in()) {
                 sidebar_ui.focus_topic_search_filter();
             } else {
                 sidebar_ui.initiate_search();

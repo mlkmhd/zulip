@@ -9,7 +9,6 @@ import ZulipTip from "../../components/ZulipTip.astro";
 import DmFeedInstructions from "../include/_DmFeedInstructions.mdx";
 import FindDmConversationLeftSidebar from "../include/_FindDmConversationLeftSidebar.mdx";
 import MobileDirectMessages from "../include/_MobileDirectMessages.mdx";
-import SearchNoteForDmConversations from "../include/_SearchNoteForDmConversations.mdx";
 import SendDm from "../include/_SendDm.mdx";
 import ViewDmsLeftSidebar from "../include/_ViewDmsLeftSidebar.mdx";
 
@@ -45,13 +44,8 @@ There are a few different ways to view your DM conversations.
 
     One-on-one conversations show the other person's profile picture and
     presence indicator. If they haven't uploaded a picture, you'll see their
-    initials. The sidebar also shows a preview of the most recent message you
-    received from that person.
-
-    <ZulipTip>
-      To return to the channel list in the left sidebar, click the **back to
-      channels** link above the search box.
-    </ZulipTip>
+    initials. The sidebar also shows a preview of the most recent message in
+    the conversation, whether you sent or received it.
   </TabItem>
 
   <TabItem label="Via right sidebar">
@@ -93,8 +87,6 @@ There are a few different ways to view your DM conversations.
 
 <Tabs>
   <TabItem label="Via left sidebar">
-    <SearchNoteForDmConversations />
-
     <FindDmConversationLeftSidebar />
   </TabItem>
 

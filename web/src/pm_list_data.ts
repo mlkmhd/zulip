@@ -8,12 +8,6 @@ import * as unread from "./unread.ts";
 import * as user_status from "./user_status.ts";
 import type {UserStatusEmojiInfo} from "./user_status.ts";
 
-// Maximum number of conversation threads to show in default view.
-const max_conversations_to_show = 8;
-
-// Maximum number of conversation threads to show in default view with unreads.
-const max_conversations_to_show_with_unreads = 15;
-
 export function get_active_user_ids_string(): string | undefined {
     const filter = narrow_state.filter();
 
@@ -148,80 +142,4 @@ export function get_conversations(search_string = ""): DisplayObject[] {
     }
 
     return display_objects;
-}
-
-// Designed to closely match topic_list_data.get_list_info().
-export function get_list_info(
-    zoomed: boolean,
-    search_term = "",
-): {
-    conversations_to_be_shown: DisplayObject[];
-    more_conversations_unread_count: number;
-} {
-    const conversations = get_conversations(search_term);
-
-    if (zoomed) {
-        return {
-            conversations_to_be_shown: conversations,
-            more_conversations_unread_count: 0,
-        };
-    }
-
-    const conversations_to_be_shown = [];
-    let more_conversations_unread_count = 0;
-
-    function should_show_conversation(conversation: DisplayObject): boolean {
-        const current_to_be_shown_count = conversations_to_be_shown.length;
-
-        // We always show the active conversation; see the similar
-        // comment in topic_list_data.ts.
-        if (conversation.is_active) {
-            return true;
-        }
-
-        // We don't need to filter muted users here, because
-        // pm_conversations.ts takes care of this for us.
-
-        // Conversations that include any deactivated users are
-        // hidden from the unzoomed view to declutter the sidebar,
-        // unless they have unread messages since that's still worth
-        // showing.
-        if (conversation.includes_deactivated_user && conversation.unread === 0) {
-            return false;
-        }
-
-        // We include the most recent max_conversations_to_show
-        // conversations, regardless of whether they have unread
-        // messages.
-        if (current_to_be_shown_count < max_conversations_to_show) {
-            return true;
-        }
-
-        // We include older conversations with unread messages up
-        // until max_conversations_to_show_with_unreads total
-        // topics have been included.
-        if (
-            conversation.unread > 0 &&
-            current_to_be_shown_count < max_conversations_to_show_with_unreads
-        ) {
-            return true;
-        }
-
-        // Otherwise, this conversation should only be visible in
-        // the unzoomed view.
-        return false;
-    }
-
-    for (const conversation of conversations) {
-        if (should_show_conversation(conversation)) {
-            conversations_to_be_shown.push(conversation);
-        } else {
-            more_conversations_unread_count += conversation.unread;
-        }
-    }
-
-    return {
-        conversations_to_be_shown,
-        more_conversations_unread_count,
-    };
 }

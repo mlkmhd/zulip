@@ -190,12 +190,6 @@ export function initialize(): void {
     tippy.delegate("body", {
         target: ".dm-tooltip-target",
         onShow(instance) {
-            // Collapsing doesn't happen when the modal is shown.
-            const modal_hidden = $("#direct-messages-modal").hasClass("no-display");
-            if (!modal_hidden) {
-                return false;
-            }
-
             observe_toggle_class(instance, () => {
                 if ($("#toggle-direct-messages-section-icon").hasClass("rotate-icon-down")) {
                     instance.setContent($t({defaultMessage: "Collapse direct messages"}));

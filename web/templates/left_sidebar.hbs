@@ -69,28 +69,6 @@
             <i class="zulip-icon zulip-icon-close"></i>
         </div>
         <div id="left-sidebar-modal-content">
-            <div id="direct-messages-modal" class="no-display">
-                <div id="direct-messages-modal-section-header" class="direct-messages-container">
-                    <h4 class="left-sidebar-title"><span class="dm-tooltip-target">{{t "ALL DIRECT MESSAGES" }}</span></h4>
-                    <div class="left-sidebar-controls">
-                        <a class="show-all-direct-messages tippy-left-sidebar-tooltip-no-label-delay" href="#narrow/is/dm" data-tooltip-template-id="show-all-direct-messages-template">
-                            <i class="zulip-icon zulip-icon-all-messages" aria-label="{{t 'Direct message feed' }}"></i>
-                        </a>
-                        <span class="compose-new-direct-message tippy-left-sidebar-tooltip-no-label-delay auto-hide-left-sidebar-overlay" data-tooltip-template-id="new_direct_message_button_tooltip_template">
-                            <i class="left-sidebar-new-direct-message-icon zulip-icon zulip-icon-square-plus" aria-label="{{t 'New direct message' }}"></i>
-                        </span>
-                    </div>
-                    <div class="heading-markers-and-unreads">
-                        <span class="unread_count"></span>
-                    </div>
-                    <div class="direct-messages-search-section left-sidebar-filter-input-container">
-                        {{#> components/input_wrapper input_type="filter-input" icon="search" input_button_icon="close"}}
-                            <input type="text" class="input-element direct-messages-list-filter home-page-input" autocomplete="off" placeholder="{{t 'Filter direct messages' }}" />
-                        {{/components/input_wrapper}}
-                    </div>
-                </div>
-                <div id="modal-direct-messages-list" class="scrolling_list" data-simplebar data-simplebar-tab-index="-1"></div>
-            </div>
             <div id="more-topics-modal"></div>
         </div>
     </div>

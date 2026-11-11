@@ -26,7 +26,6 @@ import type {Message} from "./message_store.ts";
 import * as mouse_drag from "./mouse_drag.ts";
 import * as narrow_state from "./narrow_state.ts";
 import {page_params} from "./page_params.ts";
-import * as pm_list from "./pm_list.ts";
 import * as popovers from "./popovers.ts";
 import * as scroll_util from "./scroll_util.ts";
 import {web_channel_default_view_values} from "./settings_config.ts";
@@ -157,7 +156,6 @@ export function update_streams_sidebar_for_messages(messages: Message[]): void {
 
 export let show_channel_topics_panel = function (stream_id: number): void {
     zoomed_in = true;
-    pm_list.zoom_out();
     popovers.hide_all();
     zoom_in_topics(stream_id);
     topic_list.zoom_in(get_stream_li(stream_id, true)!, stream_id);
@@ -1565,28 +1563,6 @@ export function set_event_handlers({
         },
     );
 
-    function toggle_pm_header_icon(): void {
-        if (pm_list.is_private_messages_collapsed()) {
-            return;
-        }
-
-        const scroll_position = $(
-            "#left_sidebar_scroll_container .simplebar-content-wrapper",
-        ).scrollTop();
-        const pm_list_height = $("#direct-messages-list").height();
-        assert(scroll_position !== undefined);
-        assert(pm_list_height !== undefined);
-        if (scroll_position > pm_list_height) {
-            $("#toggle-direct-messages-section-icon").addClass("rotate-icon-right");
-            $("#toggle-direct-messages-section-icon").removeClass("rotate-icon-down");
-            pm_list.set_temporarily_collapsed(true);
-        } else {
-            $("#toggle-direct-messages-section-icon").addClass("rotate-icon-down");
-            $("#toggle-direct-messages-section-icon").removeClass("rotate-icon-right");
-            pm_list.set_temporarily_collapsed(false);
-        }
-    }
-
     sidebar_header_sticky_shadow.initialize(
         scroll_util.get_left_sidebar_scroll_container(),
         "#direct-messages-section-header, .stream-list-subsection-header",
@@ -1600,8 +1576,6 @@ export function set_event_handlers({
         mark_scroll_inactive_timeout = setTimeout(() => {
             is_actively_scrolling = false;
         }, 200);
-
-        toggle_pm_header_icon();
     });
 
     $("#streams_list").on(

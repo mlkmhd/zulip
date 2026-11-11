@@ -6,7 +6,6 @@ const list_selectors = [
     "#buddy-list-users-matching-view",
     "#buddy-list-other-users",
     "#buddy-list-participants",
-    "#modal-direct-messages-list",
     "#more-topics-modal .topic-list-scroll-container",
 ];
 
