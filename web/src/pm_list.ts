@@ -95,16 +95,13 @@ function fetch_preview(key: string): void {
     if (version === undefined || cached?.conversation_version === version) {
         return;
     }
-    // Keep the previous preview visible while checking for a newer received message.
+    // Keep the previous preview visible while checking for a newer message.
     const preview: DMPreview = {...cached, conversation_version: version, pending: true};
     dm_previews.set(key, preview);
     void channel.get({
         url: "/json/messages",
         data: {
-            narrow: JSON.stringify([
-                {operator: "dm", operand: [Number(key)]},
-                {operator: "sender", operand: Number(key)},
-            ]),
+            narrow: JSON.stringify([{operator: "dm", operand: [Number(key)]}]),
             anchor: "newest",
             num_before: 1,
             num_after: 0,
