@@ -26,6 +26,7 @@ import * as modals from "./modals.ts";
 import * as overlays from "./overlays.ts";
 import {page_params} from "./page_params.ts";
 import * as people from "./people.ts";
+import * as reload from "./reload.ts";
 import * as settings_components from "./settings_components.ts";
 import * as settings_config from "./settings_config.ts";
 import * as settings_data from "./settings_data.ts";
@@ -306,10 +307,16 @@ export function update_privacy_settings_box(property: PrivacySettingName): void 
 
 export function render_user_timezone_dropdown_widget(): void {
     const now = new Date();
-    const timezone_items = timezones.timezones.map((tz) => ({
-        name: `${tz} (${timerender.get_utc_offset_string(tz, now)})`,
-        unique_id: tz,
-    }));
+    const timezone_items = [
+        {name: $t({defaultMessage: "Automatic (device time zone)"}), unique_id: "auto"},
+        ...timezones.timezones.map((tz) => ({
+            name: `${tz} (${timerender.get_utc_offset_string(tz, now)})`,
+            unique_id: tz,
+        })),
+    ];
+    const current_timezone = timerender.is_tehran_time_zone(user_settings.timezone)
+        ? "Asia/Tehran"
+        : user_settings.timezone || "auto";
 
     const opts: dropdown_widget.DropdownWidgetOptions = {
         widget_name: "user_timezone",
@@ -324,17 +331,20 @@ export function render_user_timezone_dropdown_widget(): void {
             settings_ui.do_settings_change(
                 channel.patch,
                 "/json/settings",
-                {timezone: selected},
+                {timezone: selected === "auto" ? "" : selected},
                 $(".timezone-setting-status").expectOne(),
                 {
                     error_continuation() {
-                        widget.render(user_settings.timezone);
+                        widget.render(current_timezone);
+                    },
+                    success_continuation() {
+                        reload.initiate({immediate: true});
                     },
                 },
             );
         },
         $events_container: $("#profile-settings"),
-        default_id: user_settings.timezone,
+        default_id: current_timezone,
         unique_id_type: "string",
         search_placeholder_text: $t({defaultMessage: "Your time zone"}),
         text_if_current_value_not_in_options: $t({
@@ -927,19 +937,6 @@ export function set_up(): void {
     }
 
     render_user_timezone_dropdown_widget();
-
-    $<HTMLInputElement>("#automatically_offer_update_time_zone").on("change", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-
-        const data = {web_suggest_update_timezone: this.checked};
-        settings_ui.do_settings_change(
-            channel.patch,
-            "/json/settings",
-            data,
-            $(".timezone-setting-status").expectOne(),
-        );
-    });
 
     $("#privacy_settings_box").on("change", "input", function (this: HTMLInputElement, e) {
         e.preventDefault();

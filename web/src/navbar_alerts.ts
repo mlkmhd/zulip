@@ -8,10 +8,8 @@ import * as banners from "./banners.ts";
 import type {AlertBanner} from "./banners.ts";
 import {is_browser_unsupported_old_version} from "./browser_support.ts";
 import type {ActionButton} from "./buttons.ts";
-import * as channel from "./channel.ts";
 import * as demo_organizations_ui from "./demo_organizations_ui.ts";
 import * as desktop_notifications from "./desktop_notifications.ts";
-import * as feedback_widget from "./feedback_widget.ts";
 import {$t} from "./i18n.ts";
 import type {LocalStorage} from "./localstorage.ts";
 import {localstorage} from "./localstorage.ts";
@@ -26,7 +24,6 @@ import * as timerender from "./timerender.ts";
 import * as ui_util from "./ui_util.ts";
 import * as unread from "./unread.ts";
 import * as unread_ops from "./unread_ops.ts";
-import {user_settings} from "./user_settings.ts";
 import * as user_topics from "./user_topics.ts";
 import * as web_ui_version from "./web_ui_version.ts";
 
@@ -169,15 +166,6 @@ export function toggle_organization_profile_incomplete_banner(): void {
         // this is meant to be a one-time task for administrators.
         open_navbar_banner_and_resize(ORGANIZATION_PROFILE_INCOMPLETE_BANNER);
     }
-}
-
-export function should_offer_to_update_timezone(): boolean {
-    // This offer is only for logged-in users with the setting enabled.
-    return (
-        !page_params.is_spectator &&
-        user_settings.web_suggest_update_timezone &&
-        !timerender.is_browser_timezone_same_as(user_settings.timezone)
-    );
 }
 
 const DESKTOP_NOTIFICATIONS_BANNER: AlertBanner = {
@@ -402,37 +390,6 @@ const demo_organization_deadline_banner = (): AlertBanner => {
     };
 };
 
-const time_zone_update_offer_banner = (): AlertBanner => {
-    const browser_time_zone = timerender.browser_time_zone();
-    return {
-        process: "time_zone_update_offer",
-        intent: "info",
-        label: $t(
-            {
-                defaultMessage:
-                    "Your computer's time zone differs from your Zulip profile. Update your time zone to {browser_time_zone}?",
-            },
-            {
-                browser_time_zone,
-            },
-        ),
-        buttons: [
-            {
-                variant: "subtle",
-                label: $t({defaultMessage: "Yes, please!"}),
-                custom_classes: "accept-update-time-zone",
-            },
-            {
-                variant: "text",
-                label: $t({defaultMessage: "No, don't ask again."}),
-                custom_classes: "decline-time-zone-update",
-            },
-        ],
-        close_button: true,
-        custom_classes: "navbar-alert-banner",
-    };
-};
-
 const majority_messages_muted_banner = (percent_muted_messages: number): AlertBanner => {
     const truncated_percent_muted_messages = Math.trunc(percent_muted_messages);
     return {
@@ -522,7 +479,6 @@ export function check_and_show_muted_messages_banner(): void {
 
 export function initialize(): void {
     const ls = localstorage();
-    const browser_time_zone = timerender.browser_time_zone();
     $("#navbar_alerts_wrapper").on(
         "click",
         ".accept-web-ui-version, .decline-web-ui-version",
@@ -564,8 +520,6 @@ export function initialize(): void {
             close_button: false,
             custom_classes: "navbar-alert-banner",
         });
-    } else if (should_offer_to_update_timezone()) {
-        open_navbar_banner_and_resize(time_zone_update_offer_banner());
     } else if (realm.server_needs_upgrade) {
         if (should_show_server_upgrade_banner(ls)) {
             open_navbar_banner_and_resize(SERVER_NEEDS_UPGRADE_BANNER);
@@ -717,81 +671,6 @@ export function initialize(): void {
         },
     );
 
-    $("#navbar_alerts_wrapper").on(
-        "click",
-        ".accept-update-time-zone",
-        function (this: HTMLElement) {
-            const $banner = $(this).closest(".banner");
-            void channel.patch({
-                url: "/json/settings",
-                data: {timezone: browser_time_zone},
-                success() {
-                    close_navbar_banner_and_resize($banner);
-                    feedback_widget.show({
-                        title_text: $t({defaultMessage: "Time zone updated"}),
-                        populate($container) {
-                            $container.text(
-                                $t(
-                                    {
-                                        defaultMessage:
-                                            "Your time zone was updated to {time_zone}.",
-                                    },
-                                    {time_zone: browser_time_zone},
-                                ),
-                            );
-                        },
-                    });
-                },
-                error() {
-                    feedback_widget.show({
-                        title_text: $t({defaultMessage: "Could not update time zone"}),
-                        populate($container) {
-                            $container.text(
-                                $t({defaultMessage: "Unexpected error updating the timezone."}),
-                            );
-                        },
-                    });
-                },
-            });
-        },
-    );
-
-    $("#navbar_alerts_wrapper").on(
-        "click",
-        ".decline-time-zone-update",
-        function (this: HTMLElement) {
-            const $banner = $(this).closest(".banner");
-            void channel.patch({
-                url: "/json/settings",
-                data: {web_suggest_update_timezone: false},
-                success() {
-                    close_navbar_banner_and_resize($banner);
-                    feedback_widget.show({
-                        title_text: $t({defaultMessage: "Setting updated"}),
-                        populate($container) {
-                            $container.text(
-                                $t({
-                                    defaultMessage:
-                                        "You will no longer be prompted to update your time zone.",
-                                }),
-                            );
-                        },
-                    });
-                },
-                error() {
-                    feedback_widget.show({
-                        title_text: $t({defaultMessage: "Unable to update setting"}),
-                        populate($container) {
-                            $container.text(
-                                $t({defaultMessage: "There was an error updating the setting."}),
-                            );
-                        },
-                    });
-                },
-            });
-        },
-    );
-
     $("body").on("click", ".top_left_change_navbar_banners", function (this: HTMLElement) {
         popover_menus.toggle_popover_menu(this, {
             theme: "popover-menu",
@@ -847,10 +726,6 @@ export function initialize(): void {
                     realm.demo_organization_scheduled_deletion_date =
                         new Date("2025-01-30T10:00:00.000Z").getTime() / 1000;
                     open_navbar_banner_and_resize(demo_organization_deadline_banner());
-                    popover_menus.hide_current_popover_if_visible(instance);
-                });
-                $popper.on("click", ".time_zone_update_offer", () => {
-                    open_navbar_banner_and_resize(time_zone_update_offer_banner());
                     popover_menus.hide_current_popover_if_visible(instance);
                 });
             },

@@ -348,6 +348,12 @@ class HomeTest(ZulipTestCase):
 
         self.assertCountEqual(page_params["state_data"]["realm_bots"][0], realm_bots_expected_keys)
 
+    def test_reset_web_time_zone(self) -> None:
+        self.login("hamlet")
+        self.assert_json_success(self.client_patch("/json/settings", {"timezone": "Asia/Tehran"}))
+        self.assert_json_success(self.client_patch("/json/settings", {"timezone": ""}))
+        self.assertEqual(self.example_user("hamlet").timezone, "")
+
     def test_web_ui_version(self) -> None:
         self.login("hamlet")
         result = self._get_home_page()

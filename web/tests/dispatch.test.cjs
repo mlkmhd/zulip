@@ -1508,15 +1508,9 @@ run_test("user_settings", ({override}) => {
     dispatch(event);
     assert_same(user_settings.web_navigate_to_sent_message, false);
 
-    {
-        const event = event_fixtures.user_settings_web_suggest_update_timezone;
-        dispatch(event);
-        assert.equal($("#automatically_offer_update_time_zone").prop("checked"), true);
-
-        event.value = false;
-        dispatch(event);
-        assert.equal($("#automatically_offer_update_time_zone").prop("checked"), false);
-    }
+    event = event_fixtures.user_settings_web_suggest_update_timezone;
+    dispatch(event);
+    assert.equal(user_settings.web_suggest_update_timezone, true);
 
     event = event_fixtures.user_settings__allow_private_data_export;
     override(user_settings, "allow_private_data_export", false);

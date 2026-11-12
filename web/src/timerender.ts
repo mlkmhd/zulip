@@ -23,6 +23,10 @@ let next_timerender_id = 0;
 export let display_time_zone = browser_time_zone();
 export let display_tz = tz(display_time_zone);
 
+export function is_tehran_time_zone(time_zone: string): boolean {
+    return ["Asia/Tehran", "Iran", "Iran/Tehran"].includes(time_zone);
+}
+
 const persian_locale = "fa-IR-u-ca-persian";
 const formatter_map = new Map<string, Intl.DateTimeFormat>();
 let persian_year_formatter: Intl.DateTimeFormat | undefined;
@@ -363,16 +367,17 @@ let update_list: UpdateEntry[] = [];
 let last_update: Date;
 
 export function initialize(): void {
-    if (
-        display_time_zone === undefined || // https://bugs.chromium.org/p/chromium/issues/detail?id=1487920
-        display_time_zone === "Etc/Unknown" // https://bugs.chromium.org/p/chromium/issues/detail?id=1473422
-    ) {
-        set_display_time_zone(user_settings.timezone);
-        try {
-            new Intl.DateTimeFormat(undefined, {timeZone: display_time_zone});
-        } catch {
+    const preferred_zone = user_settings.timezone || browser_time_zone();
+    const time_zone = is_tehran_time_zone(preferred_zone) ? "Asia/Tehran" : preferred_zone;
+    try {
+        if (time_zone === "Etc/Unknown") {
             set_display_time_zone("UTC");
+        } else {
+            new Intl.DateTimeFormat(undefined, {timeZone: time_zone});
+            set_display_time_zone(time_zone ?? "UTC");
         }
+    } catch {
+        set_display_time_zone("UTC");
     }
 
     last_update = startOfToday({in: display_tz});

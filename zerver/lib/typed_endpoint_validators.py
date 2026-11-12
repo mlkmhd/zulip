@@ -73,6 +73,10 @@ def timezone_or_empty_validator() -> AfterValidator:
 
 
 def check_timezone(s: str) -> str:
+    if s == "":
+        return s
+    if s == "Iran/Tehran":
+        return "Asia/Tehran"
     try:
         zoneinfo.ZoneInfo(canonicalize_timezone(s))
     except (ValueError, zoneinfo.ZoneInfoNotFoundError):

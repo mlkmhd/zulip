@@ -12,6 +12,7 @@ import {
 
 import * as common from "./common.ts";
 import type {Suggestion} from "./search_suggestion.ts";
+import {display_tz} from "./timerender.ts";
 
 function get_default_dates(): {
     today: Date;
@@ -268,27 +269,19 @@ export function is_date_valid(date: Date | undefined): boolean {
 }
 
 export function get_unix_seconds_for_local_midnight(date_str?: string): number | null {
-    let date: Date;
-
-    if (date_str) {
-        date = parseISO(date_str);
-    } else {
-        date = new Date();
-    }
-
+    const date = date_str ? parseISO(date_str, {in: display_tz}) : new Date();
     if (!isValid(date)) {
         return null;
     }
 
-    const midnight = startOfDay(date);
+    const midnight = startOfDay(date, {in: display_tz});
     return getUnixTime(midnight);
 }
 
 // Returns the {anchor, anchor_date} pair for fetching messages
 // around a calendar-day operand like "2024-01-15". `anchor_date`
-// is a UTC ISO string for the user's local midnight on that day,
-// since the server expects an unambiguous instant. Returns
-// undefined when the operand is not a parseable date.
+// is a UTC ISO string for midnight on that day in the display time zone.
+// Returns undefined when the operand is not a parseable date.
 export function maybe_get_date_anchor(
     operand: string,
 ): {anchor: "date"; anchor_date: string} | undefined {

@@ -1145,9 +1145,6 @@ export function dispatch_normal_event(event) {
                         !event.value,
                     );
                     break;
-                case "web_suggest_update_timezone":
-                    $("#automatically_offer_update_time_zone").prop("checked", event.value);
-                    break;
                 case "web_channel_default_view": {
                     // We need to rerender wherever `channel_url_by_user_setting` is used in the DOM.
                     // Left sidebar

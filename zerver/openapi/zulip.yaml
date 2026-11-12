@@ -23997,7 +23997,12 @@ paths:
                 timezone:
                   description: |
                     The IANA identifier of the user's [profile time zone](/help/change-your-timezone),
-                    which is used primarily to display the user's local time to other users.
+                    which is used to display the user's local time to other users and to
+                    display dates and times in the web and desktop apps. Pass an empty string
+                    to use the device time zone for display.
+
+                    **Changes**: New in Zulip 14.0 (feature level ZF-a972fe):
+                    support for resetting the time zone with an empty string.
 
                     **Changes**: Before Zulip 5.0 (feature level 80), this setting was managed by
                     the `PATCH /settings/display` endpoint.
