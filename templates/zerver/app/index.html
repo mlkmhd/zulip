@@ -1,5 +1,5 @@
 {% extends "zerver/base.html" %}
-{% set entrypoint = "app" %}
+{% set entrypoint = "app-classic" if use_classic_ui else "app" %}
 {# The app itself. #}
 {# Includes some other templates as tabs. #}
 

@@ -21,7 +21,12 @@ const istanbulPlugin = ["istanbul", {exclude: []}];
 
 /** @type {import("@babel/core").InputOptions} */
 const config = {
-    only: [new RegExp("^" + _.escapeRegExp(path.resolve(import.meta.dirname, "src") + path.sep))],
+    only: ["src", "../var/classic-ui/web/src"].map(
+        (directory) =>
+            new RegExp(
+                "^" + _.escapeRegExp(path.resolve(import.meta.dirname, directory) + path.sep),
+            ),
+    ),
     plugins: [
         ["formatjs", formatJsOptions],
         ["polyfill-corejs3", {method: "usage-global", version: "3.50"}],

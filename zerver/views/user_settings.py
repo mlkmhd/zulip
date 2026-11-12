@@ -1,5 +1,5 @@
 from email.headerregistry import Address
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from django.conf import settings
 from django.contrib.auth import authenticate, update_session_auth_hash
@@ -545,6 +545,15 @@ def json_change_settings(
         do_change_user_setting(user_profile, "timezone", timezone, acting_user=user_profile)
 
     return json_success(request, data=result)
+
+
+@typed_endpoint
+def update_web_ui_version(
+    request: HttpRequest, user_profile: UserProfile, *, version: Literal["classic", "modern"]
+) -> HttpResponse:
+    user_profile.web_ui_version = version
+    user_profile.save(update_fields=["web_ui_version"])
+    return json_success(request)
 
 
 def set_avatar_backend(request: HttpRequest, user_profile: UserProfile) -> HttpResponse:

@@ -6,6 +6,13 @@
         {{> settings_save_discard_widget section_name="general-settings" show_save_discard_buttons=for_realm_settings }}
     </div>
     {{#unless for_realm_settings}}
+        <div class="input-group">
+            <label class="settings-field-label" for="web-ui-version">{{t "Web interface" }}</label>
+            <select class="web-ui-version settings_select bootstrap-focus-style" id="web-ui-version">
+                <option value="classic">{{t "Classic" }}</option>
+                <option value="modern">{{t "Modern" }}</option>
+            </select>
+        </div>
         {{> ../dropdown_widget_with_label
           widget_name="default_language"
           label=settings_label.default_language_settings_label

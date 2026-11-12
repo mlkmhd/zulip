@@ -28,6 +28,7 @@ import * as unread from "./unread.ts";
 import * as unread_ops from "./unread_ops.ts";
 import {user_settings} from "./user_settings.ts";
 import * as user_topics from "./user_topics.ts";
+import * as web_ui_version from "./web_ui_version.ts";
 
 function open_navbar_banner_and_resize(banner: AlertBanner): void {
     banners.open(banner, $("#navbar_alerts_wrapper"));
@@ -522,12 +523,47 @@ export function check_and_show_muted_messages_banner(): void {
 export function initialize(): void {
     const ls = localstorage();
     const browser_time_zone = timerender.browser_time_zone();
+    $("#navbar_alerts_wrapper").on(
+        "click",
+        ".accept-web-ui-version, .decline-web-ui-version",
+        function () {
+            const $button = $(this);
+            const $buttons = $button
+                .closest(".banner")
+                .find(".accept-web-ui-version, .decline-web-ui-version");
+            $buttons.prop("disabled", true);
+            web_ui_version.save(
+                $button.hasClass("accept-web-ui-version") ? "modern" : "classic",
+                () => $buttons.prop("disabled", false),
+            );
+        },
+    );
     if (realm.demo_organization_scheduled_deletion_date) {
         open_navbar_banner_and_resize(demo_organization_deadline_banner());
     } else if (page_params.insecure_desktop_app) {
         open_navbar_banner_and_resize(INSECURE_DESKTOP_APP_BANNER);
     } else if (is_browser_unsupported_old_version()) {
         open_navbar_banner_and_resize(UNSUPPORTED_BROWSER_BANNER);
+    } else if (page_params.web_ui_version === "") {
+        open_navbar_banner_and_resize({
+            process: "web_ui_version_offer",
+            intent: "info",
+            label: $t({defaultMessage: "Would you like to switch to the modern Zulip interface?"}),
+            buttons: [
+                {
+                    variant: "subtle",
+                    label: $t({defaultMessage: "Switch to modern"}),
+                    custom_classes: "accept-web-ui-version",
+                },
+                {
+                    variant: "text",
+                    label: $t({defaultMessage: "Keep classic"}),
+                    custom_classes: "decline-web-ui-version",
+                },
+            ],
+            close_button: false,
+            custom_classes: "navbar-alert-banner",
+        });
     } else if (should_offer_to_update_timezone()) {
         open_navbar_banner_and_resize(time_zone_update_offer_banner());
     } else if (realm.server_needs_upgrade) {

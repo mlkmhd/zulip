@@ -139,5 +139,6 @@
         "./src/stats/stats.ts"
     ],
     "app": ["./src/bundles/app.ts"],
+    "app-classic": ["../var/classic-ui/web/src/bundles/app.ts"],
     "digest": ["./src/bundles/legacy_portico_bundle.ts"]
 }

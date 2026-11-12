@@ -71,6 +71,7 @@ class HomeTest(ZulipTestCase):
         "two_fa_enabled",
         "two_fa_enabled_user",
         "warn_no_email",
+        "web_ui_version",
     ]
     expected_state_data_keys = [
         "alert_words",
@@ -294,7 +295,7 @@ class HomeTest(ZulipTestCase):
             "message_feed_errors_container",
             "app-loading-logo",
             # Verify that the app styles get included
-            "app-stubentry.js",
+            "app-classic-stubentry.js",
             "data-params",
         ]
 
@@ -346,6 +347,27 @@ class HomeTest(ZulipTestCase):
         ]
 
         self.assertCountEqual(page_params["state_data"]["realm_bots"][0], realm_bots_expected_keys)
+
+    def test_web_ui_version(self) -> None:
+        self.login("hamlet")
+        result = self._get_home_page()
+        self.assertContains(result, "app-classic-stubentry.js")
+        self.assertEqual(self._get_page_params(result)["web_ui_version"], "")
+
+        for version, bundle in [("modern", "app"), ("classic", "app-classic")]:
+            self.assert_json_success(
+                self.client_patch(
+                    "/json/settings/web_ui_version",
+                    {"version": version},
+                    intentionally_undocumented=True,
+                )
+            )
+            result = self._get_home_page()
+            self.assertContains(result, f"{bundle}-stubentry.js")
+            self.assertEqual(self._get_page_params(result)["web_ui_version"], version)
+
+        self.login("iago")
+        self.assertEqual(self._get_page_params(self._get_home_page())["web_ui_version"], "")
 
     def test_home_demo_organization(self) -> None:
         demo_organization_owner = self.create_demo_organization_owner()

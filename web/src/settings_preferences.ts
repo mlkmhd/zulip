@@ -24,6 +24,7 @@ import * as ui_report from "./ui_report.ts";
 import {user_settings, user_settings_schema} from "./user_settings.ts";
 import type {UserSettings} from "./user_settings.ts";
 import * as util from "./util.ts";
+import * as web_ui_version from "./web_ui_version.ts";
 
 export type SettingsPanel = {
     container: string;
@@ -174,6 +175,19 @@ export function set_up(settings_panel: SettingsPanel): void {
         // settings_org.ts handlers, so we can return early here.
         return;
     }
+
+    const $version = $container.find(".web-ui-version");
+    const current_version = page_params.web_ui_version === "modern" ? "modern" : "classic";
+    $version.val(current_version).on("change", (e) => {
+        e.stopPropagation();
+        const version = $version.val();
+        if (version === "classic" || version === "modern") {
+            $version.prop("disabled", true);
+            web_ui_version.save(version, () => {
+                $version.val(current_version).prop("disabled", false);
+            });
+        }
+    });
 
     // Common handler for sending requests to the server when an input
     // element is changed.

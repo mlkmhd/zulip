@@ -268,6 +268,7 @@ def home_real(request: HttpRequest) -> HttpResponse:
         context={
             "user_profile": user_profile,
             "page_params": page_params,
+            "use_classic_ui": page_params["web_ui_version"] != "modern",
             "csp_nonce": csp_nonce,
             "color_scheme": user_permission_info.color_scheme,
             "enable_gravatar": settings.ENABLE_GRAVATAR,

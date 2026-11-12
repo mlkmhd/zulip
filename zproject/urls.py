@@ -236,6 +236,7 @@ from zerver.views.user_settings import (
     json_change_settings,
     regenerate_api_key,
     set_avatar_backend,
+    update_web_ui_version,
 )
 from zerver.views.user_topics import update_muted_topic, update_user_topic
 from zerver.views.users import (
@@ -526,6 +527,10 @@ v1_api_and_json_patterns = [
     ),
     # settings -> zerver.views.user_settings
     rest_path("settings", PATCH=json_change_settings),
+    rest_path(
+        "settings/web_ui_version",
+        PATCH=(update_web_ui_version, {"intentionally_undocumented"}),
+    ),
     # These next two are legacy aliases for /settings, from before
     # we merged the endpoints. They are documented in the `/json/settings`
     # documentation, rather than having dedicated pages.

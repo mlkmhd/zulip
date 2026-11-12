@@ -11,6 +11,7 @@ import MiniCssExtractPlugin from "mini-css-extract-plugin";
 import webpack from "webpack";
 import BundleTracker from "webpack-bundle-tracker";
 
+import {ClassicUIWebpackPlugin, classic_web} from "./classic-ui-webpack-plugin.ts";
 import DebugRequirePlugin from "./debug-require-webpack-plugin.ts";
 import assets from "./webpack.assets.json" with {type: "json"};
 import dev_assets from "./webpack.dev-assets.json" with {type: "json"};
@@ -45,6 +46,7 @@ const config = (
             DEVELOPMENT: JSON.stringify(!production),
             ZULIP_VERSION: JSON.stringify(env.ZULIP_VERSION ?? "development"),
         }),
+        new ClassicUIWebpackPlugin(),
         new DebugRequirePlugin(),
         new BundleTracker({
             path: path.join(import.meta.dirname, production ? ".." : "../var"),
@@ -80,13 +82,21 @@ const config = (
             : Object.fromEntries(
                   Object.entries({...assets, ...dev_assets}).map(([name, paths]) => [
                       name,
-                      [...paths, "./src/debug.ts"],
+                      [
+                          ...paths,
+                          name === "app-classic"
+                              ? path.join(classic_web, "src/debug.ts")
+                              : "./src/debug.ts",
+                      ],
                   ]),
               ),
         module: {
             rules: [
                 {
-                    test: path.resolve(import.meta.dirname, "src/zulip_test.ts"),
+                    test: [
+                        path.resolve(import.meta.dirname, "src/zulip_test.ts"),
+                        path.join(classic_web, "src/zulip_test.ts"),
+                    ],
                     loader: "expose-loader",
                     options: {exposes: "zulip_test"},
                 },
@@ -121,13 +131,20 @@ const config = (
                 // Transpile .js and .ts files with Babel
                 {
                     test: /\.[cm]?[jt]s$/,
-                    include: [path.resolve(import.meta.dirname, "src")],
+                    include: [
+                        path.resolve(import.meta.dirname, "src"),
+                        path.join(classic_web, "src"),
+                    ],
+                    options: {configFile: path.join(import.meta.dirname, "babel.config.js")},
                     loader: "babel-loader",
                 },
                 // regular css files
                 {
                     test: /\.css$/,
-                    exclude: path.resolve(import.meta.dirname, "styles"),
+                    exclude: [
+                        path.resolve(import.meta.dirname, "styles"),
+                        path.join(classic_web, "styles"),
+                    ],
                     use: [
                         MiniCssExtractPlugin.loader,
                         {
@@ -141,7 +158,10 @@ const config = (
                 // PostCSS loader
                 {
                     test: /\.css$/,
-                    include: path.resolve(import.meta.dirname, "styles"),
+                    include: [
+                        path.resolve(import.meta.dirname, "styles"),
+                        path.join(classic_web, "styles"),
+                    ],
                     use: [
                         MiniCssExtractPlugin.loader,
                         {
@@ -154,6 +174,9 @@ const config = (
                         {
                             loader: "postcss-loader",
                             options: {
+                                postcssOptions: {
+                                    config: path.join(import.meta.dirname, "postcss.config.js"),
+                                },
                                 sourceMap: true,
                             },
                         },

@@ -2,6 +2,8 @@
 EXCLUDED_FILES = [
     # Third-party code that doesn't match our style
     "web/third",
+    # Historical sources use imports relative to the assembled web app.
+    "web/classic",
 ]
 
 PUPPET_CHECK_RULES_TO_EXCLUDE = [

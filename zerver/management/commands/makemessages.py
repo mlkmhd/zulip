@@ -213,17 +213,16 @@ class Command(makemessages.Command):
 
     def get_translation_strings(self) -> dict[str, str]:
         translation_strings: dict[str, str] = {}
-        dirname = self.get_template_dir()
-
-        for dirpath, dirnames, filenames in os.walk(dirname):
-            for filename in [f for f in filenames if f.endswith(".hbs")]:
-                if filename.startswith("."):
-                    continue
-                with open(os.path.join(dirpath, filename)) as reader:
-                    data = reader.read()
-                    for k, v in self.extract_strings(data).items():
-                        assert translation_strings.get(k, v) == v
-                        translation_strings[k] = v
+        for dirname in (self.get_template_dir(), "web/classic/templates"):
+            for dirpath, dirnames, filenames in os.walk(dirname):
+                for filename in [f for f in filenames if f.endswith(".hbs")]:
+                    if filename.startswith("."):
+                        continue
+                    with open(os.path.join(dirpath, filename)) as reader:
+                        data = reader.read()
+                        for k, v in self.extract_strings(data).items():
+                            assert translation_strings.get(k, v) == v
+                            translation_strings[k] = v
 
         extracted = subprocess.check_output(
             [
@@ -236,6 +235,8 @@ class Command(makemessages.Command):
                 "--throws",
                 "web/src/**/*.js",
                 "web/src/**/*.ts",
+                "web/classic/src/**/*.js",
+                "web/classic/src/**/*.ts",
             ]
         )
         for k, v in orjson.loads(extracted).items():

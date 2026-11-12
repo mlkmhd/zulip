@@ -290,6 +290,7 @@ export default defineConfig({
                 {
                     label: "Preferences",
                     items: [
+                        "switch-web-interface",
                         "dark-theme",
                         "font-size",
                         "line-spacing",

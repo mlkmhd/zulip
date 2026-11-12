@@ -190,6 +190,7 @@ def build_page_params_for_home_page_load(
         # 2FA is not enabled.
         two_fa_enabled_user=two_fa_enabled and bool(default_device(user_profile)),
         is_spectator=user_profile is None,
+        web_ui_version=user_profile.web_ui_version if user_profile is not None else "modern",
         presence_history_limit_days_for_web_app=settings.PRESENCE_HISTORY_LIMIT_DAYS_FOR_WEB_APP,
         # The client will fetch state_data (and create an event
         # queue) via /json/register for spectators and reloads.
