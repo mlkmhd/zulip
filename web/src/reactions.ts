@@ -16,6 +16,7 @@ import * as message_store from "./message_store.ts";
 import type {Message, MessageCleanReaction, RawMessage} from "./message_store.ts";
 import {page_params} from "./page_params.ts";
 import * as people from "./people.ts";
+import * as recent_emojis from "./recent_emojis.ts";
 import {get_retry_backoff_seconds} from "./retry_backoff.ts";
 import * as spectators from "./spectators.ts";
 import {current_user} from "./state_data.ts";
@@ -124,6 +125,9 @@ function send_reaction_request(
         data: rendering_details,
         success() {
             waiting_for_server_request_ids.delete(reaction_request_id);
+            if (operation === "add") {
+                recent_emojis.record(rendering_details);
+            }
         },
         error(xhr: JQuery.jqXHR) {
             // Network drop (status 0) and gateway/server errors deserve some

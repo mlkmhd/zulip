@@ -1,7 +1,6 @@
 import assert from "minimalistic-assert";
 
 import * as emoji_frequency_data from "./emoji_frequency_data.ts";
-import * as emoji_picker from "./emoji_picker.ts";
 import * as message_store from "./message_store.ts";
 import * as muted_users from "./muted_users.ts";
 import * as reactions from "./reactions.ts";
@@ -35,7 +34,6 @@ function should_ignore_reaction(
 export function update_frequently_used_emojis_list(): void {
     const emojis = emoji_frequency_data.preferred_emoji_list();
     typeahead.set_frequently_used_emojis(emojis);
-    emoji_picker.rebuild_catalog();
 }
 
 /*

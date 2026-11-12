@@ -22,6 +22,7 @@ import * as message_store from "./message_store.ts";
 import {page_params} from "./page_params.ts";
 import * as popover_menus from "./popover_menus.ts";
 import * as reactions from "./reactions.ts";
+import * as recent_emojis from "./recent_emojis.ts";
 import * as rows from "./rows.ts";
 import * as scroll_util from "./scroll_util.ts";
 import * as spectators from "./spectators.ts";
@@ -39,9 +40,11 @@ type EmojiCatalog = {
     emojis: EmojiDict[];
     name: string;
     icon: string;
+    translated: string;
 }[];
 
 export let complete_emoji_catalog: EmojiCatalog = [];
+let open_picker_catalog: EmojiCatalog = [];
 
 let emoji_popover_instance: tippy.Instance | null = null;
 let emoji_catalog_last_coordinates = {
@@ -200,11 +203,6 @@ const session_manager = new SessionManager();
 
 const EMOJI_CATEGORIES = [
     {
-        name: "Frequently used",
-        icon: "fa-star-o",
-        translated: $t({defaultMessage: "Frequently used"}),
-    },
-    {
         name: "Smileys & Emotion",
         icon: "fa-smile-o",
         translated: $t({defaultMessage: "Smileys & Emotion"}),
@@ -236,7 +234,7 @@ function get_total_sections(): number {
     if (search_is_active) {
         return 1;
     }
-    return complete_emoji_catalog.length;
+    return open_picker_catalog.length;
 }
 
 function get_max_index(section: number): number | undefined {
@@ -244,7 +242,7 @@ function get_max_index(section: number): number | undefined {
         return search_results.length;
     }
     if (section >= 0 && section < get_total_sections()) {
-        return complete_emoji_catalog[section]!.emojis.length;
+        return open_picker_catalog[section]!.emojis.length;
     }
     return undefined;
 }
@@ -320,26 +318,6 @@ export function rebuild_catalog(): void {
         catalog.set(category, emojis);
     }
 
-    const frequently_used = [];
-    for (const {emoji_code, emoji_type} of typeahead.frequently_used_emojis) {
-        let emoji_name: string | undefined;
-        if (emoji_type !== "unicode_emoji") {
-            emoji_name = emoji.all_realm_emojis.get(emoji_code)?.emoji_name;
-        } else {
-            emoji_name = emoji.get_emoji_name(emoji_code);
-        }
-
-        assert(emoji_name !== undefined);
-        const emoji_dict = emoji.emojis_by_name.get(emoji_name);
-        if (emoji_dict !== undefined) {
-            frequently_used.push(emoji_dict);
-        }
-    }
-
-    if (frequently_used.length > 0) {
-        catalog.set("Frequently used", frequently_used);
-    }
-
     const categories = EMOJI_CATEGORIES.filter((category) => catalog.has(category.name));
     complete_emoji_catalog = categories.map((category) => ({
         name: category.name,
@@ -348,17 +326,45 @@ export function rebuild_catalog(): void {
         emojis: catalog.get(category.name)!,
         translated: category.translated,
     }));
-    const emojis_by_category = complete_emoji_catalog.flatMap((category) => {
-        if (category.name === "Frequently used") {
-            // Frequently used category may have repeated emojis in the catalog so we skip it
-            return [];
-        }
-        return category.emojis;
-    });
-    composebox_typeahead.update_emoji_data(emojis_by_category);
+    composebox_typeahead.update_emoji_data(
+        complete_emoji_catalog.flatMap((category) => category.emojis),
+    );
 }
 
-const generate_emoji_picker_content = function (include_frequently_used_category: boolean): string {
+function get_picker_catalog(include_recent_category: boolean): EmojiCatalog {
+    if (!include_recent_category) {
+        return complete_emoji_catalog;
+    }
+    const emojis = recent_emojis.get().flatMap(({emoji_code, reaction_type}) => {
+        const name =
+            reaction_type === "unicode_emoji"
+                ? emoji.get_emoji_name(emoji_code)
+                : emoji.all_realm_emojis.get(emoji_code)?.emoji_name;
+        if (
+            name === undefined ||
+            (reaction_type !== "unicode_emoji" &&
+                emoji.active_realm_emojis.get(name)?.id !== emoji_code)
+        ) {
+            return [];
+        }
+        const emoji_dict = emoji.emojis_by_name.get(name);
+        return emoji_dict === undefined ? [] : [emoji_dict];
+    });
+    if (emojis.length === 0) {
+        return complete_emoji_catalog;
+    }
+    return [
+        {
+            name: "Recently used",
+            icon: "fa-star-o",
+            translated: $t({defaultMessage: "Recently used"}),
+            emojis,
+        },
+        ...complete_emoji_catalog,
+    ];
+}
+
+const generate_emoji_picker_content = function (emoji_catalog: EmojiCatalog): string {
     let emojis_used: string[] = [];
 
     const message_reaction_session = session_manager.message_reaction_session;
@@ -371,10 +377,6 @@ const generate_emoji_picker_content = function (include_frequently_used_category
         emoji_dict.has_reacted = emoji_dict.aliases.some((alias) => used_emoji_set.has(alias));
     }
 
-    let emoji_catalog = complete_emoji_catalog;
-    if (!include_frequently_used_category) {
-        emoji_catalog = complete_emoji_catalog.slice(1);
-    }
     return render_emoji_popover({emoji_categories: emoji_catalog});
 };
 
@@ -436,9 +438,6 @@ function filter_emojis(): void {
         search_results.length = 0;
 
         for (const category of categories) {
-            if (category.name === "Frequently used") {
-                continue;
-            }
             const emojis = category.emojis;
             for (const emoji_dict of emojis) {
                 for (const alias of emoji_dict.aliases) {
@@ -757,19 +756,11 @@ export function emoji_select_tab($elt: JQuery): void {
     // Handles the corner case of the last category being
     // smaller than half of the emoji picker height.
     if (elt_height + scrolltop === scrollheight) {
-        currently_selected = section_head_offsets.at(-1)!.section;
+        currently_selected = section_head_offsets.at(-1)?.section ?? "";
     }
     // Handles the corner case of the scrolling back to top.
     if (scrolltop === 0) {
-        // Handles the corner case where the refill_section_head_offsets()
-        // is still running and section_head_offset[] is still empty,
-        // scroll events in the middle may attempt to access section_head_offset[]
-        // causing exception. In this situation the currently_selected is hardcoded as "Frequently used".
-        if (section_head_offsets.length === 0) {
-            currently_selected = "Frequently used";
-        } else {
-            currently_selected = section_head_offsets[0]!.section;
-        }
+        currently_selected = section_head_offsets[0]?.section ?? "";
     }
     if (currently_selected) {
         $(".emoji-popover-tab-item.active").removeClass("active");
@@ -791,9 +782,8 @@ function register_popover_events($popover: JQuery): void {
     $(".emoji-popover").on("keydown", process_keydown);
 }
 
-function get_default_emoji_popover_options(
-    include_frequently_used_category: boolean,
-): Partial<tippy.Props> {
+function get_default_emoji_popover_options(include_recent_category: boolean): Partial<tippy.Props> {
+    let emoji_catalog: EmojiCatalog;
     return {
         theme: "popover-menu",
         placement: "top",
@@ -816,9 +806,9 @@ function get_default_emoji_popover_options(
             emoji_popover_instance = instance;
             const $popover = $(instance.popper);
             $popover.addClass("emoji-popover-root");
-            instance.setContent(
-                ui_util.parse_html(generate_emoji_picker_content(include_frequently_used_category)),
-            );
+            emoji_catalog = get_picker_catalog(include_recent_category);
+            open_picker_catalog = emoji_catalog;
+            instance.setContent(ui_util.parse_html(generate_emoji_picker_content(emoji_catalog)));
             emoji_catalog_last_coordinates = {
                 section: 0,
                 index: 0,
@@ -833,11 +823,6 @@ function get_default_emoji_popover_options(
             const $popover = $(instance.popper);
             // Render the emojis after simplebar has been initialized which
             // saves us ~30% time rendering them.
-            let emoji_catalog = complete_emoji_catalog;
-            if (!include_frequently_used_category) {
-                emoji_catalog = complete_emoji_catalog.slice(1);
-            }
-
             /* Initially render only the first two category fully,
                to avoid flicker since they are displayed immediately,
                the other categs are only as placeholders.
@@ -949,12 +934,12 @@ export function start_picker_for_message_reaction(
 function toggle_emoji_popover(
     target: tippy.ReferenceElement,
     additional_popover_options?: Partial<tippy.Props>,
-    include_frequently_used_category = true,
+    include_recent_category = true,
 ): void {
     popover_menus.toggle_popover_menu(
         target,
         {
-            ...get_default_emoji_popover_options(include_frequently_used_category),
+            ...get_default_emoji_popover_options(include_recent_category),
             ...additional_popover_options,
         },
         {
@@ -979,6 +964,7 @@ function handle_composition_emoji_clicked(emoji_name: string): void {
     assert(compose_icon_session !== undefined);
     const emoji_text = ":" + emoji_name + ":";
     compose_icon_session.insert_inline_markdown_into_textarea(emoji_text);
+    recent_emojis.record(emoji.get_emoji_details_by_name(emoji_name));
     hide_emoji_popover();
 }
 
