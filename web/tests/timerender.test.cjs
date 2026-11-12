@@ -16,6 +16,8 @@ initialize_user_settings({user_settings});
 
 const timerender = zrequire("timerender");
 
+timerender.initialize("persian");
+
 function get_date(time_ISO, DOW) {
     const time = new Date(time_ISO);
     // DOW helps the test reader to know the DOW of the current date being tested.
@@ -686,4 +688,33 @@ run_test("time zone helpers", () => {
         get_offset_difference_at_date("America/Phoenix", "America/Denver", non_dst_date),
         0,
     );
+});
+
+run_test("automatic calendar and manual overrides", ({override}) => {
+    const date = new Date("2024-03-20T12:00:00Z");
+    override(user_settings, "default_language", "en-US");
+    override(user_settings, "timezone", "Iran/Tehran");
+    timerender.initialize();
+    assert.equal(timerender.display_time_zone, "Asia/Tehran");
+    assert.equal(
+        timerender.get_localized_date_or_time_for_format(date, "dayofyear_year"),
+        "۱ فروردین ۱۴۰۳",
+    );
+
+    timerender.initialize("gregory");
+    assert.equal(
+        timerender.get_localized_date_or_time_for_format(date, "dayofyear_year"),
+        "Mar 20, 2024",
+    );
+
+    override(user_settings, "timezone", "UTC");
+    timerender.initialize();
+    assert.equal(
+        timerender.get_localized_date_or_time_for_format(date, "dayofyear_year"),
+        "Mar 20, 2024",
+    );
+
+    override(user_settings, "timezone", "");
+    timerender.initialize();
+    assert.equal(timerender.display_time_zone, timerender.browser_time_zone());
 });

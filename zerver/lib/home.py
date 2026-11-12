@@ -200,6 +200,10 @@ def build_page_params_for_home_page_load(
         is_cloud_realm_with_discounted_plan=realm_on_discounted_cloud_plan(realm),
     )
 
+    if user_profile is not None:
+        page_params["web_calendar"] = user_profile.web_calendar
+        page_params["web_font"] = user_profile.web_font
+
     page_params["state_data"] = state_data
 
     if narrow_stream is not None:

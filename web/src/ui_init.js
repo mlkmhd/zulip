@@ -480,7 +480,14 @@ export async function initialize_everything(state_data) {
     mouse_drag.initialize();
     sidebar_ui.restore_sidebar_toggle_status();
     i18n.initialize({language_list: page_params.language_list});
-    timerender.initialize();
+    timerender.initialize(page_params.web_calendar);
+    const font = page_params.web_font ?? "auto";
+    document.documentElement.dataset.webFont =
+        font === "auto"
+            ? timerender.is_tehran_time_zone(timerender.display_time_zone)
+                ? "vazir"
+                : "default"
+            : font;
     information_density.initialize();
     if (page_params.is_spectator) {
         theme.initialize_theme_for_spectator();

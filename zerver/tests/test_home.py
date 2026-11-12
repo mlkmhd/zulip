@@ -71,6 +71,8 @@ class HomeTest(ZulipTestCase):
         "two_fa_enabled",
         "two_fa_enabled_user",
         "warn_no_email",
+        "web_calendar",
+        "web_font",
         "web_ui_version",
     ]
     expected_state_data_keys = [
@@ -347,6 +349,28 @@ class HomeTest(ZulipTestCase):
         ]
 
         self.assertCountEqual(page_params["state_data"]["realm_bots"][0], realm_bots_expected_keys)
+
+    def test_web_display_preferences(self) -> None:
+        self.login("hamlet")
+        params = self._get_page_params(self._get_home_page())
+        self.assertEqual(params["web_calendar"], "auto")
+        self.assertEqual(params["web_font"], "auto")
+
+        url = "/json/settings/web_display_preferences"
+        self.assert_json_success(
+            self.client_patch(
+                url,
+                {"web_calendar": "gregory", "web_font": "sahel"},
+                intentionally_undocumented=True,
+            )
+        )
+        self.assert_json_error(
+            self.client_patch(url, {"web_font": "invalid"}, intentionally_undocumented=True),
+            "Invalid web_font",
+        )
+        params = self._get_page_params(self._get_home_page())
+        self.assertEqual(params["web_calendar"], "gregory")
+        self.assertEqual(params["web_font"], "sahel")
 
     def test_reset_web_time_zone(self) -> None:
         self.login("hamlet")

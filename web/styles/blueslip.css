@@ -90,7 +90,9 @@
     .stacktrace-more-info {
         font-size: 0.85rem;
         white-space: pre;
-        font-family: Vazir, "Source Code Pro", monospace;
+        font-family:
+            var(--web-persian-font, "Source Code Pro"), "Source Code Pro",
+            monospace;
         margin-left: 3.3rem;
         margin-bottom: 0.5rem;
         padding: 0.5rem;
@@ -98,7 +100,9 @@
     }
 
     .stacktrace-content {
-        font-family: Vazir, "Source Code Pro", monospace;
+        font-family:
+            var(--web-persian-font, "Source Code Pro"), "Source Code Pro",
+            monospace;
         font-size: 0.85rem;
 
         margin-bottom: 0.5rem;

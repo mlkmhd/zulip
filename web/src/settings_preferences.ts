@@ -17,6 +17,7 @@ import * as loading from "./loading.ts";
 import * as overlays from "./overlays.ts";
 import {page_params} from "./page_params.ts";
 import type {RealmDefaultSettings} from "./realm_user_settings_defaults.ts";
+import * as reload from "./reload.ts";
 import * as settings_components from "./settings_components.ts";
 import type {RequestOpts} from "./settings_ui.ts";
 import * as settings_ui from "./settings_ui.ts";
@@ -189,6 +190,32 @@ export function set_up(settings_panel: SettingsPanel): void {
         }
     });
 
+    for (const [setting, current_value] of [
+        ["web_calendar", page_params.web_calendar ?? "auto"],
+        ["web_font", page_params.web_font ?? "auto"],
+    ] as const) {
+        const $select = $container.find(`#${setting}`);
+        $select.val(current_value).on("change", (event) => {
+            event.stopPropagation();
+            $container.find("#web_calendar, #web_font").prop("disabled", true);
+            settings_ui.do_settings_change(
+                channel.patch,
+                "/json/settings/web_display_preferences",
+                {[setting]: $select.val()},
+                $select.closest(".input-group").find(".alert-notification"),
+                {
+                    success_continuation() {
+                        reload.initiate({immediate: true});
+                    },
+                    error_continuation() {
+                        $select.val(current_value);
+                        $container.find("#web_calendar, #web_font").prop("disabled", false);
+                    },
+                },
+            );
+        });
+    }
+
     // Common handler for sending requests to the server when an input
     // element is changed.
     $container.on("change", "input[type=checkbox], select", function (this: HTMLElement, e) {
@@ -202,7 +229,7 @@ export function set_up(settings_panel: SettingsPanel): void {
 
         const $status_element = $input_elem
             .closest(".subsection-parent")
-            .find(".alert-notification");
+            .find(".alert-notification:not(.web-display-preference-status)");
         change_display_setting(data, $status_element);
     });
 

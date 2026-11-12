@@ -59,6 +59,10 @@ const home_params_schema = z.object({
     two_fa_enabled: z.boolean(),
     two_fa_enabled_user: z.boolean(),
     warn_no_email: z.boolean(),
+    web_calendar: z.optional(z.enum(["auto", "gregory", "persian", "islamic-civil", "hebrew"])),
+    web_font: z.optional(
+        z.enum(["auto", "default", "vazir", "sahel", "samim", "yekan", "nazanin"]),
+    ),
     web_ui_version: z.optional(z.enum(["", "classic", "modern"])),
     non_workplace_pricing_eligible: z.boolean(),
     is_cloud_realm_with_discounted_plan: z.boolean(),

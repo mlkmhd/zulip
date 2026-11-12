@@ -3,7 +3,9 @@
      * which have different font-family, we force font-family
      * for tooltips here.
      */
-    font-family: Vazir, "Source Sans 3 VF", sans-serif !important;
+    font-family:
+        var(--web-persian-font, "Source Sans 3 VF"), "Source Sans 3 VF",
+        sans-serif !important;
     overflow-wrap: anywhere;
     /* Contains stylistic variant of upper-case character "I" in Source Sans 3 */
     font-feature-settings: "ss01" on;

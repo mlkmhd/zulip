@@ -450,6 +450,8 @@ class UserProfile(AbstractBaseUser, PermissionsMixin, UserBaseSettings):
     API_KEY_LENGTH = 32
     NAME_INVALID_CHARS = ["*", "`", "\\", ">", '"', "@"]
 
+    web_calendar = models.CharField(max_length=12, default="auto")
+    web_font = models.CharField(max_length=12, default="auto")
     web_ui_version = models.CharField(max_length=7, default="", blank=True)
 
     DEFAULT_BOT = 1

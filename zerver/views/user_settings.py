@@ -548,6 +548,27 @@ def json_change_settings(
 
 
 @typed_endpoint
+def update_web_display_preferences(
+    request: HttpRequest,
+    user_profile: UserProfile,
+    *,
+    web_calendar: Literal["auto", "gregory", "persian", "islamic-civil", "hebrew"] | None = None,
+    web_font: Literal["auto", "default", "vazir", "sahel", "samim", "yekan", "nazanin"]
+    | None = None,
+) -> HttpResponse:
+    update_fields = []
+    if web_calendar is not None:
+        user_profile.web_calendar = web_calendar
+        update_fields.append("web_calendar")
+    if web_font is not None:
+        user_profile.web_font = web_font
+        update_fields.append("web_font")
+    if update_fields:
+        user_profile.save(update_fields=update_fields)
+    return json_success(request)
+
+
+@typed_endpoint
 def update_web_ui_version(
     request: HttpRequest, user_profile: UserProfile, *, version: Literal["classic", "modern"]
 ) -> HttpResponse:

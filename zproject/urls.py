@@ -236,6 +236,7 @@ from zerver.views.user_settings import (
     json_change_settings,
     regenerate_api_key,
     set_avatar_backend,
+    update_web_display_preferences,
     update_web_ui_version,
 )
 from zerver.views.user_topics import update_muted_topic, update_user_topic
@@ -527,6 +528,10 @@ v1_api_and_json_patterns = [
     ),
     # settings -> zerver.views.user_settings
     rest_path("settings", PATCH=json_change_settings),
+    rest_path(
+        "settings/web_display_preferences",
+        PATCH=(update_web_display_preferences, {"intentionally_undocumented"}),
+    ),
     rest_path(
         "settings/web_ui_version",
         PATCH=(update_web_ui_version, {"intentionally_undocumented"}),

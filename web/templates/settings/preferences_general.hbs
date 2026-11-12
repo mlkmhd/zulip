@@ -13,6 +13,30 @@
                 <option value="modern">{{t "Modern" }}</option>
             </select>
         </div>
+        <div class="input-group">
+            <label class="settings-field-label" for="web_calendar">{{t "Calendar" }}</label>
+            <select class="settings_select bootstrap-focus-style" id="web_calendar">
+                <option value="auto">{{t "Automatic" }}</option>
+                <option value="gregory">{{t "Gregorian" }}</option>
+                <option value="persian">{{t "Jalali (Persian)" }}</option>
+                <option value="islamic-civil">{{t "Islamic (civil)" }}</option>
+                <option value="hebrew">{{t "Hebrew" }}</option>
+            </select>
+            <div class="alert-notification web-display-preference-status"></div>
+        </div>
+        <div class="input-group">
+            <label class="settings-field-label" for="web_font">{{t "Font" }}</label>
+            <select class="settings_select bootstrap-focus-style" id="web_font">
+                <option value="auto">{{t "Automatic" }}</option>
+                <option value="default">{{t "Zulip default" }}</option>
+                <option value="vazir">{{t "Vazir" }}</option>
+                <option value="sahel">{{t "Sahel" }}</option>
+                <option value="samim">{{t "Samim" }}</option>
+                <option value="yekan">{{t "B Yekan (installed locally)" }}</option>
+                <option value="nazanin">{{t "B Nazanin (installed locally)" }}</option>
+            </select>
+            <div class="alert-notification web-display-preference-status"></div>
+        </div>
         {{> ../dropdown_widget_with_label
           widget_name="default_language"
           label=settings_label.default_language_settings_label

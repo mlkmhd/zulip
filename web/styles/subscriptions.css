@@ -20,7 +20,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-family: Vazir, "Source Code Pro", monospace;
+    font-family:
+        var(--web-persian-font, "Source Code Pro"), "Source Code Pro", monospace;
     padding: 10px;
     font-size: 0.85em; /* 13.6px at 16px/em (previously 0.85rem) */
     background-color: var(--color-background-stream-email);

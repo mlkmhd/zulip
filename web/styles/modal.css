@@ -196,7 +196,8 @@
 }
 
 #api_key_value {
-    font-family: Vazir, "Source Code Pro", monospace;
+    font-family:
+        var(--web-persian-font, "Source Code Pro"), "Source Code Pro", monospace;
     font-size: 1em;
 }
 

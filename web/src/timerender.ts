@@ -23,13 +23,28 @@ let next_timerender_id = 0;
 export let display_time_zone = browser_time_zone();
 export let display_tz = tz(display_time_zone);
 
+export type DisplayCalendar = "auto" | "gregory" | "persian" | "islamic-civil" | "hebrew";
+let calendar_preference: DisplayCalendar = "auto";
+
 export function is_tehran_time_zone(time_zone: string): boolean {
     return ["Asia/Tehran", "Iran", "Iran/Tehran"].includes(time_zone);
 }
 
-const persian_locale = "fa-IR-u-ca-persian";
+function date_format_options(): Intl.DateTimeFormatOptions {
+    const calendar =
+        calendar_preference === "auto"
+            ? is_tehran_time_zone(display_time_zone)
+                ? "persian"
+                : "gregory"
+            : calendar_preference;
+    return {calendar, timeZone: display_time_zone};
+}
+
+function date_locale(): string {
+    return date_format_options().calendar === "persian" ? "fa-IR" : user_settings.default_language;
+}
 const formatter_map = new Map<string, Intl.DateTimeFormat>();
-let persian_year_formatter: Intl.DateTimeFormat | undefined;
+let calendar_year_formatter: Intl.DateTimeFormat | undefined;
 
 export function browser_time_zone(): string {
     return new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -44,15 +59,16 @@ export function set_display_time_zone(time_zone: string): void {
     display_time_zone = time_zone;
     display_tz = tz(display_time_zone);
     formatter_map.clear();
-    persian_year_formatter = undefined;
+    calendar_year_formatter = undefined;
 }
 
-function persian_year(date: Date): string {
-    persian_year_formatter ??= new Intl.DateTimeFormat(persian_locale, {
-        timeZone: display_time_zone,
+function calendar_year(date: Date): string {
+    calendar_year_formatter ??= new Intl.DateTimeFormat(date_locale(), {
+        ...date_format_options(),
+        era: "short",
         year: "numeric",
     });
-    return persian_year_formatter.format(date);
+    return calendar_year_formatter.format(date);
 }
 
 type DateFormat =
@@ -141,7 +157,7 @@ export function get_format_options_for_type(
 }
 
 // Common function for all date/time rendering in the project. Handles
-// Persian calendar dates, the user's locale for time-only formats,
+// the selected calendar for dates, the user's locale for time-only formats,
 // and the twenty_four_hour_time setting.
 //
 // See get_format_options_for_type for details on the supported formats.
@@ -150,10 +166,8 @@ export function get_localized_date_or_time_for_format(
     format: DateOrTimeFormat,
 ): string {
     const is_twenty_four_hour_time = user_settings.twenty_four_hour_time;
-    const locale =
-        format === "time" || format === "time_sec"
-            ? user_settings.default_language
-            : persian_locale;
+    const time_only = format === "time" || format === "time_sec";
+    const locale = time_only ? user_settings.default_language : date_locale();
     const format_key = `${locale}:${is_twenty_four_hour_time}:${format}`;
 
     if (!formatter_map.has(format_key)) {
@@ -161,6 +175,7 @@ export function get_localized_date_or_time_for_format(
             format_key,
             new Intl.DateTimeFormat(locale, {
                 timeZone: display_time_zone,
+                ...(!time_only && date_format_options()),
                 ...get_format_options_for_type(format, is_twenty_four_hour_time),
             }),
         );
@@ -236,7 +251,7 @@ export function render_now(time: Date, today = new Date(), display_year?: boolea
     } else if (days_old === 1) {
         time_str = $t({defaultMessage: "Yesterday"});
         needs_update = true;
-    } else if (persian_year(time) !== persian_year(today) || display_year) {
+    } else if (calendar_year(time) !== calendar_year(today) || display_year) {
         // For long running servers, searching backlog can get ambiguous
         // without a year stamp. Only show year if message is from an older year
         time_str = get_localized_date_or_time_for_format(time, "dayofyear_year");
@@ -286,7 +301,7 @@ export function relative_time_string_from_date(date: Date, use_minutes_short_for
     if (days_old < 90) {
         return $t({defaultMessage: "{days_old} days ago"}, {days_old});
     }
-    if (days_old > 90 && days_old < 365 && persian_year(date) === persian_year(current_date)) {
+    if (days_old > 90 && days_old < 365 && calendar_year(date) === calendar_year(current_date)) {
         // Online more than 90 days ago, in the same year
         return get_localized_date_or_time_for_format(date, "dayofyear");
     }
@@ -328,7 +343,7 @@ export function last_seen_status_from_date(last_active_date: Date): string {
     if (
         days_old > 90 &&
         days_old < 365 &&
-        persian_year(last_active_date) === persian_year(current_date)
+        calendar_year(last_active_date) === calendar_year(current_date)
     ) {
         // Online more than 90 days ago, in the same year
         return $t(
@@ -366,7 +381,8 @@ let update_list: UpdateEntry[] = [];
 // Represented as a Date with hour, minute, second, millisecond 0.
 let last_update: Date;
 
-export function initialize(): void {
+export function initialize(calendar: DisplayCalendar = "auto"): void {
+    calendar_preference = calendar;
     const preferred_zone = user_settings.timezone || browser_time_zone();
     const time_zone = is_tehran_time_zone(preferred_zone) ? "Asia/Tehran" : preferred_zone;
     try {
@@ -531,7 +547,7 @@ export function format_time_modern(time: number | Date, today = new Date()): str
 export function absolute_time(timestamp: number): string {
     const today = new Date();
     const date = new Date(timestamp);
-    const is_older_year = date < today && persian_year(today) !== persian_year(date);
+    const is_older_year = date < today && calendar_year(today) !== calendar_year(date);
 
     return get_localized_date_or_time_for_format(
         date,
@@ -553,9 +569,7 @@ export function get_full_datetime_clarification(
     time: Date,
     time_format: TimeFormat = "time_sec",
 ): string {
-    const date_string = time.toLocaleDateString(persian_locale, {
-        timeZone: display_time_zone,
-    });
+    const date_string = time.toLocaleDateString(date_locale(), date_format_options());
     let time_string = get_localized_date_or_time_for_format(time, time_format);
 
     const tz_offset_str = get_tz_with_UTC_offset(time);
