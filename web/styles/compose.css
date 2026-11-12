@@ -14,7 +14,7 @@
            adjacent buttons. */
         min-width: inherit;
         padding: 3px 10px;
-        border-radius: 4px;
+        border-radius: 0.5em;
         outline: none;
         /* This is ugly, but necessary to use the
            text + for the compose button. An icon
@@ -27,22 +27,25 @@
            line height, but at a 16.8px em. */
         line-height: 1.19em;
         font-weight: 400;
-        color: var(--color-text-default);
+        color: hsl(0deg 0% 100%);
         background-color: var(--color-background-compose-new-message-button);
-        border: 1px solid var(--color-border-compose-new-message-button);
+        border: 1px solid transparent;
+
+        &:focus-visible {
+            outline: 2px solid var(--color-outline-focus);
+            outline-offset: 2px;
+        }
 
         &:hover {
             background-color: var(
                 --color-background-compose-new-message-button-hover
             );
-            border-color: var(--color-border-compose-new-message-button-hover);
         }
 
         &:active {
             background-color: var(
                 --color-background-compose-new-message-button-active
             );
-            border-color: var(--color-border-compose-new-message-button-hover);
         }
     }
 
@@ -154,24 +157,27 @@
         min-width: inherit;
         line-height: var(--line-height-compose-buttons);
         padding: 3px 10px;
-        border-radius: 4px;
+        border-radius: 0.5em;
         outline: none;
-        color: var(--color-text-default);
+        color: hsl(0deg 0% 100%);
         background-color: var(--color-background-compose-new-message-button);
-        border: 1px solid var(--color-border-compose-new-message-button);
+        border: 1px solid transparent;
+
+        &:focus-visible {
+            outline: 2px solid var(--color-outline-focus);
+            outline-offset: 2px;
+        }
 
         &:hover {
             background-color: var(
                 --color-background-compose-new-message-button-hover
             );
-            border-color: var(--color-border-compose-new-message-button-hover);
         }
 
         &:active {
             background-color: var(
                 --color-background-compose-new-message-button-active
             );
-            border-color: var(--color-border-compose-new-message-button-hover);
         }
     }
 }
@@ -181,8 +187,7 @@
     background-color: var(--color-compose-box-background);
     padding: 4px 4px 6px;
     border: 1px solid var(--color-border-compose-content);
-    border-radius: 9px 9px 0 0;
-    box-shadow: 0 0 0 hsl(236deg 11% 28%);
+    border-radius: 0.875em 0.875em 0 0;
     height: 100%;
     display: flex;
     flex-flow: column;

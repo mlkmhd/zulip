@@ -910,7 +910,10 @@
         hsl(0deg 0% 100%),
         hsl(0deg 0% 0% / 20%)
     );
-    --color-background-navbar: light-dark(hsl(218deg 34% 99%), hsl(220deg 24% 14%));
+    --color-background-navbar: light-dark(
+        hsl(218deg 34% 99%),
+        hsl(220deg 24% 14%)
+    );
     --color-text-sidebar-row: light-dark(
         hsl(0deg 0% 20%),
         hsl(0deg 0% 100% / 85%)
@@ -920,12 +923,12 @@
         hsl(0deg 0% 90%)
     );
     --color-background-active-narrow-filter: light-dark(
-        hsl(0deg 0% 100%),
-        color-mix(in srgb, hsl(0deg 0% 100%) 8%, hsl(0deg 0% 11%))
+        hsl(231deg 75% 93%),
+        hsl(231deg 32% 29%)
     );
     --color-background-hover-narrow-filter: light-dark(
-        hsl(0deg 0% 97%),
-        color-mix(in srgb, hsl(0deg 0% 97%) 8%, hsl(0deg 0% 11%))
+        hsl(227deg 45% 95%),
+        hsl(225deg 23% 22%)
     );
     --color-shadow-sidebar-row-hover: light-dark(
         hsl(0deg 0% 0% / 30%),
@@ -960,8 +963,8 @@
         --color-background-navigation-item-hover
     );
     --color-navbar-bottom-border: light-dark(
-        hsl(0deg 0% 80%),
-        hsl(0deg 0% 0% / 60%)
+        hsl(220deg 29% 90%),
+        hsl(220deg 17% 26%)
     );
     --color-left-sidebar-direct-messages-bottom-divider: light-dark(
         hsl(0deg 0% 0% / 15%),
@@ -1075,8 +1078,8 @@
     --unread-count-focus-outline-radius-in-views: 0.5em; /* 8px at 16px/1em */
     --color-background-search: light-dark(hsl(0deg 0% 100%), hsl(0deg 0% 17%));
     --color-background-search-collapsed: light-dark(
-        hsl(0deg 0% 100%),
-        hsl(0deg 0% 20%)
+        hsl(222deg 42% 95%),
+        hsl(220deg 22% 22%)
     );
     --color-background-search-option-hover: light-dark(
         hsl(0deg 0% 94%),
@@ -1211,7 +1214,10 @@
         hsl(0deg 0% 100% / 10%)
     );
     /* Softer, low-opacity sidebar borders for a less boxy feel. */
-    --color-border-sidebar: light-dark(hsl(218deg 28% 90%), hsl(220deg 24% 20%));
+    --color-border-sidebar: light-dark(
+        hsl(218deg 28% 90%),
+        hsl(220deg 24% 20%)
+    );
     --color-text-sidebar-base: light-dark(hsl(0deg 0% 0%), hsl(0deg 0% 100%));
     --color-border-sidebar-subheader: light-dark(
         hsl(0deg 0% 0% / 15%),
@@ -1453,28 +1459,16 @@
         hsl(235deg 100% 70% / 20%)
     );
     --color-background-compose-new-message-button: light-dark(
-        hsl(0deg 0% 100%),
-        hsl(0deg 0% 0% / 20%)
+        hsl(231deg 57% 46%),
+        hsl(231deg 62% 49%)
     );
     --color-background-compose-new-message-button-hover: light-dark(
-        hsl(0deg 0% 100%),
-        hsl(0deg 0% 0% / 15%)
+        hsl(231deg 58% 40%),
+        hsl(231deg 63% 53%)
     );
     --color-background-compose-new-message-button-active: light-dark(
-        hsl(0deg 0% 95%),
-        hsl(0deg 0% 0% / 20%)
-    );
-    --color-border-compose-new-message-button: light-dark(
-        hsl(0deg 0% 80%),
-        hsl(0deg 0% 0% / 60%)
-    );
-    --color-border-compose-new-message-button-hover: light-dark(
-        hsl(0deg 0% 60%),
-        hsl(0deg 0% 0% / 60%)
-    );
-    --color-border-compose-new-message-button-active: light-dark(
-        hsl(0deg 0% 60%),
-        hsl(0deg 0% 0% / 60%)
+        hsl(231deg 60% 34%),
+        hsl(231deg 62% 43%)
     );
     --color-compose-chevron-arrow: hsl(0deg 0% 58%);
     --color-limit-indicator: light-dark(
