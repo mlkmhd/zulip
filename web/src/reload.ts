@@ -78,7 +78,7 @@ function preserve_state(
 
     let draft_id: string | undefined;
     if (save_compose && compose_state.get_message_type()) {
-        draft_id = drafts.update_draft({force_save: true});
+        draft_id = drafts.update_draft({force_save: true, no_notify: true});
         assert(draft_id !== undefined);
     }
     let message_view_pointer: number | undefined;

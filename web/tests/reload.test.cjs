@@ -15,11 +15,15 @@ mock_esm("../src/popup_banners", {
 window.addEventListener = noop;
 const reload = zrequire("reload");
 const reload_state = zrequire("reload_state");
+const compose_state = zrequire("compose_state");
+const drafts = zrequire("drafts");
+const {localstorage} = zrequire("localstorage");
 
 set_global("window", {
     to_$: () => $("window-stub"),
     location: {
         href: "http://zulip.zulipdev.com/#",
+        hash: "#",
         reload: noop,
         replace: noop,
     },
@@ -89,3 +93,32 @@ run_test("immediate_reload_skips_compatibility_check", () => {
 
     assert.ok(reload_state.is_in_progress());
 });
+
+run_test(
+    "immediate reload preserves the active draft without showing a tooltip",
+    ({override, override_rewire}) => {
+        reload_state.clear_for_testing();
+        override(localstorage, "supported", () => true);
+        compose_state.set_message_type("private");
+        override_rewire(drafts, "update_draft", (opts) => {
+            assert.deepEqual(opts, {force_save: true, no_notify: true});
+            return "active-draft";
+        });
+        $("#app-loading").addClass("loaded");
+
+        let reload_token;
+        override(window.location, "replace", (url) => {
+            if (typeof url === "string" && url.startsWith("#reload:")) {
+                reload_token = url.slice(1);
+            }
+        });
+        try {
+            reload.initiate({immediate: true});
+        } finally {
+            compose_state.set_message_type(undefined);
+        }
+
+        assert.ok(reload_token);
+        assert.equal(localstorage().get(reload_token).compose_active_draft_id, "active-draft");
+    },
+);
