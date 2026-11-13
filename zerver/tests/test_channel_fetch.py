@@ -579,7 +579,8 @@ class GetSubscribersTest(ZulipTestCase):
         in `APIStreamDict` and `SingleSubscription`, respectively.
         """
         expected_fields = set(Stream.API_FIELDS) | {"stream_id", "is_archived"}
-        expected_fields -= {"id", "deactivated"}
+        expected_fields -= {"id", "deactivated", "icon_key"}
+        expected_fields.add("icon_url")
         expected_fields = fix_expected_fields_for_stream_group_settings(expected_fields)
 
         stream_dict_fields = set(APIStreamDict.__annotations__.keys())
@@ -616,7 +617,8 @@ class GetSubscribersTest(ZulipTestCase):
         }
 
         expected_fields = set(Stream.API_FIELDS) | set(Subscription.API_FIELDS) | other_fields
-        expected_fields -= {"id", "deactivated"}
+        expected_fields -= {"id", "deactivated", "icon_key"}
+        expected_fields.add("icon_url")
         expected_fields = fix_expected_fields_for_stream_group_settings(expected_fields)
 
         for lst in [sub_data.subscriptions, sub_data.unsubscribed]:
@@ -633,7 +635,8 @@ class GetSubscribersTest(ZulipTestCase):
         }
 
         expected_fields = set(Stream.API_FIELDS) | other_fields
-        expected_fields -= {"id", "deactivated"}
+        expected_fields -= {"id", "deactivated", "icon_key"}
+        expected_fields.add("icon_url")
         expected_fields = fix_expected_fields_for_stream_group_settings(expected_fields)
 
         for never_sub in sub_data.never_subscribed:

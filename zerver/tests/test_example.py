@@ -123,6 +123,7 @@ class TestFullStack(ZulipTestCase):
         self.assertEqual(
             content["user"],
             dict(
+                avatar_source=UserProfile.AVATAR_FROM_JDENTICON,
                 avatar_url=content["user"]["avatar_url"],
                 avatar_version=1,
                 date_joined=content["user"]["date_joined"],
