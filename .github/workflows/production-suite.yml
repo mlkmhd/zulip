@@ -392,8 +392,8 @@ jobs:
           RELEASE_VERSION: ${{ needs.production_build.outputs.release_version }}
         run: |
           releases=$(gh api --paginate "repos/$GH_REPO/releases")
-          release_state=$(jq -r --arg tag "$RELEASE_VERSION" \
-              '.[] | select(.tag_name == $tag) | if .draft then "draft" else "published" end' <<< "$releases")
+          release_state=$(jq -rs --arg tag "$RELEASE_VERSION" \
+              '.[][] | select(.tag_name == $tag) | if .draft then "draft" else "published" end' <<< "$releases")
           if [[ "$release_state" == published ]]; then
               echo "Release $RELEASE_VERSION is already published."
               exit 0
