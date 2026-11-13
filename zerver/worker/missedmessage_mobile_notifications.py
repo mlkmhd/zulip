@@ -7,6 +7,7 @@ from typing_extensions import override
 
 from zerver.lib.push_notifications import (
     handle_push_notification,
+    handle_reaction_push_notification,
     handle_remove_push_notification,
     initialize_push_notifications,
 )
@@ -50,6 +51,8 @@ class PushNotificationsWorker(QueueProcessingWorker):
             event_type = event.get("type")
             if event_type == "register_push_device_to_bouncer":
                 handle_register_push_device_to_bouncer(event["payload"])
+            elif event_type == "reaction":
+                handle_reaction_push_notification(event["user_profile_id"], event["reaction_id"])
             elif event_type == "remove":
                 message_ids = event["message_ids"]
                 handle_remove_push_notification(event["user_profile_id"], message_ids)

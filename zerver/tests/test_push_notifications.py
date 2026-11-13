@@ -44,6 +44,7 @@ from zerver.lib.push_notifications import (
     get_message_payload_gcm,
     get_mobile_push_content,
     handle_push_notification,
+    handle_reaction_push_notification,
     parse_fcm_options,
     send_android_push_notification_to_user,
     send_apple_push_notification,
@@ -69,6 +70,7 @@ from zerver.lib.timestamp import datetime_to_timestamp
 from zerver.models import (
     Message,
     PushDeviceToken,
+    Reaction,
     RealmAuditLog,
     Recipient,
     Stream,
@@ -2592,6 +2594,43 @@ class TestClearOnRead(ZulipTestCase):
         self.assert_length(groups, 1)
         self.assertEqual(sum(len(g) for g in groups), len(message_ids))
         self.assertEqual({id for g in groups for id in g}, set(message_ids))
+
+
+class TestReactionPushNotification(ZulipTestCase):
+    @mock.patch("zerver.lib.push_notifications.push_notifications_configured", return_value=True)
+    def test_reaction_to_read_message(self, mock_configured: mock.MagicMock) -> None:
+        author = self.example_user("hamlet")
+        reactor = self.example_user("othello")
+        message_id = self.send_personal_message(author, reactor)
+        endpoint = f"/api/v1/messages/{message_id}/reactions"
+        self.assert_json_success(self.api_post(reactor, endpoint, {"emoji_name": "tada"}))
+        reaction = Reaction.objects.get(message_id=message_id, user_profile=reactor)
+        user_message = UserMessage.objects.get(message_id=message_id, user_profile=author)
+        self.assertTrue(user_message.flags.read)
+
+        with mock.patch(
+            "zerver.lib.push_notifications.prepare_payload_and_send_push_notifications"
+        ) as send:
+            handle_reaction_push_notification(author.id, reaction.id)
+            send.assert_called_once()
+            recipient, get_legacy_payload, get_e2ee_payload = send.call_args.args
+            self.assertEqual(recipient, author)
+            apns, gcm, _ = get_legacy_payload(True, True)
+            e2ee = get_e2ee_payload()
+            content = f"{reactor.full_name} reacted to your message with 🎉"
+            self.assertEqual(apns["alert"]["body"], content)
+            self.assertEqual(gcm["content"], content)
+            self.assertEqual(e2ee["content"], content)
+            self.assertEqual(apns["custom"]["zulip"]["message_ids"], [message_id])
+            self.assertEqual(gcm["zulip_message_id"], message_id)
+            self.assertEqual(e2ee["message_id"], message_id)
+            user_message.refresh_from_db()
+            self.assertFalse(user_message.flags.active_mobile_push_notification)
+
+            send.reset_mock()
+            self.assert_json_success(self.api_delete(reactor, endpoint, {"emoji_name": "tada"}))
+            handle_reaction_push_notification(author.id, reaction.id)
+            send.assert_not_called()
 
 
 class TestPushNotificationsContent(ZulipTestCase):

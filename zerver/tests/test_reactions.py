@@ -26,6 +26,35 @@ if TYPE_CHECKING:
 
 
 class ReactionEmojiTest(ZulipTestCase):
+    def test_reaction_push_notifications(self) -> None:
+        author = self.example_user("hamlet")
+        reactor = self.example_user("othello")
+        realm = author.realm
+        self.assertTrue(realm.enable_reaction_notifications)
+        message_id = self.send_personal_message(author, reactor)
+        endpoint = f"/api/v1/messages/{message_id}/reactions"
+
+        with mock.patch("zerver.actions.reactions.queue_event_on_commit") as queue:
+            self.assert_json_success(self.api_post(reactor, endpoint, {"emoji_name": "tada"}))
+            reaction = Reaction.objects.get(message_id=message_id, user_profile=reactor)
+            queue.assert_called_once_with(
+                "missedmessage_mobile_notifications",
+                {"type": "reaction", "user_profile_id": author.id, "reaction_id": reaction.id},
+            )
+            queue.reset_mock()
+            self.assert_json_success(self.api_post(author, endpoint, {"emoji_name": "tada"}))
+            self.assert_json_success(self.api_delete(reactor, endpoint, {"emoji_name": "tada"}))
+            queue.assert_not_called()
+
+            admin = self.example_user("desdemona")
+            self.assert_json_success(
+                self.api_patch(admin, "/api/v1/realm", {"enable_reaction_notifications": "false"})
+            )
+            with self.capture_send_event_calls(expected_num_events=1) as events:
+                self.assert_json_success(self.api_post(reactor, endpoint, {"emoji_name": "tada"}))
+            self.assertNotIn("notify", events[0]["event"])
+            queue.assert_not_called()
+
     def test_missing_emoji(self) -> None:
         """
         Sending reaction without emoji fails
@@ -483,22 +512,21 @@ class ReactionEventTest(ZulipTestCase):
         )
         pm_id = self.assert_json_success(result)["id"]
 
-        expected_recipient_ids = {pm_sender.id, pm_recipient.id}
-
         reaction_info = {
             "emoji_name": "smile",
         }
 
-        with self.capture_send_event_calls(expected_num_events=1) as events:
+        with self.capture_send_event_calls(expected_num_events=2) as events:
             result = self.api_post(
                 reaction_sender, f"/api/v1/messages/{pm_id}/reactions", reaction_info
             )
         self.assert_json_success(result)
 
-        event = events[0]["event"]
-        event_user_ids = set(events[0]["users"])
-
-        self.assertEqual(expected_recipient_ids, event_user_ids)
+        events_by_recipient = {tuple(item["users"]): item["event"] for item in events}
+        author_event = events_by_recipient[(pm_sender.id,)]
+        event = events_by_recipient[(pm_recipient.id,)]
+        self.assertEqual(author_event, {**event, "notify": True})
+        self.assertNotIn("notify", event)
         self.assertEqual(event["type"], "reaction")
         self.assertEqual(event["op"], "add")
         self.assertEqual(event["emoji_name"], "smile")
@@ -658,14 +686,14 @@ class ReactionEventTest(ZulipTestCase):
             hamlet,
             "hello to single receiver",
         )
-        with self.capture_send_event_calls(expected_num_events=1) as events:
+        with self.capture_send_event_calls(expected_num_events=2) as events:
             result = self.api_post(
                 hamlet, f"/api/v1/messages/{private_message_id}/reactions", reaction_info
             )
         self.assert_json_success(result)
-        event = events[0]["event"]
-        self.assertEqual(event["type"], "reaction")
-        event_user_ids = set(events[0]["users"])
+        for notice in events:
+            self.assertEqual(notice["event"]["type"], "reaction")
+        event_user_ids = {user_id for notice in events for user_id in notice["users"]}
         self.assertEqual(event_user_ids, {iago.id, hamlet.id})
 
         # Group direct message; event should go to all participants.
@@ -674,14 +702,14 @@ class ReactionEventTest(ZulipTestCase):
             [polonius, iago],
             "hello message to multiple receiver",
         )
-        with self.capture_send_event_calls(expected_num_events=1) as events:
+        with self.capture_send_event_calls(expected_num_events=2) as events:
             result = self.api_post(
                 polonius, f"/api/v1/messages/{group_direct_message_id}/reactions", reaction_info
             )
         self.assert_json_success(result)
-        event = events[0]["event"]
-        self.assertEqual(event["type"], "reaction")
-        event_user_ids = set(events[0]["users"])
+        for notice in events:
+            self.assertEqual(notice["event"]["type"], "reaction")
+        event_user_ids = {user_id for notice in events for user_id in notice["users"]}
         self.assertEqual(event_user_ids, {iago.id, hamlet.id, polonius.id})
 
 
@@ -1156,14 +1184,13 @@ class ReactionAPIEventTest(EmojiReactionBase):
         pm_recipient = self.example_user("othello")
         reaction_sender = pm_recipient
         pm_id = self.send_personal_message(pm_sender, pm_recipient)
-        expected_recipient_ids = {pm_sender.id, pm_recipient.id}
         reaction_info = {
             "emoji_name": "hamburger",
             "emoji_code": "1f354",
             "reaction_type": "unicode_emoji",
         }
         with (
-            self.capture_send_event_calls(expected_num_events=1) as events,
+            self.capture_send_event_calls(expected_num_events=2) as events,
             mock.patch("zerver.tornado.django_api.queue_json_publish_rollback_unsafe") as m,
         ):
             m.side_effect = AssertionError(
@@ -1171,10 +1198,11 @@ class ReactionAPIEventTest(EmojiReactionBase):
             )
             self.api_post(reaction_sender, f"/api/v1/messages/{pm_id}/reactions", reaction_info)
 
-        event = events[0]["event"]
-        event_user_ids = set(events[0]["users"])
-
-        self.assertEqual(expected_recipient_ids, event_user_ids)
+        events_by_recipient = {tuple(item["users"]): item["event"] for item in events}
+        author_event = events_by_recipient[(pm_sender.id,)]
+        event = events_by_recipient[(pm_recipient.id,)]
+        self.assertEqual(author_event, {**event, "notify": True})
+        self.assertNotIn("notify", event)
         self.assertEqual(event["type"], "reaction")
         self.assertEqual(event["op"], "add")
         self.assertEqual(event["message_id"], pm_id)

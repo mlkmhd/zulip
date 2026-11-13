@@ -82,6 +82,9 @@ const admin_settings_label = {
         defaultMessage: "Language for automated messages and invitation emails",
     }),
     realm_allow_message_editing: $t({defaultMessage: "Allow message editing"}),
+    realm_enable_reaction_notifications: $t({
+        defaultMessage: "Enable emoji reaction notifications",
+    }),
     realm_enable_read_receipts: $t({defaultMessage: "Enable read receipts"}),
     realm_enable_read_receipts_parens_text: $t({
         defaultMessage: "Users can always disable their personal read receipts.",
@@ -287,6 +290,7 @@ export function build_page(): void {
         is_business_type_org:
             realm.realm_org_type === settings_config.all_org_type_values.business.code,
         realm_enable_read_receipts: realm.realm_enable_read_receipts,
+        realm_enable_reaction_notifications: realm.realm_enable_reaction_notifications,
         allow_sorting_deactivated_users_list_by_email:
             settings_users.allow_sorting_deactivated_users_list_by_email(),
         has_bots: bot_data.get_all_bots_for_current_user().length > 0,

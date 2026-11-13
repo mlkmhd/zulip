@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from datetime import timedelta
 from email.headerregistry import Address
 from functools import cache
 from typing import TYPE_CHECKING, Any, Final, Literal, Optional, TypeAlias, Union, cast
@@ -45,9 +46,11 @@ from zerver.lib.event_types import DeviceUpdateEvent
 from zerver.lib.exceptions import ErrorCode, JsonableError, MissingRemoteRealmError
 from zerver.lib.message import (
     OnlyMessageFields,
+    access_message,
     access_message_and_usermessage,
     direct_message_group_users,
 )
+from zerver.lib.muted_users import get_muting_users
 from zerver.lib.notification_data import get_mentioned_user_group
 from zerver.lib.remote_server import (
     PushNotificationBouncerError,
@@ -70,10 +73,12 @@ from zerver.models import (
     Device,
     Message,
     PushDeviceToken,
+    Reaction,
     Realm,
     Recipient,
     Stream,
     UserMessage,
+    UserPresence,
     UserProfile,
 )
 from zerver.models.realms import get_fake_email_domain
@@ -1912,6 +1917,101 @@ def handle_push_notification(user_profile_id: int, missed_message: dict[str, Any
         user_profile,
         get_payload_legacy,
         get_payload_to_encrypt,
+    )
+
+
+def handle_reaction_push_notification(user_profile_id: int, reaction_id: int) -> None:
+    if not push_notifications_configured():
+        return
+
+    user_profile = get_user_profile_by_id(user_profile_id)
+    if (
+        not user_profile.is_active
+        or user_profile.is_bot
+        or not user_profile.realm.enable_reaction_notifications
+    ):
+        return
+    if not user_profile.enable_online_push_notifications:
+        if not user_profile.enable_offline_push_notifications:
+            return
+        recent = timezone_now() - timedelta(seconds=settings.OFFLINE_THRESHOLD_SECS)
+        if UserPresence.objects.filter(
+            user_profile=user_profile, last_active_time__gte=recent
+        ).exists():
+            return
+
+    reaction = Reaction.objects.select_related("user_profile").filter(id=reaction_id).first()
+    if reaction is None or user_profile_id in get_muting_users(reaction.user_profile_id):
+        return
+
+    try:
+        message = access_message(user_profile, reaction.message_id, is_modifying_message=False)
+    except JsonableError:
+        return
+    if message.sender_id != user_profile_id:
+        return
+
+    reactor = reaction.user_profile
+    can_access_reactor = check_can_access_user(reactor, user_profile, user_profile.realm)
+    with override_language(user_profile.default_language):
+        if can_access_reactor:
+            reactor_name = reactor.full_name
+            reactor_avatar = absolute_avatar_url(reactor, user_profile.realm.url)
+        else:
+            reactor_name = str(UserProfile.INACCESSIBLE_USER_NAME)
+            reactor_avatar = get_avatar_for_inaccessible_user()
+        emoji = (
+            hex_codepoint_to_emoji(reaction.emoji_code)
+            if reaction.reaction_type == Reaction.UNICODE_EMOJI
+            else f":{reaction.emoji_name}:"
+        )
+        content, _truncated = truncate_content(
+            _("{name} reacted to your message with {emoji}").format(name=reactor_name, emoji=emoji)
+        )
+
+    def get_payload(*, for_legacy_clients: bool) -> dict[str, Any]:
+        # Use the message push format so clients can open the original message.
+        payload = get_message_payload(user_profile, message, for_legacy_clients=for_legacy_clients)
+        payload.update(
+            sender_id=reactor.id,
+            sender_full_name=reactor_name,
+            sender_avatar_url=reactor_avatar,
+            content=content,
+            time=datetime_to_timestamp(timezone_now()),
+        )
+        if for_legacy_clients:
+            payload["event"] = "message"
+            payload["zulip_message_id"] = message.id
+            payload["sender_email"] = (
+                reactor.email
+                if can_access_reactor
+                else Address(
+                    username=f"user{reactor.id}",
+                    domain=get_fake_email_domain(user_profile.realm.host),
+                ).addr_spec
+            )
+        else:
+            payload["type"] = "message"
+            payload["message_id"] = message.id
+        return payload
+
+    def get_payload_legacy(
+        apple_device_exists: bool, android_device_exists: bool
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        payload = get_payload(for_legacy_clients=True)
+        apns_payload: dict[str, Any] = {}
+        if apple_device_exists:
+            apns_message_payload = dict(payload, message_ids=[message.id])
+            remove_obsolete_fields_apns(apns_message_payload)
+            apns_payload = {
+                "alert": {"title": user_profile.realm.name, "body": content},
+                "sound": "default",
+                "custom": {"zulip": apns_message_payload},
+            }
+        return apns_payload, payload if android_device_exists else {}, {"priority": "high"}
+
+    prepare_payload_and_send_push_notifications(
+        user_profile, get_payload_legacy, lambda: get_payload(for_legacy_clients=False)
     )
 
 

@@ -34,6 +34,7 @@ import * as message_edit from "./message_edit.ts";
 import * as message_events from "./message_events.ts";
 import * as message_lists from "./message_lists.ts";
 import * as message_live_update from "./message_live_update.ts";
+import * as message_notifications from "./message_notifications.ts";
 import * as message_reminder from "./message_reminder.ts";
 import * as message_store from "./message_store.ts";
 import * as message_view from "./message_view.ts";
@@ -298,6 +299,9 @@ export function dispatch_normal_event(event) {
             switch (event.op) {
                 case "add":
                     reactions.add_reaction(event);
+                    if (event.notify && realm.realm_enable_reaction_notifications) {
+                        message_notifications.notify_reaction(event);
+                    }
                     emoji_frequency.update_emoji_frequency_on_add_reaction_event(event);
                     break;
                 case "remove":
@@ -372,6 +376,7 @@ export function dispatch_normal_event(event) {
                 topics_policy: noop,
                 require_e2ee_push_notifications: noop,
                 message_content_allowed_in_email_notifications: noop,
+                enable_reaction_notifications: noop,
                 enable_spectator_access: noop,
                 send_channel_events_messages: noop,
                 signup_announcements_stream_id: noop,

@@ -12,6 +12,7 @@ from zerver.lib.message import (
     visibility_policy_for_participation,
 )
 from zerver.lib.message_cache import update_message_cache
+from zerver.lib.queue import mobile_notifications_queue_name, queue_event_on_commit
 from zerver.lib.streams import access_stream_by_id
 from zerver.lib.user_message import create_historical_user_messages
 from zerver.models import Message, Reaction, UserProfile
@@ -23,6 +24,8 @@ def notify_reaction_update(
     message: Message,
     reaction: Reaction,
     op: Literal["add", "remove"],
+    *,
+    notify_author: bool = False,
 ) -> None:
     # The reaction_type column is a CharField restricted to these
     # values via choices, so the cast is safe.
@@ -49,6 +52,12 @@ def notify_reaction_update(
     update_message_cache([message])
 
     user_ids = event_recipient_ids_for_action_on_messages([message.id], message.is_channel_message)
+    if notify_author and message.sender_id in user_ids:
+        assert isinstance(event, ReactionAddEvent)
+        send_event_on_commit(
+            user_profile.realm, event.model_copy(update={"notify": True}), [message.sender_id]
+        )
+        user_ids.remove(message.sender_id)
     send_event_on_commit(user_profile.realm, event, list(user_ids))
 
 
@@ -58,6 +67,8 @@ def do_add_reaction(
     emoji_name: str,
     emoji_code: str,
     reaction_type: str,
+    *,
+    send_notifications: bool = False,
 ) -> None:
     """Should be called while holding a SELECT FOR UPDATE lock
     (e.g. via access_message(..., lock_message=True)) on the
@@ -99,7 +110,23 @@ def do_add_reaction(
                     visibility_policy=new_visibility_policy,
                 )
 
-    notify_reaction_update(user_profile, message, reaction, "add")
+    notify_author = (
+        send_notifications
+        and user_profile.realm.enable_reaction_notifications
+        and user_profile.id != message.sender_id
+        and not user_profile.is_bot
+        and not message.sender.is_bot
+        and message.sender.is_active
+    )
+    notify_reaction_update(user_profile, message, reaction, "add", notify_author=notify_author)
+    if notify_author and (
+        message.sender.enable_online_push_notifications
+        or message.sender.enable_offline_push_notifications
+    ):
+        queue_event_on_commit(
+            mobile_notifications_queue_name(message.sender_id),
+            {"type": "reaction", "user_profile_id": message.sender_id, "reaction_id": reaction.id},
+        )
 
 
 def check_add_reaction(
@@ -174,7 +201,9 @@ def check_add_reaction(
         # See called function for more context.
         create_historical_user_messages(user_id=user_profile.id, message_ids=[message.id])
 
-    do_add_reaction(user_profile, message, emoji_name, emoji_code, reaction_type)
+    do_add_reaction(
+        user_profile, message, emoji_name, emoji_code, reaction_type, send_notifications=True
+    )
 
 
 def do_remove_reaction(

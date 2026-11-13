@@ -150,6 +150,7 @@ def update_realm(
     enable_guest_user_dm_warning: Json[bool] | None = None,
     enable_guest_user_indicator: Json[bool] | None = None,
     enable_read_receipts: Json[bool] | None = None,
+    enable_reaction_notifications: Json[bool] | None = None,
     enable_spectator_access: Json[bool] | None = None,
     gif_rating_policy: Json[int] | None = None,
     media_preview_size: Json[RealmMediaPreviewSizeEnum] | None = None,

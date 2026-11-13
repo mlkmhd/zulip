@@ -180,6 +180,19 @@
               label=admin_settings_label.realm_message_content_allowed_in_email_notifications}}
         </div>
 
+        <div class="settings-subsection-parent">
+            <div class="subsection-header">
+                <h3 class="settings-subsection-title">{{t "Reaction notifications" }}</h3>
+                {{> settings_save_discard_widget section_name="reaction-notifications" show_save_discard_buttons=true }}
+            </div>
+            {{> settings_checkbox
+              setting_name="realm_enable_reaction_notifications"
+              prefix="id_"
+              is_checked=realm_enable_reaction_notifications
+              label=admin_settings_label.realm_enable_reaction_notifications
+              help_link="/help/emoji-reactions#reaction-notifications"}}
+        </div>
+
         <div id="org-compose-settings" class="settings-subsection-parent">
             <div class="subsection-header">
                 <h3 class="settings-subsection-title">{{t "Compose settings"}}</h3>

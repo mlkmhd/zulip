@@ -5,8 +5,10 @@ import * as blueslip from "./blueslip.ts";
 import * as desktop_notifications from "./desktop_notifications.ts";
 import {$t} from "./i18n.ts";
 import * as message_parser from "./message_parser.ts";
+import * as message_store from "./message_store.ts";
 import type {Message} from "./message_store.ts";
 import * as message_view from "./message_view.ts";
+import * as muted_users from "./muted_users.ts";
 import * as people from "./people.ts";
 import * as spoilers from "./spoilers.ts";
 import * as stream_data from "./stream_data.ts";
@@ -202,6 +204,56 @@ export function process_notification(message: Message | TestNotificationMessage)
         title,
         data: {type: "message", message_id: message.id, msg_count},
         on_click,
+    });
+}
+
+export function notify_reaction(event: {
+    message_id: number;
+    user_id: number;
+    emoji_name: string;
+    emoji_code: string;
+    reaction_type: string;
+}): void {
+    if (
+        !user_settings.enable_desktop_notifications ||
+        document.hasFocus() ||
+        muted_users.is_user_muted(event.user_id)
+    ) {
+        return;
+    }
+
+    const {message_id, user_id, emoji_name, emoji_code, reaction_type} = event;
+    const unicode_emoji =
+        reaction_type === "unicode_emoji"
+            ? util.convert_emoji_code_to_unicode(emoji_code)
+            : undefined;
+    const emoji = unicode_emoji ?? `:${emoji_name}:`;
+    const reactor = people.maybe_get_user_by_id(user_id, true);
+    const key = `reaction:${message_id}`;
+    desktop_notifications.create_notification({
+        key,
+        title: $t({defaultMessage: "Reaction to your message"}),
+        notification_options: {
+            body: $t(
+                {defaultMessage: "{name} reacted to your message with {emoji}"},
+                {
+                    name: reactor?.full_name ?? $t({defaultMessage: "Unknown user"}),
+                    emoji,
+                },
+            ),
+            tag: key,
+        },
+        data: {type: "message", message_id, msg_count: 1},
+        on_click() {
+            const message = message_store.get(message_id);
+            if (message) {
+                message_view.narrow_to_message_near(message, "notification");
+            } else {
+                message_view.show([{operator: "near", operand: String(message_id)}], {
+                    trigger: "notification",
+                });
+            }
+        },
     });
 }
 

@@ -738,6 +738,7 @@ class Realm(models.Model):
     # Whether read receipts are enabled in the organization. If disabled,
     # they will not be available regardless of users' personal settings.
     enable_read_receipts = models.BooleanField(default=False)
+    enable_reaction_notifications = models.BooleanField(default=True, db_default=True)
 
     # Whether clients should display "(guest)" after names of guest users.
     enable_guest_user_indicator = models.BooleanField(default=True)
@@ -777,6 +778,7 @@ class Realm(models.Model):
         enable_guest_user_dm_warning=bool,
         enable_guest_user_indicator=bool,
         enable_read_receipts=bool,
+        enable_reaction_notifications=bool,
         enable_spectator_access=bool,
         gif_rating_policy=int,
         media_preview_size=int,
