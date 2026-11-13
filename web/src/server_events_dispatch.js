@@ -177,6 +177,10 @@ export function dispatch_normal_event(event) {
             stream_settings_ui.update_is_default_stream();
             break;
 
+        case "direct_message_conversation":
+            pm_conversations.recent.set_pinned(event.user_ids, event.pinned);
+            pm_list.update_private_messages();
+            break;
         case "delete_message": {
             const msg_ids = event.message_ids;
 
@@ -386,11 +390,11 @@ export function dispatch_normal_event(event) {
                 message_content_allowed_in_email_notifications: noop,
                 enable_reaction_notifications: noop,
                 enable_spectator_access: noop,
+                expire_saved_messages: noop,
                 send_channel_events_messages: noop,
                 signup_announcements_stream_id: noop,
                 zulip_update_announcements_stream_id: noop,
                 emails_restricted_to_domains: noop,
-                expire_saved_messages: noop,
                 video_chat_provider: compose_call_ui.update_audio_and_video_chat_button_display,
                 jitsi_server_url: compose_call_ui.update_audio_and_video_chat_button_display,
                 gif_rating_policy: gif_state.update_gif_icon_visibility,

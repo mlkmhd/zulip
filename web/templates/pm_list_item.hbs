@@ -41,4 +41,9 @@
             </span>
         </div>
     </a>
+    {{#if can_pin}}
+        <button type="button" class="sidebar-menu-icon dm-pin-button {{#if is_pinned}}dm-is-pinned{{/if}}" aria-label="{{#if is_pinned}}{{t 'Unpin conversation from top'}}{{else}}{{t 'Pin conversation to top'}}{{/if}}" title="{{#if is_pinned}}{{t 'Unpin conversation from top'}}{{else}}{{t 'Pin conversation to top'}}{{/if}}">
+            <i class="zulip-icon {{#if is_pinned}}zulip-icon-pin-filled{{else}}zulip-icon-pin{{/if}}" aria-hidden="true"></i>
+        </button>
+    {{/if}}
 </li>

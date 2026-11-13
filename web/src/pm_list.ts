@@ -154,7 +154,17 @@ function set_dom_to(new_dom: vdom.Tag<PMNode>): void {
         return $container.find("ul");
     }
 
+    const focused_pin = $container.find(".dm-pin-button:focus").get(0);
+    const focused_conversation = focused_pin
+        ?.closest(".dm-list-item")
+        ?.getAttribute("data-user-ids-string");
     vdom.update(replace_content, find, new_dom, prior_dom);
+    if (focused_conversation && !focused_pin?.isConnected) {
+        const $row = $container.find(
+            `.dm-list-item[data-user-ids-string="${CSS.escape(focused_conversation)}"]`,
+        );
+        $row.find(".dm-pin-button").get(0)?.focus({preventScroll: true});
+    }
     prior_dom = new_dom;
     pm_list_dom.update_typing_indicators();
 
@@ -193,7 +203,9 @@ export function update_private_messages(): void {
     const nodes = visible_conversations.map((conversation) => {
         const key = conversation.user_ids_string;
         const preview = preview_version(key) === undefined ? undefined : dm_previews.get(key)?.text;
-        return pm_list_dom.keyed_pm_li({...conversation, preview});
+        const can_pin =
+            (pm_conversations.recent.recent_message_ids.get(key)?.max_message_id ?? -1) > 0;
+        return pm_list_dom.keyed_pm_li({...conversation, preview, can_pin});
     });
     set_dom_to(pm_list_dom.pm_ul(nodes));
     // Make sure to update the left sidebar heights after updating
@@ -234,6 +246,7 @@ export function update_dom_with_unread_counts(
     if (new_direct_message_count > last_direct_message_count && !skip_animations) {
         const $dm_header = $("#direct-messages-section-header");
         const $top_dm_item = $(".dm-list .dm-list-item:first-child");
+        const top_item_is_pinned = $top_dm_item.find(".dm-is-pinned").length > 0;
         const top_item_active = $top_dm_item.hasClass("active-sub-filter");
         const top_item_no_unreads = $top_dm_item.hasClass("zero-dm-unreads");
         const $scroll_wrapper = $("#left_sidebar_scroll_container .simplebar-content-wrapper");
@@ -261,7 +274,8 @@ export function update_dom_with_unread_counts(
         if (
             dms_scrolled_up ||
             (is_private_messages_collapsed() && !top_item_active) ||
-            top_item_no_unreads
+            top_item_no_unreads ||
+            top_item_is_pinned
         ) {
             ui_util.do_new_unread_animation($dm_header);
         }
@@ -376,6 +390,24 @@ export function initialize(): void {
         if (mouse_drag.is_drag(e)) {
             e.preventDefault();
         }
+    });
+
+    $("#direct-messages-list").on("click", ".dm-pin-button", function (this: HTMLElement) {
+        const user_ids_string = this.closest(".dm-list-item")?.getAttribute("data-user-ids-string");
+        if (user_ids_string === null || user_ids_string === undefined) {
+            return;
+        }
+
+        const user_ids = people
+            .user_ids_string_to_ids_array(user_ids_string)
+            .filter((id) => !people.is_my_user_id(id));
+        void channel.post({
+            url: "/json/users/me/dm_conversations/pin",
+            data: {
+                user_ids: JSON.stringify(user_ids),
+                pinned: JSON.stringify(!pm_conversations.recent.is_pinned(user_ids_string)),
+            },
+        });
     });
 
     $(".direct-messages-container").on("mouseenter", () => {

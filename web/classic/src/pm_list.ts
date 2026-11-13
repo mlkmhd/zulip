@@ -3,12 +3,15 @@ import _ from "lodash";
 import * as z from "zod/mini";
 
 import * as blueslip from "./blueslip.ts";
+import * as channel from "./channel.ts";
 import type {Filter} from "./filter.ts";
 import {$t} from "./i18n.ts";
 import * as keydown_util from "./keydown_util.ts";
 import {ListCursor} from "./list_cursor.ts";
 import {localstorage} from "./localstorage.ts";
 import * as mouse_drag from "./mouse_drag.ts";
+import * as people from "./people.ts";
+import * as pm_conversations from "./pm_conversations.ts";
 import * as pm_list_data from "./pm_list_data.ts";
 import type {DisplayObject} from "./pm_list_data.ts";
 import * as pm_list_dom from "./pm_list_dom.ts";
@@ -153,7 +156,17 @@ function set_dom_to(new_dom: vdom.Tag<PMNode>, for_modal: boolean): void {
         return $container.find("ul");
     }
 
+    const focused_pin = $container.find(".dm-pin-button:focus").get(0);
+    const focused_conversation = focused_pin
+        ?.closest(".dm-list-item")
+        ?.getAttribute("data-user-ids-string");
     vdom.update(replace_content, find, new_dom, prior_dom);
+    if (focused_conversation && !focused_pin?.isConnected) {
+        const $row = $container.find(
+            `.dm-list-item[data-user-ids-string="${CSS.escape(focused_conversation)}"]`,
+        );
+        $row.find(".dm-pin-button").get(0)?.focus({preventScroll: true});
+    }
     prior_dom = new_dom;
 }
 
@@ -277,6 +290,7 @@ export function update_dom_with_unread_counts(
     if (new_direct_message_count > last_direct_message_count && !skip_animations) {
         const $dm_header = $("#direct-messages-section-header");
         const $top_dm_item = $(".dm-list .dm-list-item:first-child");
+        const top_item_is_pinned = $top_dm_item.find(".dm-is-pinned").length > 0;
         const top_item_active = $top_dm_item.hasClass("active-sub-filter");
         const top_item_no_unreads = $top_dm_item.hasClass("zero-dm-unreads");
         const $scroll_wrapper = $("#left_sidebar_scroll_container .simplebar-content-wrapper");
@@ -304,7 +318,8 @@ export function update_dom_with_unread_counts(
         if (
             dms_scrolled_up ||
             (is_private_messages_collapsed() && !top_item_active) ||
-            top_item_no_unreads
+            top_item_no_unreads ||
+            top_item_is_pinned
         ) {
             ui_util.do_new_unread_animation($dm_header);
         }
@@ -490,6 +505,24 @@ export function initialize(): void {
         if (mouse_drag.is_drag(e)) {
             e.preventDefault();
         }
+    });
+
+    $("body").on("click", ".dm-list .dm-pin-button", function (this: HTMLElement) {
+        const user_ids_string = this.closest(".dm-list-item")?.getAttribute("data-user-ids-string");
+        if (user_ids_string === null || user_ids_string === undefined) {
+            return;
+        }
+
+        const user_ids = people
+            .user_ids_string_to_ids_array(user_ids_string)
+            .filter((id) => !people.is_my_user_id(id));
+        void channel.post({
+            url: "/json/users/me/dm_conversations/pin",
+            data: {
+                user_ids: JSON.stringify(user_ids),
+                pinned: JSON.stringify(!pm_conversations.recent.is_pinned(user_ids_string)),
+            },
+        });
     });
 
     $("body").on("click", ".zoom-in-conversations .left-sidebar-modal-close-area", (e) => {

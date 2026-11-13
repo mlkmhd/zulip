@@ -31,6 +31,7 @@ from zerver.lib.event_types import (
     DeviceAddEvent,
     DeviceRemoveEvent,
     DeviceUpdateEvent,
+    DirectMessageConversationEvent,
     DirectMessageEvent,
     DraftsAddEvent,
     DraftsRemoveEvent,
@@ -176,6 +177,7 @@ check_device_add = make_checker(DeviceAddEvent)
 check_device_remove = make_checker(DeviceRemoveEvent)
 check_device_update = make_checker(DeviceUpdateEvent)
 check_direct_message = make_checker(DirectMessageEvent)
+check_direct_message_conversation = make_checker(DirectMessageConversationEvent)
 check_draft_add = make_checker(DraftsAddEvent)
 check_draft_remove = make_checker(DraftsRemoveEvent)
 check_draft_update = make_checker(DraftsUpdateEvent)

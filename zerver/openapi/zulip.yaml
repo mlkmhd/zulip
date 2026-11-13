@@ -1180,6 +1180,42 @@ paths:
                                 }
                             - type: object
                               description: |
+                                Event sent to a user's clients when they pin or unpin a direct
+                                message conversation, updating the `pinned` field of the
+                                corresponding entry in `recent_private_conversations`.
+
+                                **Changes**: New in Zulip 14.0 (feature level ZF-9dad35).
+                              properties:
+                                id:
+                                  $ref: "#/components/schemas/EventIdSchema"
+                                type:
+                                  allOf:
+                                    - $ref: "#/components/schemas/EventTypeSchema"
+                                    - enum:
+                                        - direct_message_conversation
+                                user_ids:
+                                  type: array
+                                  items:
+                                    type: integer
+                                  description: |
+                                    The list of users other than the current user in the direct
+                                    message conversation. This will be an empty list for direct
+                                    messages sent to oneself.
+                                pinned:
+                                  type: boolean
+                                  description: |
+                                    Whether the conversation is now pinned (`true`) or unpinned
+                                    (`false`).
+                              additionalProperties: false
+                              example:
+                                {
+                                  "type": "direct_message_conversation",
+                                  "user_ids": [9, 10],
+                                  "pinned": true,
+                                  "id": 0,
+                                }
+                            - type: object
+                              description: |
                                 Event sent to a user's clients when the user completes the OAuth flow
                                 for the [Zoom integration](/help/configure-call-provider). Clients need
                                 to know whether initiating Zoom OAuth is required before creating a Zoom
@@ -5634,6 +5670,13 @@ paths:
                                         Whether users are allowed to change their own email address in this
                                         organization. This is typically disabled for organizations that
                                         synchronize accounts from LDAP or a similar corporate database.
+                                    expire_saved_messages:
+                                      type: boolean
+                                      description: |
+                                        Whether messages users send to themselves are subject to the
+                                        organization's message retention policy.
+
+                                        **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
                                     enable_reaction_notifications:
                                       type: boolean
                                       description: |
@@ -5670,13 +5713,6 @@ paths:
                                         guest users to prominently highlight their status.
 
                                         **Changes**: New in Zulip 8.0 (feature level 216).
-                                    expire_saved_messages:
-                                      type: boolean
-                                      description: |
-                                        Whether messages users send to themselves are subject to the
-                                        organization's message retention policy.
-
-                                        **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
                                     enable_spectator_access:
                                       type: boolean
                                       description: |
@@ -14295,6 +14331,50 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/SimpleSuccess"
+  /users/me/dm_conversations/pin:
+    post:
+      operationId: update-dm-conversation-pin
+      summary: Pin or unpin a direct message conversation
+      tags: ["messages"]
+      description: |
+        Pin or unpin a direct message conversation to the top of the
+        "Direct messages" section in the left sidebar. This is a personal
+        preference that only affects the current user.
+
+        **Changes**: New in Zulip 14.0 (feature level ZF-9dad35).
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                user_ids:
+                  description: |
+                    The list of users other than the current user in the direct
+                    message conversation. Use an empty list for a conversation
+                    with only oneself.
+                  type: array
+                  items:
+                    type: integer
+                  example: [9, 10]
+                pinned:
+                  description: |
+                    Whether the conversation should be pinned (`true`) or
+                    unpinned (`false`).
+                  type: boolean
+                  example: true
+              required:
+                - user_ids
+                - pinned
+            encoding:
+              user_ids:
+                contentType: application/json
+              pinned:
+                contentType: application/json
+      responses:
+        "200":
+          $ref: "#/components/responses/SimpleSuccess"
   /user_topics:
     post:
       operationId: update-user-topic
@@ -19526,6 +19606,14 @@ paths:
                                 The list of users other than the current user in the direct message
                                 conversation. This will be an empty list for direct messages sent to
                                 oneself.
+                            pinned:
+                              type: boolean
+                              description: |
+                                Whether the current user has pinned this direct message
+                                conversation to the top of the "Direct messages" section in
+                                the left sidebar.
+
+                                **Changes**: New in Zulip 14.0 (feature level ZF-9dad35).
                       navigation_views:
                         type: array
                         items:
@@ -21221,6 +21309,15 @@ paths:
 
                           **Changes**: Deprecated in Zulip 11.0 (feature level 392). This is now
                           controlled by the realm `topics_policy` setting.
+                      realm_expire_saved_messages:
+                        type: boolean
+                        description: |
+                          Present if `realm` is present in `fetch_event_types`.
+
+                          Whether the organization's [message retention policy](/help/message-retention-policy)
+                          applies to messages users send to themselves. Defaults to `false`.
+
+                          **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
                       realm_message_retention_days:
                         type: integer
                         description: |
@@ -21309,15 +21406,6 @@ paths:
                       realm_send_channel_events_messages:
                         type: boolean
                         description: |
-                      realm_expire_saved_messages:
-                        type: boolean
-                        description: |
-                          Present if `realm` is present in `fetch_event_types`.
-
-                          Whether the organization's [message retention policy](/help/message-retention-policy)
-                          applies to messages users send to themselves. Defaults to `false`.
-
-                          **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
                           Present if `realm` is present in `fetch_event_types`.
 
                           Indicates whether channel event messages are sent in this organization.

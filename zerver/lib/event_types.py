@@ -307,6 +307,12 @@ class OnboardingStepsEvent(BaseEvent):
     onboarding_steps: list[OnboardingSteps]
 
 
+class DirectMessageConversationEvent(BaseEvent):
+    type: Literal["direct_message_conversation"]
+    user_ids: list[int]
+    pinned: bool
+
+
 class DeviceAddEvent(BaseEvent):
     type: Literal["device"] = "device"
     op: Literal["add"] = "add"

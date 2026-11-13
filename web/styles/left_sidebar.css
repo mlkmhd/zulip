@@ -2378,6 +2378,43 @@ li.topic-list-item {
             --sidebar-avatar-size,
             var(--left-sidebar-icon-column-width)
         )
+.dm-list-item {
+    position: relative;
+
+    .dm-pin-button.sidebar-menu-icon {
+        display: flex;
+        position: absolute;
+        inset-block: 0;
+        inset-inline-end: 0;
+        width: calc(var(--left-sidebar-vdots-width) - 3px);
+        padding: 0;
+        border: 0;
+        background: none;
+        opacity: 0.55;
+
+        @media (hover: hover) {
+            opacity: 0;
+
+            &:is(.dm-is-pinned, :focus-visible) {
+                opacity: 1;
+            }
+        }
+
+        &.dm-is-pinned {
+            color: var(--color-text-default);
+            opacity: 1;
+        }
+
+        &:hover {
+            background-color: var(--color-background-sidebar-action-hover);
+        }
+    }
+
+    &:hover .dm-pin-button {
+        opacity: 1;
+    }
+}
+
         var(--left-sidebar-icon-content-gap) minmax(0, 1fr)
         [action-heading-end] 0 minmax(0, max-content)
         var(--left-sidebar-vdots-width) 0;

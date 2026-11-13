@@ -108,6 +108,36 @@ test("find_saved_messages_before_sending", ({override}) => {
     assert.deepEqual(get_matching_recipients(), ["translated: Saved Messages"]);
 });
 
+test("pinned conversations stay above newer conversations", ({override}) => {
+    override(unread, "num_unread_for_user_ids_string", () => 0);
+    pm_conversations.recent.initialize({
+        recent_private_conversations: [
+            {user_ids: [alice.user_id, bob.user_id], max_message_id: 10, pinned: true},
+            {user_ids: [zoe.user_id], max_message_id: 20},
+        ],
+    });
+    pm_conversations.recent.insert([zoe.user_id], 30);
+
+    let conversations = pm_list_data.get_conversations();
+    assert.deepEqual(
+        conversations.map(({user_ids_string}) => user_ids_string),
+        ["101,102", "104"],
+    );
+    assert.equal(conversations[0].is_pinned, true);
+    assert.deepEqual(
+        pm_list_data.get_conversations("Zoe").map(({user_ids_string}) => user_ids_string),
+        ["104"],
+    );
+
+    pm_conversations.recent.set_pinned([bob.user_id, alice.user_id], false);
+    conversations = pm_list_data.get_conversations();
+    assert.deepEqual(
+        conversations.map(({user_ids_string}) => user_ids_string),
+        ["104", "101,102"],
+    );
+    assert.equal(conversations[1].is_pinned, undefined);
+});
+
 test("get_conversations", ({override}) => {
     pm_conversations.recent.insert([alice.user_id, bob.user_id], 1);
     pm_conversations.recent.insert([me.user_id], 2);

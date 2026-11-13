@@ -43,6 +43,7 @@ export type PMListConversation = {
 
 export type DisplayObject = {
     recipients: string;
+    is_pinned?: true;
     user_ids_string: string;
     unread: number;
     is_zero: boolean;
@@ -58,7 +59,8 @@ export type DisplayObject = {
 
 export function get_conversations(search_string = ""): DisplayObject[] {
     const conversations = pm_conversations.recent.get();
-    const display_objects: DisplayObject[] = [];
+    const pinned_conversations: DisplayObject[] = [];
+    const unpinned_conversations: DisplayObject[] = [];
 
     // The user_ids_string for the current view, if any.
     const active_user_ids_string = get_active_user_ids_string();
@@ -153,10 +155,15 @@ export function get_conversations(search_string = ""): DisplayObject[] {
             has_unread_mention,
             includes_deactivated_user,
         };
-        display_objects.push(display_object);
+        if (pm_conversations.recent.is_pinned(user_ids_string)) {
+            display_object.is_pinned = true;
+            pinned_conversations.push(display_object);
+        } else {
+            unpinned_conversations.push(display_object);
+        }
     }
 
-    return display_objects;
+    return [...pinned_conversations, ...unpinned_conversations];
 }
 
 // Designed to closely match topic_list_data.get_list_info().
@@ -184,7 +191,7 @@ export function get_list_info(
 
         // We always show the active conversation; see the similar
         // comment in topic_list_data.ts.
-        if (conversation.is_active) {
+        if (conversation.is_active || conversation.is_pinned) {
             return true;
         }
 

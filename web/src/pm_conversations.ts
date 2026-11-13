@@ -70,6 +70,7 @@ class RecentDirectMessages {
     // `message_id` sorting, since that's how we time-sort messages).
     recent_message_ids = new FoldDict<PMConversation>(); // key is user_ids_string
     recent_private_messages: PMConversation[] = [];
+    pinned_conversations = new Set<string>();
 
     // Maps a user_id to the `message_id` of the most recent direct message
     // conversation, whether a 1:1 or group DM, that includes that user. The
@@ -165,6 +166,19 @@ class RecentDirectMessages {
         }
     }
 
+    set_pinned(user_ids: number[], pinned: boolean): void {
+        const key = people.pm_lookup_key_from_user_ids(user_ids);
+        if (pinned) {
+            this.pinned_conversations.add(key);
+        } else {
+            this.pinned_conversations.delete(key);
+        }
+    }
+
+    is_pinned(user_ids_string: string): boolean {
+        return this.pinned_conversations.has(user_ids_string);
+    }
+
     get(): PMConversation[] {
         // returns array of structs with user_ids_string and
         // message_id
@@ -189,6 +203,7 @@ class RecentDirectMessages {
     initialize(params: StateData["pm_conversations"]): void {
         for (const conversation of params.recent_private_conversations) {
             this.insert(conversation.user_ids, conversation.max_message_id);
+            this.set_pinned(conversation.user_ids, conversation.pinned ?? false);
         }
     }
 }
