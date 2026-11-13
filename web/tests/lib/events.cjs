@@ -875,10 +875,12 @@ exports.fixtures = {
         streams: [
             {
                 ...streams.devel,
+                icon_url: null,
                 stream_weekly_traffic: null,
             },
             {
                 ...streams.test,
+                icon_url: null,
                 stream_weekly_traffic: null,
             },
         ],
@@ -940,6 +942,7 @@ exports.fixtures = {
         subscriptions: [
             {
                 ...streams.devel,
+                icon_url: null,
                 audible_notifications: true,
                 color: "blue",
                 desktop_notifications: false,
