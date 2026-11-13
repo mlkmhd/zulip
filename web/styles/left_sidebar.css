@@ -1773,11 +1773,10 @@ li.active-sub-filter {
 
 .dm-box.dm-user-status,
 .subscription_block:has(.channel-avatar) {
-    --sidebar-avatar-size: 2.5em;
+    --sidebar-avatar-size: 1.5em;
 
     box-sizing: border-box;
-    block-size: 3em;
-    border-block-end: 1px solid transparent;
+    block-size: 1.8em;
 }
 
 .dm-box .dm-avatar,
@@ -1866,6 +1865,10 @@ li.active-sub-filter {
         background-color: var(--color-background);
         font-size: 0.75em;
         line-height: 1;
+
+        &:has(.zulip-icon-hashtag) {
+            display: none;
+        }
     }
 }
 
@@ -2193,8 +2196,12 @@ li.active-sub-filter {
 }
 
 .dm-message-preview {
-    font-size: 0.85em;
-    line-height: 1.25;
+    font-size: 0.75em;
+    line-height: 1;
+}
+
+.conversation-partners:has(.dm-message-preview) .conversation-partners-list {
+    line-height: 1;
 }
 
 /*
@@ -2371,13 +2378,6 @@ li.topic-list-item {
     }
 }
 
-.dm-box {
-    user-select: text;
-    grid-template-columns:
-        var(--left-sidebar-toggle-width-offset) [action-heading-start] var(
-            --sidebar-avatar-size,
-            var(--left-sidebar-icon-column-width)
-        )
 .dm-list-item {
     position: relative;
 
@@ -2415,6 +2415,13 @@ li.topic-list-item {
     }
 }
 
+.dm-box {
+    user-select: text;
+    grid-template-columns:
+        var(--left-sidebar-toggle-width-offset) [action-heading-start] var(
+            --sidebar-avatar-size,
+            var(--left-sidebar-icon-column-width)
+        )
         var(--left-sidebar-icon-content-gap) minmax(0, 1fr)
         [action-heading-end] 0 minmax(0, max-content)
         var(--left-sidebar-vdots-width) 0;
