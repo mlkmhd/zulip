@@ -1853,23 +1853,6 @@ li.active-sub-filter {
             text-decoration: none;
         }
     }
-
-    .channel-avatar .channel-privacy-icon {
-        position: absolute;
-        inset-block-end: 0;
-        inset-inline-end: 0;
-        display: grid;
-        place-items: center;
-        padding: 2px;
-        border-radius: 50%;
-        background-color: var(--color-background);
-        font-size: 0.75em;
-        line-height: 1;
-
-        &:has(.zulip-icon-hashtag) {
-            display: none;
-        }
-    }
 }
 
 .left-sidebar-filter-row {

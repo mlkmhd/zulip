@@ -2793,12 +2793,6 @@ body:not(.spectator-view)
     block-size: 1.4em;
 
     .channel-privacy-icon {
-        position: absolute;
-        inset-block-end: 0;
-        inset-inline-end: 0;
-        border-radius: 50%;
-        background-color: var(--color-background);
-        font-size: 0.65em;
-        line-height: 1;
+        display: none;
     }
 }
