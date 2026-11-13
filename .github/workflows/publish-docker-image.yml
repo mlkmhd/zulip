@@ -1,6 +1,17 @@
 name: Publish Zulip Docker image
 
 on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: Docker image tag (independent of the Zulip application version)
+        required: true
+        type: string
+      publish:
+        description: Push the image to GHCR (disable for a build-only check)
+        default: true
+        type: boolean
+
   workflow_dispatch:
     inputs:
       image_tag:
