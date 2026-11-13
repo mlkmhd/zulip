@@ -653,6 +653,7 @@ class RealmUserCore(BaseEventModel):
     user_id: int
     email: str
     avatar_url: str | None
+    avatar_source: str | None = None
     avatar_version: int
     full_name: str
     is_admin: bool
