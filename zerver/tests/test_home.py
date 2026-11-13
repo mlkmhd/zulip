@@ -460,6 +460,7 @@ class HomeTest(ZulipTestCase):
             "two_fa_enabled",
             "two_fa_enabled_user",
             "warn_no_email",
+            "web_ui_version",
         ]
         self.assertCountEqual(page_params, expected_keys)
         self.assertIsNone(page_params["state_data"])
