@@ -11,8 +11,16 @@ async function test_reaction_setting(page: Page): Promise<void> {
     const section = ".settings-subsection-parent:has(" + input + ")";
     const label = 'label[for="id_realm_enable_reaction_notifications"]';
     await page.waitForSelector(label, {visible: true});
-    assert.equal(await page.$eval(input, (element) => (element as HTMLInputElement).checked), true);
-    await page.$eval(section, (element) => element.scrollIntoView({block: "center"}));
+    assert.equal(
+        await page.$eval(
+            input,
+            (element) => element instanceof HTMLInputElement && element.checked,
+        ),
+        true,
+    );
+    await page.$eval(section, (element) => {
+        element.scrollIntoView({block: "center"});
+    });
     await common.screenshot(page, "reaction-notifications-default");
     await page.click(label);
     const save_button = section + ' .save-button[data-status="unsaved"]';
@@ -23,11 +31,16 @@ async function test_reaction_setting(page: Page): Promise<void> {
     await page.reload();
     await page.waitForSelector(label, {visible: true});
     assert.equal(
-        await page.$eval(input, (element) => (element as HTMLInputElement).checked),
+        await page.$eval(
+            input,
+            (element) => element instanceof HTMLInputElement && element.checked,
+        ),
         false,
     );
     await page.setViewport({width: 480, height: 820});
-    await page.$eval(section, (element) => element.scrollIntoView({block: "center"}));
+    await page.$eval(section, (element) => {
+        element.scrollIntoView({block: "center"});
+    });
     await common.screenshot(page, "reaction-notifications-disabled-mobile");
 }
 
