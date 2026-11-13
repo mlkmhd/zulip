@@ -397,6 +397,7 @@ class ReactionAddEvent(BaseEvent):
     emoji_code: str
     reaction_type: ReactionType
     user_id: int
+    notify: Literal[True] | None = None
 
 
 class ReactionRemoveEvent(BaseEvent):
@@ -899,6 +900,7 @@ class BasicStreamFields(BaseEventModel):
     description: str
     first_message_id: int | None
     folder_id: int | None
+    icon_url: str | None
     is_recently_active: bool
     history_public_to_subscribers: bool
     invite_only: bool
@@ -973,6 +975,7 @@ class SingleSubscription(BaseEventModel):
     description: str
     first_message_id: int | None
     folder_id: int | None
+    icon_url: str | None
     is_recently_active: bool
     history_public_to_subscribers: bool
     invite_only: bool

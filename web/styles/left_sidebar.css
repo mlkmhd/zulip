@@ -2881,3 +2881,16 @@ body:not(.spectator-view)
         opacity: 1;
     }
 }
+
+.channel-sidebar-picture {
+    inline-size: 100%;
+    block-size: 100%;
+    border-radius: 4px;
+    object-fit: cover;
+}
+
+.channel-sidebar-picture-fallback {
+    inline-size: 100%;
+    block-size: 100%;
+    border-radius: inherit;
+}

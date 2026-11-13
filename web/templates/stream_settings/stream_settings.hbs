@@ -12,6 +12,31 @@
             <div class="stream-settings-tip-container">
                 {{> stream_settings_tip .}}
             </div>
+            <div class="input-group channel-picture-settings">
+                <div class="settings-field-label">{{t "Channel picture" }}</div>
+                <img class="channel-picture-preview" {{#if icon_url}}src="{{icon_url}}"{{/if}} alt="" width="64" height="64" {{#unless icon_url}}hidden{{/unless}} />
+                {{#if (and can_change_name_description (not is_archived))}}
+                    <input type="file" class="channel-picture-input" hidden />
+                    <div class="channel-picture-actions">
+                        {{> ../components/action_button
+                          label=(t "Upload picture")
+                          variant="subtle"
+                          intent="neutral"
+                          type="button"
+                          custom_classes="channel-picture-upload"
+                          }}
+                        {{> ../components/action_button
+                          label=(t "Remove picture")
+                          variant="subtle"
+                          intent="neutral"
+                          type="button"
+                          custom_classes="channel-picture-remove"
+                          hidden=(not icon_url)
+                          }}
+                    </div>
+                    <div class="channel-picture-error alert-notification" role="alert" hidden></div>
+                {{/if}}
+            </div>
             <div class="channel-description-box">
                 <label class="settings-field-label {{#unless can_change_name_description}}cursor-text{{/unless}}"
                   for="{{#if can_change_name_description}}open_stream_info_modal{{/if}}">

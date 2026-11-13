@@ -1801,3 +1801,15 @@
         }
     }
 }
+
+.channel-picture-preview {
+    border-radius: 4px;
+    object-fit: cover;
+    margin-block-end: 0.5em;
+}
+
+.channel-picture-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5em;
+}

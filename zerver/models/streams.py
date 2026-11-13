@@ -41,6 +41,7 @@ class Stream(models.Model):
     deactivated = models.BooleanField(default=False)
     description = models.CharField(max_length=MAX_DESCRIPTION_LENGTH, default="")
     rendered_description = models.TextField(default="")
+    icon_key = models.UUIDField(null=True)
 
     # Total number of non-deactivated users who are subscribed to the channel.
     # It's obvious to be a positive field but also in case it becomes negative
@@ -277,6 +278,7 @@ class Stream(models.Model):
         "folder_id",
         "history_public_to_subscribers",
         "id",
+        "icon_key",
         "invite_only",
         "is_web_public",
         "message_retention_days",

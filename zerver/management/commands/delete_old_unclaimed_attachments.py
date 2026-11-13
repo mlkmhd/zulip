@@ -8,10 +8,11 @@ from typing_extensions import override
 
 from zerver.actions.uploads import do_delete_old_unclaimed_attachments
 from zerver.lib.attachments import get_old_unclaimed_attachments
+from zerver.lib.channel_icon import CHANNEL_ICON_PATH
 from zerver.lib.management import ZulipBaseCommand, abort_unless_locked
 from zerver.lib.thumbnail import split_thumbnail_path
 from zerver.lib.upload import all_message_attachments, delete_message_attachments
-from zerver.models import ArchivedAttachment, Attachment
+from zerver.models import ArchivedAttachment, Attachment, Stream
 
 
 class Command(ZulipBaseCommand):
@@ -82,6 +83,12 @@ class Command(ZulipBaseCommand):
                     path_id = split_thumbnail_path(file_path)[0]
                 else:
                     path_id = file_path
+                if icon_match := CHANNEL_ICON_PATH.fullmatch(path_id):
+                    realm_id, stream_id, icon_key = icon_match.groups()
+                    if Stream.objects.filter(
+                        realm_id=realm_id, id=stream_id, icon_key=icon_key
+                    ).exists():
+                        continue
                 if Attachment.objects.filter(path_id=path_id).exists():
                     continue
                 if ArchivedAttachment.objects.filter(path_id=path_id).exists():

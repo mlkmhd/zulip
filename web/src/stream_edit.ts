@@ -20,6 +20,7 @@ import * as channel from "./channel.ts";
 import * as channel_folders_ui from "./channel_folders_ui.ts";
 import * as confirm_dialog from "./confirm_dialog.ts";
 import {show_copied_confirmation} from "./copied_tooltip.ts";
+import {csrf_token} from "./csrf.ts";
 import * as dialog_widget from "./dialog_widget.ts";
 import type {DropdownWidget} from "./dropdown_widget.ts";
 import * as dropdown_widget from "./dropdown_widget.ts";
@@ -57,6 +58,7 @@ import * as sub_store from "./sub_store.ts";
 import type {StreamSubscription} from "./sub_store.ts";
 import * as ui_report from "./ui_report.ts";
 import {place_caret_at_end} from "./ui_util.ts";
+import * as upload_widget from "./upload_widget.ts";
 import {user_settings} from "./user_settings.ts";
 import * as util from "./util.ts";
 
@@ -470,6 +472,61 @@ function get_push_notifications_tooltip(): string | undefined {
     return undefined;
 }
 
+function set_up_channel_picture($container: JQuery, stream_id: number): void {
+    const $upload_button = $container.find(".channel-picture-upload");
+    if ($upload_button.length === 0) {
+        return;
+    }
+
+    const url = `/json/streams/${stream_id}/icon`;
+    const $file_input = $container.find<HTMLInputElement>(".channel-picture-input");
+    const $input_error = $container.find(".channel-picture-error");
+    $input_error.hide().removeAttr("hidden");
+
+    upload_widget.build_direct_upload_widget(
+        () => $file_input,
+        $input_error,
+        $upload_button,
+        (file) => {
+            assert(csrf_token !== undefined);
+            const data = new FormData();
+            data.append("csrfmiddlewaretoken", csrf_token);
+            data.append("file", file);
+
+            channel.post({
+                url,
+                data,
+                processData: false,
+                contentType: false,
+                success() {
+                    dialog_widget.close();
+                },
+                error(xhr) {
+                    ui_report.error($t_html({defaultMessage: "Failed"}), xhr, $("#dialog_error"));
+                    dialog_widget.hide_dialog_spinner();
+                },
+            });
+        },
+        realm.max_icon_file_size_mib,
+        "realm_icon",
+    );
+
+    $container.find(".channel-picture-remove").on("click", () => {
+        confirm_dialog.launch({
+            modal_title_html: $t_html({defaultMessage: "Remove channel picture"}),
+            modal_content_html: $t_html({
+                defaultMessage: "Are you sure you want to remove this channel's picture?",
+            }),
+            is_compact: true,
+            close_on_submit: false,
+            loading_spinner: true,
+            on_click() {
+                dialog_widget.submit_api_request(channel.del, url, {});
+            },
+        });
+    });
+}
+
 export function show_settings_for(node: HTMLElement): void {
     // Hide any tooltips or popovers before we rerender / change
     // currently displayed stream settings.
@@ -521,6 +578,7 @@ export function show_settings_for(node: HTMLElement): void {
 
     $edit_container.addClass("show");
 
+    set_up_channel_picture($edit_container, sub.stream_id);
     show_subscription_settings(sub);
     settings_org.set_message_retention_setting_dropdown(sub);
     set_up_channel_privacy_dropdown_widget(undefined, sub);

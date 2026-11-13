@@ -10,6 +10,7 @@ from django.db.models import QuerySet
 from django.utils.translation import gettext as _
 from psycopg2.sql import SQL
 
+from zerver.lib.channel_icon import channel_icon_url
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.stream_color import STREAM_ASSIGNMENT_COLORS
 from zerver.lib.stream_subscription import (
@@ -157,6 +158,7 @@ def get_web_public_subs(
             email_notifications=email_notifications,
             first_message_id=first_message_id,
             folder_id=folder_id,
+            icon_url=channel_icon_url(stream.id, stream.icon_key),
             history_public_to_subscribers=history_public_to_subscribers,
             in_home_view=in_home_view,
             invite_only=invite_only,
@@ -264,6 +266,7 @@ def build_stream_api_dict(
         description=raw_stream_dict["description"],
         first_message_id=raw_stream_dict["first_message_id"],
         folder_id=raw_stream_dict["folder_id"],
+        icon_url=channel_icon_url(raw_stream_dict["id"], raw_stream_dict["icon_key"]),
         history_public_to_subscribers=raw_stream_dict["history_public_to_subscribers"],
         invite_only=raw_stream_dict["invite_only"],
         is_announcement_only=is_announcement_only,
@@ -356,6 +359,7 @@ def build_stream_dict_for_sub(
         email_notifications=email_notifications,
         first_message_id=first_message_id,
         folder_id=folder_id,
+        icon_url=stream_dict["icon_url"],
         is_recently_active=is_recently_active,
         history_public_to_subscribers=history_public_to_subscribers,
         in_home_view=in_home_view,
@@ -465,6 +469,7 @@ def build_stream_dict_for_never_sub(
         description=description,
         first_message_id=first_message_id,
         folder_id=folder_id,
+        icon_url=channel_icon_url(stream_id, raw_stream_dict["icon_key"]),
         history_public_to_subscribers=history_public_to_subscribers,
         invite_only=invite_only,
         is_announcement_only=is_announcement_only,

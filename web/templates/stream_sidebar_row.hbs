@@ -5,7 +5,8 @@
 
             <span class="stream-privacy filter-icon{{#unless for_modal}} channel-avatar{{/unless}}" aria-hidden="true">
                 {{#unless for_modal}}
-                    {{> sidebar_avatar_initials .}}
+                    <img class="channel-sidebar-picture" {{#if icon_url}}src="{{icon_url}}"{{/if}} alt="" {{#unless icon_url}}hidden{{/unless}} />
+                    <span class="channel-sidebar-picture-fallback" {{#if icon_url}}hidden{{/if}}>{{> sidebar_avatar_initials .}}</span>
                 {{/unless}}
                 <span class="stream-privacy-original-color-{{id}} channel-privacy-icon" style="color: {{color}}">
                     {{> stream_privacy . }}

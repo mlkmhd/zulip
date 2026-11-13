@@ -21,6 +21,7 @@ from zerver.lib.cache import (
     display_recipient_cache_key,
     to_dict_cache_key_id,
 )
+from zerver.lib.channel_icon import channel_icon_url
 from zerver.lib.event_types import (
     RealmUpdateDictData,
     RealmUpdateDictEvent,
@@ -508,6 +509,7 @@ def send_subscription_add_events(
                 message_retention_days=stream_dict["message_retention_days"],
                 name=stream_dict["name"],
                 default_push_notifications=stream_dict["default_push_notifications"],
+                icon_url=stream_dict["icon_url"],
                 rendered_description=stream_dict["rendered_description"],
                 stream_id=stream_dict["stream_id"],
                 stream_post_policy=stream_dict["stream_post_policy"],
@@ -1714,6 +1716,10 @@ def do_change_stream_message_retention_days(
 
 @transaction.atomic(durable=True)
 def do_set_stream_property(stream: Stream, name: str, value: Any, acting_user: UserProfile) -> None:
+    set_stream_property(stream, name, value, acting_user)
+
+
+def set_stream_property(stream: Stream, name: str, value: Any, acting_user: UserProfile) -> None:
     old_value = getattr(stream, name)
     if old_value == value:
         return
@@ -1727,18 +1733,26 @@ def do_set_stream_property(stream: Stream, name: str, value: Any, acting_user: U
         event_type=AuditLogEventType.CHANNEL_PROPERTY_CHANGED,
         event_time=timezone_now(),
         extra_data={
-            RealmAuditLog.OLD_VALUE: old_value,
-            RealmAuditLog.NEW_VALUE: value,
+            RealmAuditLog.OLD_VALUE: str(old_value)
+            if name == "icon_key" and old_value is not None
+            else old_value,
+            RealmAuditLog.NEW_VALUE: str(value)
+            if name == "icon_key" and value is not None
+            else value,
             "property": name,
         },
     )
 
+    event_property = name
     event_value = value
-    if name == "topics_policy":
+    if name == "icon_key":
+        event_property = "icon_url"
+        event_value = channel_icon_url(stream.id, value)
+    elif name == "topics_policy":
         event_value = StreamTopicsPolicyEnum(value).name
 
     event = StreamUpdateEvent(
-        property=name,
+        property=event_property,
         value=event_value,
         stream_id=stream.id,
         name=stream.name,

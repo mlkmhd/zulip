@@ -822,6 +822,7 @@ function build_stream_sidebar_li(sub: StreamSubscription, for_modal = false): JQ
     const url = hash_util.channel_url_by_user_setting(sub.stream_id);
     const args = {
         name,
+        ...(sub.icon_url && {icon_url: sub.icon_url}),
         avatar_initials: [...name.trim()][0]?.toUpperCase(),
         id: sub.stream_id,
         url,
@@ -863,7 +864,7 @@ export function redraw_stream_privacy(sub: StreamSubscription): void {
         return;
     }
 
-    const $div = $li.find(".stream-privacy");
+    const $div = $li.find(".channel-privacy-icon");
 
     const args = {
         invite_only: sub.invite_only,

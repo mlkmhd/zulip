@@ -926,6 +926,11 @@ class OpenAPIAttributesTest(ZulipTestCase):
                 tag = operation["tags"][0]
                 assert tag in VALID_TAGS
                 for status_code, response in operation["responses"].items():
+                    if "application/json" not in response.get("content", {}):
+                        # Binary responses have schemas, but no JSON examples to validate.
+                        for media_type in response.get("content", {}).values():
+                            validate_schema(media_type["schema"])
+                        continue
                     schema = response["content"]["application/json"]["schema"]
                     # Validate the documented examples for each event type
                     # in api/get-events for the documented event schemas.

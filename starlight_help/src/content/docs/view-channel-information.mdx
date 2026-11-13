@@ -5,6 +5,7 @@ title: View channel information
 import {TabItem, Tabs} from "@astrojs/starlight/components";
 
 import FlattenedSteps from "../../components/FlattenedSteps.astro";
+import NavigationSteps from "../../components/NavigationSteps.astro";
 import GoToChannel from "../include/_GoToChannel.mdx";
 
 When viewing a [topic](/help/introduction-to-topics) or a [channel
@@ -49,6 +50,22 @@ count for the current channel directly in your message view.
     </FlattenedSteps>
   </TabItem>
 </Tabs>
+
+## Change a channel's picture
+
+Channel administrators can set a picture that appears next to the channel
+name in the web and desktop apps.
+
+<FlattenedSteps>
+  <NavigationSteps target="relative/channel/all" />
+
+  1. Select a channel and open the **General** tab.
+
+  1. Under **Channel picture**, click **Upload picture** and choose an image.
+
+  1. Adjust the crop and save the picture. To clear an existing picture,
+     click **Remove picture** and confirm.
+</FlattenedSteps>
 
 ## Related articles
 

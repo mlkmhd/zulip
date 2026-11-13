@@ -52,6 +52,7 @@ export const stream_schema = z.object({
     description: z.string(),
     first_message_id: z.nullable(z.number()),
     folder_id: z.nullable(z.number()),
+    icon_url: z.optional(z.nullable(z.string())),
     history_public_to_subscribers: z.boolean(),
     invite_only: z.boolean(),
     is_announcement_only: z.boolean(),

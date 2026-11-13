@@ -1696,6 +1696,8 @@ def do_import_realm(
         # are imported, we can set the .creator_id for all these streams correctly.
         stream_id_to_creator_id = {}
         for stream in data["zerver_stream"]:
+            # Channel pictures are stored separately from realm exports.
+            stream.pop("icon_key", None)
             creator_id = stream.pop("creator_id", None)
             stream_id_to_creator_id[stream["id"]] = creator_id
 

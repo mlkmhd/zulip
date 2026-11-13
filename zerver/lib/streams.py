@@ -9,6 +9,7 @@ from django.db.models import Exists, OuterRef, Q, QuerySet
 from django.utils.timezone import now as timezone_now
 from django.utils.translation import gettext as _
 
+from zerver.lib.channel_icon import channel_icon_url
 from zerver.lib.default_streams import get_default_stream_ids_for_realm
 from zerver.lib.event_types import BasicStreamFields, StreamUpdateEvent
 from zerver.lib.exceptions import (
@@ -1905,6 +1906,7 @@ def stream_to_dict(
         description=stream.description,
         first_message_id=stream.first_message_id,
         folder_id=stream.folder_id,
+        icon_url=channel_icon_url(stream.id, stream.icon_key),
         history_public_to_subscribers=stream.history_public_to_subscribers,
         invite_only=stream.invite_only,
         is_announcement_only=stream_post_policy == Stream.STREAM_POST_POLICY_ADMINS,

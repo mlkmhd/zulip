@@ -1865,6 +1865,14 @@ paths:
                                     emoji_name: {}
                                     reaction_type: {}
                                     user_id: {}
+                                    notify:
+                                      type: boolean
+                                      enum: [true]
+                                      description: |
+                                        Present only for the author of the message when this reaction
+                                        can trigger a desktop notification.
+
+                                        **Changes**: New in Zulip 14.0 (feature level ZF-e9a73b).
                                   example:
                                     {
                                       "type": "reaction",
@@ -5626,6 +5634,12 @@ paths:
                                         Whether users are allowed to change their own email address in this
                                         organization. This is typically disabled for organizations that
                                         synchronize accounts from LDAP or a similar corporate database.
+                                    enable_reaction_notifications:
+                                      type: boolean
+                                      description: |
+                                        Whether emoji reactions can generate desktop and mobile notifications for message authors.
+
+                                        **Changes**: New in Zulip 14.0 (feature level ZF-e9a73b).
                                     enable_read_receipts:
                                       type: boolean
                                       description: |
@@ -19581,6 +19595,7 @@ paths:
                                 creator_id:
                                   nullable: true
                                 invite_only: {}
+                                icon_url: {}
                                 rendered_description: {}
                                 is_web_public: {}
                                 stream_post_policy: {}
@@ -21580,6 +21595,14 @@ paths:
                           **Changes**: New in Zulip 7.0 (feature level 162). Previously, there was
                           no time limit for moving messages between channels for users with permission
                           to do so.
+                      realm_enable_reaction_notifications:
+                        type: boolean
+                        description: |
+                          Whether emoji reactions can generate desktop and mobile notifications for message authors.
+
+                          Defaults to `true`. Present if `realm` is present in `fetch_event_types`.
+
+                          **Changes**: New in Zulip 14.0 (feature level ZF-e9a73b).
                       realm_enable_read_receipts:
                         type: boolean
                         description: |
@@ -24679,6 +24702,7 @@ paths:
                                 creator_id:
                                   nullable: true
                                 invite_only: {}
+                                icon_url: {}
                                 rendered_description: {}
                                 is_web_public: {}
                                 stream_post_policy: {}
@@ -25406,6 +25430,112 @@ paths:
                         description: |
                           An example JSON response for when trying to set moderation request channel to
                           be public:
+  /streams/{stream_id}/icon:
+    get:
+      operationId: get-channel-picture
+      summary: Get a channel picture
+      tags: ["channels"]
+      description: |
+        Get the current channel picture as a PNG image. Access requires
+        permission to view the channel's metadata.
+
+        **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+      parameters:
+        - $ref: "#/components/parameters/ChannelIdInPath"
+        - name: v
+          in: query
+          description: The picture version from the channel's `icon_url`, if present.
+          example: 345f1588-675a-406f-a86a-c8f77d606a7a
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success.
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid or inaccessible channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvalidChannelError"
+        "404":
+          description: The requested picture is unavailable.
+    post:
+      operationId: upload-channel-picture
+      summary: Upload a channel picture
+      tags: ["channels"]
+      description: |
+        Set or replace the picture for an active channel. This requires permission
+        to administer the channel.
+
+        **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+      parameters:
+        - $ref: "#/components/parameters/ChannelIdInPath"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: ["file"]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/JsonSuccessBase"
+                  - additionalProperties: false
+                    properties:
+                      result: {}
+                      msg: {}
+                      ignored_parameters_unsupported: {}
+                      icon_url:
+                        type: string
+                        description: The relative URL of the uploaded picture.
+                    example:
+                      result: success
+                      msg: ""
+                      icon_url: /json/streams/7/icon?v=345f1588-675a-406f-a86a-c8f77d606a7a
+        "400":
+          description: Invalid channel or image.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvalidChannelError"
+    delete:
+      operationId: delete-channel-picture
+      summary: Remove a channel picture
+      tags: ["channels"]
+      description: |
+        Remove the picture for an active channel. This requires permission to
+        administer the channel.
+
+        **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+      parameters:
+        - $ref: "#/components/parameters/ChannelIdInPath"
+      responses:
+        "200":
+          description: Success.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JsonSuccess"
+        "400":
+          description: Invalid or inaccessible channel.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvalidChannelError"
   /streams/{stream_id}/email_address:
     get:
       operationId: get-stream-email-address
@@ -27930,6 +28060,7 @@ components:
             creator_id:
               nullable: true
             invite_only: {}
+            icon_url: {}
             rendered_description: {}
             is_web_public: {}
             stream_post_policy: {}
@@ -28045,6 +28176,14 @@ components:
           description: |
             Specifies whether the channel is private or not.
             Only people who have been invited can access a private channel.
+        icon_url:
+          type: string
+          nullable: true
+          description: |
+            The relative URL of the channel picture, or null if no picture is set.
+            Access to the image follows the channel's metadata permissions.
+
+            **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
         rendered_description:
           type: string
           description: |
@@ -29133,6 +29272,14 @@ components:
             See [Markdown message formatting](/api/message-formatting) for details on Zulip's HTML format.
 
             See also `rendered_description`.
+        icon_url:
+          type: string
+          nullable: true
+          description: |
+            The relative URL of the channel picture, or null if no picture is set.
+            Access to the image follows the channel's metadata permissions.
+
+            **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
         rendered_description:
           type: string
           description: |

@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeVar
+from uuid import UUID
 
 if TYPE_CHECKING:
     from zerver.models import Stream
@@ -188,6 +189,7 @@ class RawStreamDict(TypedDict):
     folder_id: int | None
     history_public_to_subscribers: bool
     id: int
+    icon_key: UUID | None
     invite_only: bool
     is_recently_active: bool
     is_web_public: bool
@@ -244,6 +246,7 @@ class SubscriptionStreamDict(TypedDict):
     email_notifications: bool | None
     first_message_id: int | None
     folder_id: int | None
+    icon_url: str | None
     history_public_to_subscribers: bool
     in_home_view: bool
     invite_only: bool
@@ -285,6 +288,7 @@ class NeverSubscribedStreamDict(TypedDict):
     description: str
     first_message_id: int | None
     folder_id: int | None
+    icon_url: str | None
     history_public_to_subscribers: bool
     invite_only: bool
     is_announcement_only: bool
@@ -326,6 +330,7 @@ class DefaultStreamDict(TypedDict):
     description: str
     first_message_id: int | None
     folder_id: int | None
+    icon_url: str | None
     history_public_to_subscribers: bool
     invite_only: bool
     is_archived: bool

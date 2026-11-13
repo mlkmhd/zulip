@@ -209,7 +209,7 @@ test_ui("create_sidebar_row", ({override, override_rewire, mock_template}) => {
     const stream_id = social.stream_id;
 
     const $privacy_elem = $.create("privacy-stub");
-    $social_li.set_find_results(".stream-privacy", $privacy_elem);
+    $social_li.set_find_results(".channel-privacy-icon", $privacy_elem);
 
     social.invite_only = true;
     social.color = "#222222";

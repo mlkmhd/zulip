@@ -44,6 +44,7 @@ from zerver.views.channel_folders import (
     reorder_realm_channel_folders,
     update_channel_folder,
 )
+from zerver.views.channel_icon import delete_channel_icon, serve_channel_icon, upload_channel_icon
 from zerver.views.compatibility import check_global_compatibility
 from zerver.views.custom_profile_fields import (
     create_realm_custom_profile_field,
@@ -572,6 +573,12 @@ v1_api_and_json_patterns = [
         GET=get_stream_backend,
         PATCH=update_stream_backend,
         DELETE=deactivate_stream_backend,
+    ),
+    rest_path(
+        "streams/<int:stream_id>/icon",
+        GET=(serve_channel_icon, {"allow_anonymous_user_web"}),
+        POST=upload_channel_icon,
+        DELETE=delete_channel_icon,
     ),
     rest_path("streams/<int:stream_id>/email_address", GET=get_stream_email_address),
     # Delete topic in stream

@@ -183,6 +183,24 @@ export function update_property<P extends keyof UpdatableStreamProperties>(
                 other_values.rendered_description,
             );
         },
+        icon_url(value) {
+            sub.icon_url = value;
+            const $rows = $(`.narrow-filter[data-stream-id="${stream_id}"]`);
+            $rows
+                .find(".channel-sidebar-picture")
+                .attr("src", value ?? null)
+                .prop("hidden", !value);
+            $rows.find(".channel-sidebar-picture-fallback").prop("hidden", Boolean(value));
+
+            const $settings = $(
+                `#stream_settings .subscription_settings[data-stream-id="${stream_id}"]`,
+            );
+            $settings
+                .find(".channel-picture-preview")
+                .attr("src", value ?? null)
+                .prop("hidden", !value);
+            $settings.find(".channel-picture-remove").toggleClass("hide", !value);
+        },
         pin_to_top(value) {
             update_stream_setting(sub, value, "pin_to_top");
             stream_list.refresh_pinned_or_unpinned_stream(sub);
