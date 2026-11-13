@@ -867,6 +867,32 @@
         }
     }
 
+    & a.message-reply-link:not(.icon-button) {
+        display: block;
+        overflow: hidden;
+        max-inline-size: 38em;
+        padding: 0.25em 0.65em;
+        border-inline-start: 0.2em solid
+            var(--color-text-message-blockquote-border);
+        border-radius: 0.25em;
+        background-color: var(--color-markdown-code-background);
+        font-size: 0.9em;
+        text-decoration: none;
+
+        .message-reply-sender,
+        .message-reply-excerpt {
+            display: block;
+            overflow: hidden;
+            text-align: start;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .message-reply-excerpt {
+            color: var(--color-text-default);
+        }
+    }
+
     & a:not(.icon-button) {
         color: var(--color-markdown-link);
         text-decoration: underline;

@@ -2011,6 +2011,26 @@ class LinkInlineProcessor(markdown.inlinepatterns.LinkInlineProcessor):
         # Make changes to <a> tag attributes
         el.set("href", href)
 
+        if (
+            el.get("title") == "zulip-message-reply"
+            and href.startswith(("#narrow/channel/", "#narrow/dm/"))
+            and re.search(r"/near/[0-9]+$", href)
+        ):
+            el.attrib.pop("title")
+            el.set("class", "message-reply-link")
+            label = el.text or ""
+            separator = " | " if " | " in label else " &#183; "
+            sender, _, excerpt = label.partition(separator)
+            if sender and excerpt:
+                el.text = ""
+                SubElement(
+                    el, "strong", {"class": "message-reply-sender", "dir": "auto"}
+                ).text = markdown.util.AtomicString(sender)
+                SubElement(
+                    el, "span", {"class": "message-reply-excerpt", "dir": "auto"}
+                ).text = markdown.util.AtomicString(excerpt)
+                return el
+
         # Show link href if title is empty
         if not el.text or not el.text.strip():
             el.text = href

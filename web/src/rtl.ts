@@ -142,6 +142,7 @@ export function get_direction(str: string): "ltr" | "rtl" {
 export function set_rtl_class_for_textarea($textarea: JQuery<HTMLTextAreaElement>): void {
     // Set the rtl class if the text has an rtl direction, remove it otherwise
     let text = $textarea.val()!;
+    text = text.replace(/^\[[^\n]*\]\([^\n]* "zulip-message-reply"\)\n*/, "");
     if (text.startsWith("```quote")) {
         text = text.slice(8);
     }

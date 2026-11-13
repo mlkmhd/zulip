@@ -752,6 +752,26 @@ class MarkdownLinkTest(ZulipTestCase):
             '<p><a href="#channels/all">http://zulip.testserver/#channels/all</a></p>',
         )
 
+    def test_message_reply_link(self) -> None:
+        realm = get_realm("zulip")
+        message = Message(sender=self.example_user("othello"), sending_client=get_client("test"))
+        target = "#narrow/channel/999-hello/topic/near/123"
+        for separator in (" | ", " &#183; "):
+            with self.subTest(separator=separator):
+                content = (
+                    f"[Othello{separator}سلام &#91;preview&#93;]"
+                    f'({realm.url}/{target} "zulip-message-reply")'
+                )
+                self.assertEqual(
+                    markdown_convert(
+                        content, message_realm=realm, message=message
+                    ).rendered_content,
+                    f'<p><a class="message-reply-link" href="{target}">'
+                    '<strong class="message-reply-sender" dir="auto">Othello</strong>'
+                    '<span class="message-reply-excerpt" dir="auto">سلام &#91;preview&#93;</span>'
+                    "</a></p>",
+                )
+
     def test_md_relative_link(self) -> None:
         realm = get_realm("zulip")
         sender_user_profile = self.example_user("othello")

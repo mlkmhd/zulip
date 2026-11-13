@@ -129,6 +129,7 @@ function set_message_for_message_content($content, value) {
 
 const get_content_element = () => {
     const $content = $.create("content-stub");
+    $content.set_find_results(".message-reply-link", []);
     $content.set_find_results(".user-mention", []);
     $content.set_find_results(".topic-mention", []);
     $content.set_find_results(".user-group-mention", []);

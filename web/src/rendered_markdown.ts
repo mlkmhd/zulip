@@ -165,10 +165,12 @@ export function set_name_in_mention_element(
 
 export const update_elements = ($content: JQuery): void => {
     let message: Message | undefined;
-    // Set the rtl class if the text has an rtl direction
-    if (rtl.get_direction($content.text()) === "rtl") {
-        $content.addClass("rtl");
+    const $direction_content =
+        $content.find(".message-reply-link").length > 0 ? $content.clone() : $content;
+    if ($direction_content !== $content) {
+        $direction_content.find(".message-reply-link").remove();
     }
+    $content.toggleClass("rtl", rtl.get_direction($direction_content.text()) === "rtl");
 
     if (util.is_client_safari()) {
         // Without this video thumbnail doesn't load on Safari.

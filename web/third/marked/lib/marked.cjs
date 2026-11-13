@@ -934,6 +934,11 @@ InlineLexer.prototype.outputLink = function(cap, link) {
   var href = escape(link.href)
     , title = link.title ? escape(link.title) : null;
 
+  // The reply label is plain text. Do not expand mentions or linkifiers in it.
+  if (cap[0].charAt(0) !== '!' && title === 'zulip-message-reply' && /#narrow\/(?:channel|dm)\/.*\/near\/[0-9]+$/.test(href)) {
+    return this.renderer.link(href, title, escape(cap[1]));
+  }
+
   return cap[0].charAt(0) !== '!'
     ? this.renderer.link(href, title, this.output(cap[1]))
     : this.renderer.image(href, title, escape(cap[1]));

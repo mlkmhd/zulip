@@ -179,6 +179,51 @@ export let respond_to_message = (opts: {
     });
 };
 
+export function reply_to_whole_message(message_id: number): void {
+    const message = message_lists.current?.get(message_id);
+    if (!message || message.locally_echoed) {
+        return;
+    }
+
+    const template = document.createElement("template");
+    template.innerHTML = message.content;
+    for (const element of template.content.querySelectorAll(
+        ".message-reply-link, .spoiler-block, .message_inline_image, .message_embed",
+    )) {
+        element.remove();
+    }
+    for (const image of template.content.querySelectorAll("img")) {
+        image.replaceWith(image.alt);
+    }
+    for (const block of template.content.querySelectorAll("p, li, br, pre, blockquote")) {
+        block.after(" ");
+    }
+    const text = (template.content.textContent ?? "").replaceAll(/\s+/g, " ").trim();
+    const characters = [...text];
+    const excerpt = characters.length > 100 ? characters.slice(0, 100).join("") + "…" : text;
+    // Character references keep both lines plain text in Markdown.
+    const escape_label = (label: string): string =>
+        label.replaceAll(/[^\p{L}\p{N} ]/gu, (character) => `&#${character.codePointAt(0)!};`);
+    const sender = escape_label(message.sender_full_name.replaceAll(/\s+/g, " "));
+    const preview = escape_label(excerpt || $t({defaultMessage: "View original message"}));
+    const url = hash_util.by_conversation_and_time_url(message);
+    const reference = `[${sender} | ${preview}](${url} "zulip-message-reply")`;
+
+    respond_to_message({message_id, trigger: "popover respond"});
+    if (compose_state.composing()) {
+        const $textarea = $<HTMLTextAreaElement>("textarea#compose-textarea");
+        const existing_reference = /^\[[^\n]*\]\([^\n]* "zulip-message-reply"\)\n{0,2}/.exec(
+            $textarea.val() ?? "",
+        );
+        $textarea.caret(0);
+        if (existing_reference) {
+            compose_ui.replace_syntax(existing_reference[0], "", $textarea);
+            $textarea.caret(0);
+        }
+        compose_ui.insert_syntax_and_focus(reference, $textarea, "block");
+    }
+}
+
 export function rewire_respond_to_message(value: typeof respond_to_message): void {
     respond_to_message = value;
 }
@@ -937,6 +982,19 @@ export function rewire_get_message_selection(value: typeof get_message_selection
 }
 
 export function initialize(): void {
+    $("#main_div").on("click", ".message-reply-link", (e) => {
+        if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) {
+            return;
+        }
+
+        const href = $(e.currentTarget).attr("href") ?? "";
+        const target = /\/near\/([0-9]+)$/.exec(href)?.[1];
+        const list = message_lists.current;
+        if (target !== undefined && list?.get(Number(target))) {
+            e.preventDefault();
+            list.select_id(Number(target), {then_scroll: true});
+        }
+    });
     $("body").on("click", ".compose_reply_button", () => {
         respond_to_message({trigger: "reply button"});
     });

@@ -722,7 +722,24 @@ export function parse({
         // The server percent-encodes spaces in link URLs; see sanitize_url.
         href = href.replaceAll(" ", "%20");
         // Prohibit empty links for some reason.
-        return old_link.call(renderer, href, title, text.trim() ? text : href);
+        const label = text.trim() ? text : href;
+        if (
+            title === "zulip-message-reply" &&
+            /#narrow\/(?:channel|dm)\/.*\/near\/[0-9]+$/.test(href)
+        ) {
+            const separator = label.includes(" | ") ? " | " : " &#183; ";
+            const boundary = label.indexOf(separator);
+            const sender = label.slice(0, boundary);
+            const preview = label.slice(boundary + separator.length);
+            const reply_label =
+                boundary > 0 && preview
+                    ? `<strong class="message-reply-sender" dir="auto">${sender}</strong><span class="message-reply-excerpt" dir="auto">${preview}</span>`
+                    : label;
+            return old_link
+                .call(renderer, href, "", reply_label)
+                .replace(/^<a /, '<a class="message-reply-link" ');
+        }
+        return old_link.call(renderer, href, title, label);
     };
 
     // Put a newline after a <br> in the generated HTML to match Markdown

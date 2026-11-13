@@ -315,6 +315,19 @@ test("marked_shared", ({override}) => {
     }
 });
 
+test("message reply link", () => {
+    const target = "#narrow/dm/12-othello/near/123";
+    for (const separator of [" | ", " &#183; "]) {
+        const {content} = markdown.render(
+            `[Othello${separator}سلام &#91;preview&#93;](${target} "zulip-message-reply")`,
+        );
+        markdown_assert.equal(
+            `<p><a class="message-reply-link" href="${target}"><strong class="message-reply-sender" dir="auto">Othello</strong><span class="message-reply-excerpt" dir="auto">سلام &#91;preview&#93;</span></a></p>`,
+            content,
+        );
+    }
+});
+
 test("message_flags", () => {
     let message = {raw_content: "@**Leo**"};
     message = {

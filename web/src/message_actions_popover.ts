@@ -202,6 +202,13 @@ export function initialize({
             // We want click events to propagate to `instance` so that
             // instance.hide gets called.
             const $popper = $(instance.popper);
+            $popper.one("click", ".reply-to-message", (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                popover_menus.hide_current_popover_if_visible(instance);
+                compose_reply.reply_to_whole_message(message_id);
+            });
+
             $popper.one("click", ".respond_button", (e) => {
                 quote_from_menu(message_id, quote_menu_selection, false);
                 e.preventDefault();
