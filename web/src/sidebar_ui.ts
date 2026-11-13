@@ -359,6 +359,9 @@ export function update_expanded_views_for_search(search_term: string): void {
                 search_term,
             });
         const $view = $(`.top_left_${view.css_class_suffix}`);
+        if ($view.length === 0) {
+            continue;
+        }
 
         if (show_view && $view.hasClass("top_left_scheduled_messages")) {
             show_view = scheduled_messages.get_count() !== 0;
@@ -384,6 +387,9 @@ export function initialize_left_sidebar(): void {
         is_spectator: page_params.is_spectator,
         primary_condensed_views,
         expanded_views,
+        saved_messages_view: expanded_views.find(
+            (view) => view.css_class_suffix === "saved_messages",
+        ),
         LEFT_SIDEBAR_NAVIGATION_AREA_TITLE,
         LEFT_SIDEBAR_DIRECT_MESSAGES_TITLE: pm_list.LEFT_SIDEBAR_DIRECT_MESSAGES_TITLE,
     });

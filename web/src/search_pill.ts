@@ -433,12 +433,15 @@ function search_user_pill_data(
     operator: "dm" | "dm-including" | "mentions" | "sender",
     negated: boolean,
 ): SearchUserPill {
+    const is_saved_messages =
+        operator === "dm" &&
+        people.is_direct_message_conversation_with_self(users.map((user) => user.user_id));
     return {
         type: "search_user",
         operator,
         negated,
         users: users.map((user) => ({
-            full_name: user.full_name,
+            full_name: is_saved_messages ? $t({defaultMessage: "Saved Messages"}) : user.full_name,
             user_id: user.user_id,
             email: user.email,
             img_src: people.small_avatar_url_for_person(user),

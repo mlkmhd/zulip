@@ -871,13 +871,17 @@ function format_conversation(conversation_data: ConversationData): ConversationC
         // Direct message info
         const user_ids_string = last_msg.to_user_ids;
         assert(typeof last_msg.display_recipient !== "string");
+        const is_self_dm = last_msg.display_recipient.length === 1;
         const sorted_pm_users = last_msg.display_recipient
             .filter(
                 (recipient: DisplayRecipientUser) =>
-                    !people.is_my_user_id(recipient.id) || last_msg.display_recipient.length === 1,
+                    is_self_dm || !people.is_my_user_id(recipient.id),
             )
             .map((user: DisplayRecipientUser) => ({
-                name: people.get_display_full_name(user.id),
+                name:
+                    is_self_dm && people.is_my_user_id(user.id)
+                        ? $t({defaultMessage: "Saved Messages"})
+                        : people.get_display_full_name(user.id),
                 status_emoji_info: user_status.get_status_emoji(user.id),
             }))
             .toSorted((a, b) => util.strcmp(a.name, b.name));

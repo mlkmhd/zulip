@@ -134,6 +134,15 @@ export function handle_narrow_activated(filter: Filter): void {
     }
     const term_types = filter.sorted_term_types();
     if (
+        _.isEqual(term_types, ["dm"]) &&
+        people.is_direct_message_conversation_with_self(
+            filter.terms_with_operator("dm")[0]!.operand,
+        )
+    ) {
+        select_top_left_corner_item(".top_left_saved_messages");
+        return;
+    }
+    if (
         _.isEqual(term_types, ["sender", "has-reaction"]) &&
         filter.terms_with_operator("sender")[0]!.operand === people.my_current_user_id()
     ) {

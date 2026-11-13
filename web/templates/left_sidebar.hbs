@@ -21,6 +21,11 @@
             <span class="left-sidebar-topic-search-hint-label"></span>
         </a>
     </div>
+    <div id="left-sidebar-navigation-area" class="hidden-for-spectators">
+        <ul id="left-sidebar-navigation-list" class="left-sidebar-navigation-list filters">
+            {{> left_sidebar_expanded_view_item saved_messages_view}}
+        </ul>
+    </div>
     {{~!-- squash whitespace --~}}
     <div id="left_sidebar_scroll_container" class="scrolling_list" data-simplebar data-simplebar-tab-index="-1">
         <div id="streams_list">

@@ -3087,7 +3087,7 @@ test("navbar_helpers", ({override}) => {
             terms: dm_with_self,
             is_common_narrow: true,
             zulip_icon: "user",
-            title: "translated: Messages with yourself",
+            title: "translated: Saved Messages",
             redirect_url_with_search: "/#narrow/dm/30-Me-Myself",
         },
     ];

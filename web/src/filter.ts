@@ -1597,7 +1597,7 @@ export class Filter {
             if (user_ids.length === 1) {
                 const user = people.maybe_get_user_by_id(user_ids[0]!, ignore_missing);
                 if (user && people.is_direct_message_conversation_with_self([user.user_id])) {
-                    return $t({defaultMessage: "Messages with yourself"});
+                    return $t({defaultMessage: "Saved Messages"});
                 }
             }
             const names = user_ids.map((user_id) => {

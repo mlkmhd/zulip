@@ -99,6 +99,15 @@ function set_pm_with_filter(user_ids) {
     message_lists.set_current(make_message_list([{operator: "dm", operand: user_ids}]));
 }
 
+test("find_saved_messages_before_sending", ({override}) => {
+    override(unread, "num_unread_for_user_ids_string", () => 0);
+    const get_matching_recipients = () =>
+        pm_list_data.get_conversations("Saved Mes").map((conversation) => conversation.recipients);
+    assert.deepEqual(get_matching_recipients(), ["translated: Saved Messages"]);
+    pm_conversations.recent.insert([me.user_id], 1);
+    assert.deepEqual(get_matching_recipients(), ["translated: Saved Messages"]);
+});
+
 test("get_conversations", ({override}) => {
     pm_conversations.recent.insert([alice.user_id, bob.user_id], 1);
     pm_conversations.recent.insert([me.user_id], 2);
@@ -110,12 +119,11 @@ test("get_conversations", ({override}) => {
     const expected_data = [
         {
             is_bot: false,
-            is_current_user: true,
             is_active: false,
             includes_deactivated_user: false,
             is_group: false,
             is_zero: false,
-            recipients: "Me Myself",
+            recipients: "translated: Saved Messages",
             unread: 1,
             url: "#narrow/dm/103-Me-Myself",
             avatar_url: undefined,
@@ -129,7 +137,6 @@ test("get_conversations", ({override}) => {
         },
         {
             recipients: "Alice, Bob",
-            is_current_user: false,
             user_ids_string: "101,102",
             unread: 1,
             is_zero: false,
@@ -168,7 +175,6 @@ test("get_conversations", ({override}) => {
         is_zero: true,
         is_active: true,
         includes_deactivated_user: false,
-        is_current_user: false,
         url: "#narrow/dm/106-Iago",
         status_emoji_info: {emoji_code: "20"},
         avatar_url: "/user_avatars/iago.png",
@@ -192,7 +198,7 @@ test("get_conversations", ({override}) => {
     pm_data = pm_list_data.get_conversations("me@zulip");
     assert.deepEqual(
         pm_data,
-        expected_data.filter((item) => item.recipients === "Me Myself"),
+        expected_data.filter((item) => item.recipients === "translated: Saved Messages"),
     );
 });
 
@@ -208,7 +214,6 @@ test("get_conversations bot", ({override}) => {
         {
             recipients: "Outgoing webhook",
             user_ids_string: "314",
-            is_current_user: false,
             unread: 1,
             is_zero: false,
             is_active: false,
@@ -225,7 +230,6 @@ test("get_conversations bot", ({override}) => {
         {
             recipients: "Alice, Bob",
             user_ids_string: "101,102",
-            is_current_user: false,
             unread: 1,
             is_zero: false,
             is_active: false,

@@ -1,12 +1,14 @@
 import * as blueslip from "./blueslip.ts";
 import * as buddy_data from "./buddy_data.ts";
 import * as hash_util from "./hash_util.ts";
+import {$t} from "./i18n.ts";
 import * as narrow_state from "./narrow_state.ts";
 import * as people from "./people.ts";
 import * as pm_conversations from "./pm_conversations.ts";
 import * as unread from "./unread.ts";
 import * as user_status from "./user_status.ts";
 import type {UserStatusEmojiInfo} from "./user_status.ts";
+import * as util from "./util.ts";
 
 // Maximum number of conversation threads to show in default view.
 const max_conversations_to_show = 8;
@@ -42,7 +44,6 @@ export type PMListConversation = {
 export type DisplayObject = {
     recipients: string;
     user_ids_string: string;
-    is_current_user: boolean;
     unread: number;
     is_zero: boolean;
     is_active: boolean;
@@ -75,18 +76,40 @@ export function get_conversations(search_string = ""): DisplayObject[] {
         });
     }
 
+    const saved_messages_name = $t({defaultMessage: "Saved Messages"});
+    const matches_saved_messages =
+        search_string !== "" &&
+        util.prefix_match({value: saved_messages_name, search_term: search_string});
+    const self_user_ids_string = String(people.my_current_user_id());
+    if (
+        matches_saved_messages &&
+        conversations.every((conversation) => conversation.user_ids_string !== self_user_ids_string)
+    ) {
+        conversations.unshift({
+            user_ids_string: self_user_ids_string,
+            max_message_id: -1,
+            local_message_count: 0,
+        });
+    }
+
     for (const conversation of conversations) {
         const user_ids_string = conversation.user_ids_string;
 
         const user_ids = people.user_ids_string_to_ids_array(user_ids_string);
         const users = people.get_users_from_ids(user_ids);
-        if (!people.dm_matches_search_string(users, search_string)) {
+        const is_self_dm = people.is_direct_message_conversation_with_self(user_ids);
+        if (
+            !(is_self_dm && matches_saved_messages) &&
+            !people.dm_matches_search_string(users, search_string)
+        ) {
             // Skip adding the conversation to the display_objects array if it does
             // not match the search_term.
             continue;
         }
 
-        const recipients_string = people.format_recipients(user_ids_string, "narrow");
+        const recipients_string = is_self_dm
+            ? saved_messages_name
+            : people.format_recipients(user_ids_string, "narrow");
 
         const num_unread = unread.num_unread_for_user_ids_string(user_ids_string);
         const has_unread_mention =
@@ -100,7 +123,6 @@ export function get_conversations(search_string = ""): DisplayObject[] {
         let user_circle_class: string | undefined;
         let status_emoji_info: UserStatusEmojiInfo | undefined;
         let is_bot = false;
-        let is_current_user = false;
 
         if (!is_group) {
             const user_id = Number.parseInt(user_ids_string, 10);
@@ -113,7 +135,6 @@ export function get_conversations(search_string = ""): DisplayObject[] {
             if (recipient_user_obj.is_bot) {
                 is_bot = true;
             } else {
-                is_current_user = people.is_my_user_id(user_id);
                 status_emoji_info = user_status.get_status_emoji(user_id);
             }
         }
@@ -131,7 +152,6 @@ export function get_conversations(search_string = ""): DisplayObject[] {
             is_bot,
             has_unread_mention,
             includes_deactivated_user,
-            is_current_user,
         };
         display_objects.push(display_object);
     }

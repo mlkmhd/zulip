@@ -1542,6 +1542,7 @@
   "Save draft and start a new message": "به صورت پیش‌نویس ذخیره کن و پیام جدید شروع کن",
   "Save failed": "ذخیره سازی شکست خورد",
   "Saved": "ذخیره شد",
+  "Saved Messages": "پیام‌های ذخیره‌شده",
   "Saved as draft": "بعنوان پيش نويس ذخیره شد",
   "Saved. Please <z-link>reload</z-link> for the change to take effect.": "ذخیره شد. لطفاً <z-link>بارگیری دوباره</z-link> کنید تا تغییرات اثر کند.",
   "Saving": "در حال ذخیره سازی",

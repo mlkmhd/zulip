@@ -7,6 +7,7 @@ import * as date_util from "./date_util.ts";
 import * as direct_message_group_data from "./direct_message_group_data.ts";
 import {Filter} from "./filter.ts";
 import * as filter_util from "./filter_util.ts";
+import {$t} from "./i18n.ts";
 import * as narrow_state from "./narrow_state.ts";
 import {page_params} from "./page_params.ts";
 import * as people from "./people.ts";
@@ -1619,6 +1620,18 @@ export function get_suggestions(
     ) {
         suggestion_line = get_default_suggestion_line([...base_terms, last_term]);
         attacher.push(suggestion_line);
+    }
+
+    if (
+        !page_params.is_spectator &&
+        pill_search_terms.length === 0 &&
+        text_search_terms.length > 0 &&
+        text_search_terms.every((term) => term.operator === "search")
+    ) {
+        const search_term = text_search_terms.map((term) => term.operand).join(" ");
+        if (util.prefix_match({value: $t({defaultMessage: "Saved Messages"}), search_term})) {
+            attacher.push(["dm:me"]);
+        }
     }
 
     const filterers = build_filterer_list(last);

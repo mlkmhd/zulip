@@ -481,7 +481,9 @@ function format_dm(
     const rendered_dm_with_html = render_users_with_status_icons({
         users: recipient_ids
             .map((recipient_id) => ({
-                name: people.get_display_full_name(recipient_id),
+                name: people.is_direct_message_conversation_with_self(recipient_ids)
+                    ? $t({defaultMessage: "Saved Messages"})
+                    : people.get_display_full_name(recipient_id),
                 status_emoji_info: user_status.get_status_emoji(recipient_id),
             }))
             .toSorted((a, b) => util.strcmp(a.name, b.name)),

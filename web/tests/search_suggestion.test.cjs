@@ -98,6 +98,11 @@ function test(label, f) {
     });
 }
 
+test("saved_messages_suggestion", ({override}) => {
+    override(narrow_state, "stream_id", noop);
+    assert.ok(get_suggestions("Saved Mes").includes("dm:me"));
+});
+
 test("person_multi_word_completion", () => {
     // The help center documents searching person operators by full name,
     // e.g. `sender:Elena García` and the multi-user `dm:Bo Lin, Elena
