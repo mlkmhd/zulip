@@ -20,6 +20,32 @@ format used by the Zulip server that they are interacting with.
 
 ## Changes in Zulip 14.0
 
+**Feature level 524**
+
+* [POST /register](/api/register-queue), [GET /events](/api/get-events):
+  Added the organization setting `realm_expire_saved_messages` for
+  applying message retention to messages users send to themselves.
+* [POST /register](/api/register-queue), [GET /events](/api/get-events):
+  Added the organization setting `realm_enable_reaction_notifications`
+  and the optional `notify` field in reaction add events.
+* [PATCH /settings](/api/update-settings): Accept an empty `timezone` to
+  reset the profile time zone and use the device time zone for web and desktop display.
+* Added endpoints to get, upload, and remove channel pictures at
+  `/streams/{stream_id}/icon`. Channel objects include an `icon_url`
+  field, and changes are reported via `stream` update events.
+* User objects returned by the API now include an `avatar_source` field
+  describing whether the avatar is uploaded, generated, or hosted by Gravatar.
+* [`POST /users/me/dm_conversations/pin`](/api/update-dm-conversation-pin):
+  Added a new endpoint to pin or unpin a direct message conversation to
+  the top of the "Direct messages" section in the left sidebar.
+* [`POST /register`](/api/register-queue): Each object in the
+  `recent_private_conversations` array now includes a `pinned` boolean
+  indicating whether the current user has pinned that direct message
+  conversation.
+* [`GET /events`](/api/get-events): Added a new
+  `direct_message_conversation` event, sent to a user when they pin or
+  unpin a direct message conversation.
+
 **Feature level 523**
 
 No changes; start of Zulip 14.0 development branch.

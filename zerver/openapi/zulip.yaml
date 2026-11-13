@@ -1184,7 +1184,7 @@ paths:
                                 message conversation, updating the `pinned` field of the
                                 corresponding entry in `recent_private_conversations`.
 
-                                **Changes**: New in Zulip 14.0 (feature level ZF-9dad35).
+                                **Changes**: New in Zulip 14.0 (feature level 524).
                               properties:
                                 id:
                                   $ref: "#/components/schemas/EventIdSchema"
@@ -1908,7 +1908,7 @@ paths:
                                         Present only for the author of the message when this reaction
                                         can trigger a desktop notification.
 
-                                        **Changes**: New in Zulip 14.0 (feature level ZF-e9a73b).
+                                        **Changes**: New in Zulip 14.0 (feature level 524).
                                   example:
                                     {
                                       "type": "reaction",
@@ -5676,13 +5676,13 @@ paths:
                                         Whether messages users send to themselves are subject to the
                                         organization's message retention policy.
 
-                                        **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
+                                        **Changes**: New in Zulip 14.0 (feature level 524).
                                     enable_reaction_notifications:
                                       type: boolean
                                       description: |
                                         Whether emoji reactions can generate desktop and mobile notifications for message authors.
 
-                                        **Changes**: New in Zulip 14.0 (feature level ZF-e9a73b).
+                                        **Changes**: New in Zulip 14.0 (feature level 524).
                                     enable_read_receipts:
                                       type: boolean
                                       description: |
@@ -14341,7 +14341,7 @@ paths:
         "Direct messages" section in the left sidebar. This is a personal
         preference that only affects the current user.
 
-        **Changes**: New in Zulip 14.0 (feature level ZF-9dad35).
+        **Changes**: New in Zulip 14.0 (feature level 524).
       requestBody:
         required: true
         content:
@@ -19613,7 +19613,7 @@ paths:
                                 conversation to the top of the "Direct messages" section in
                                 the left sidebar.
 
-                                **Changes**: New in Zulip 14.0 (feature level ZF-9dad35).
+                                **Changes**: New in Zulip 14.0 (feature level 524).
                       navigation_views:
                         type: array
                         items:
@@ -21317,7 +21317,7 @@ paths:
                           Whether the organization's [message retention policy](/help/message-retention-policy)
                           applies to messages users send to themselves. Defaults to `false`.
 
-                          **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
+                          **Changes**: New in Zulip 14.0 (feature level 524).
                       realm_message_retention_days:
                         type: integer
                         description: |
@@ -21706,7 +21706,7 @@ paths:
 
                           Defaults to `true`. Present if `realm` is present in `fetch_event_types`.
 
-                          **Changes**: New in Zulip 14.0 (feature level ZF-e9a73b).
+                          **Changes**: New in Zulip 14.0 (feature level 524).
                       realm_enable_read_receipts:
                         type: boolean
                         description: |
@@ -24128,7 +24128,7 @@ paths:
                     display dates and times in the web and desktop apps. Pass an empty string
                     to use the device time zone for display.
 
-                    **Changes**: New in Zulip 14.0 (feature level ZF-a972fe):
+                    **Changes**: New in Zulip 14.0 (feature level 524):
                     support for resetting the time zone with an empty string.
 
                     **Changes**: Before Zulip 5.0 (feature level 80), this setting was managed by
@@ -25543,7 +25543,7 @@ paths:
         Get the current channel picture as a PNG image. Access requires
         permission to view the channel's metadata.
 
-        **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+        **Changes**: New in Zulip 14.0 (feature level 524).
       parameters:
         - $ref: "#/components/parameters/ChannelIdInPath"
         - name: v
@@ -25576,7 +25576,7 @@ paths:
         Set or replace the picture for an active channel. This requires permission
         to administer the channel.
 
-        **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+        **Changes**: New in Zulip 14.0 (feature level 524).
       parameters:
         - $ref: "#/components/parameters/ChannelIdInPath"
       requestBody:
@@ -25624,7 +25624,7 @@ paths:
         Remove the picture for an active channel. This requires permission to
         administer the channel.
 
-        **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+        **Changes**: New in Zulip 14.0 (feature level 524).
       parameters:
         - $ref: "#/components/parameters/ChannelIdInPath"
       responses:
@@ -28287,7 +28287,7 @@ components:
             The relative URL of the channel picture, or null if no picture is set.
             Access to the image follows the channel's metadata permissions.
 
-            **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+            **Changes**: New in Zulip 14.0 (feature level 524).
         rendered_description:
           type: string
           description: |
@@ -29383,7 +29383,7 @@ components:
             The relative URL of the channel picture, or null if no picture is set.
             Access to the image follows the channel's metadata permissions.
 
-            **Changes**: New in Zulip 14.0 (feature level ZF-63d1be).
+            **Changes**: New in Zulip 14.0 (feature level 524).
         rendered_description:
           type: string
           description: |
@@ -30835,7 +30835,7 @@ components:
             - "J" = Generated using Jdenticon
             - "U" = Uploaded by user
 
-            **Changes**: New in Zulip 13.0 (feature level ZF-9708bb).
+            **Changes**: New in Zulip 14.0 (feature level 524).
         avatar_version:
           type: integer
           description: |
