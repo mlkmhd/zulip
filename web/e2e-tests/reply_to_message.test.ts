@@ -33,7 +33,7 @@ async function test_reply_to_message(page: Page): Promise<void> {
     });
     assert.ok(preview);
     assert.match(
-        await preview.evaluate((element) => element.textContent!),
+        await preview.evaluate((element) => element.textContent),
         /Original message for the reply test/,
     );
     await page.click(".message_row:has(.message-reply-link) .message_content p:last-child");
