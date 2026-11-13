@@ -2,7 +2,7 @@
 
 A fork of [Zulip](https://github.com/zulip/zulip) with a redesigned web interface, more control over regional display settings, and new options for channel pictures and reaction notifications.
 
-[![The modern Zulip web interface in dark mode, with a custom channel picture, incoming and outgoing message bubbles, and emoji reactions](docs/_static/zulip-fork-dark.png)](docs/_static/zulip-fork-dark.png)
+[![The modern Zulip web interface in dark mode, with a custom channel picture, incoming and outgoing message bubbles, and emoji reactions](https://raw.githubusercontent.com/mlkmhd/zulip/main/docs/_static/zulip-fork-dark.png)](https://github.com/mlkmhd/zulip/blob/main/docs/_static/zulip-fork-dark.png)
 
 _The Modern interface in dark mode, showing a sample launch-planning conversation._
 
@@ -21,4 +21,4 @@ _The Modern interface in dark mode, showing a sample launch-planning conversatio
 - **Develop locally**. Follow Zulip’s [development setup guide](https://zulip.readthedocs.io/en/latest/development/overview.html) from a checkout of this fork.
 - **Learn about upstream Zulip**. See the [official repository](https://github.com/zulip/zulip) and [self-hosting documentation](https://zulip.com/self-hosting/).
 
-Zulip and this fork are distributed under the [Apache 2.0 license](LICENSE).
+Zulip and this fork are distributed under the [Apache 2.0 license](https://github.com/mlkmhd/zulip/blob/main/LICENSE).
