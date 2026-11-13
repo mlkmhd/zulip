@@ -152,6 +152,7 @@ def update_realm(
     enable_read_receipts: Json[bool] | None = None,
     enable_reaction_notifications: Json[bool] | None = None,
     enable_spectator_access: Json[bool] | None = None,
+    expire_saved_messages: Json[bool] | None = None,
     gif_rating_policy: Json[int] | None = None,
     media_preview_size: Json[RealmMediaPreviewSizeEnum] | None = None,
     inline_image_preview: Json[bool] | None = None,
@@ -274,6 +275,9 @@ def update_realm(
         message_retention_days = parse_message_retention_days(  # used by locals() below
             message_retention_days_raw, Realm.MESSAGE_RETENTION_SPECIAL_VALUES_MAP
         )
+
+    if expire_saved_messages is not None:
+        realm.ensure_not_on_limited_plan()
 
     if can_create_groups is not None:
         realm.ensure_not_on_limited_plan()

@@ -243,6 +243,19 @@ def move_expired_direct_messages_to_archive(
     assert message_retention_days != -1
     check_date = timezone_now() - timedelta(days=message_retention_days)
 
+    saved_messages_filter = SQL("")
+    if not realm.expire_saved_messages:
+        saved_messages_filter = SQL(
+            """
+            AND NOT EXISTS (
+                SELECT 1
+                FROM zerver_huddle
+                WHERE zerver_huddle.recipient_id = zerver_message.recipient_id
+                    AND zerver_huddle.group_size = 1
+            )
+            """
+        )
+
     # Archive expired direct Messages in the realm, including cross-realm messages.
     # Uses index: zerver_message_realm_date_sent
     query = SQL(
@@ -253,6 +266,7 @@ def move_expired_direct_messages_to_archive(
         WHERE zerver_message.realm_id = {realm_id}
             AND NOT zerver_message.is_channel_message
             AND zerver_message.date_sent < {check_date}
+            {saved_messages_filter}
         LIMIT {chunk_size}
     ON CONFLICT (id) DO UPDATE SET archive_transaction_id = {archive_transaction_id}
     RETURNING id
@@ -265,6 +279,7 @@ def move_expired_direct_messages_to_archive(
         realm=realm,
         realm_id=Literal(realm.id),
         check_date=Literal(check_date.isoformat()),
+        saved_messages_filter=saved_messages_filter,
         chunk_size=chunk_size,
     )
 

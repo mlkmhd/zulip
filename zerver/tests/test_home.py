@@ -191,6 +191,7 @@ class HomeTest(ZulipTestCase):
         "realm_enable_guest_user_indicator",
         "realm_enable_read_receipts",
         "realm_enable_reaction_notifications",
+        "realm_expire_saved_messages",
         "realm_enable_spectator_access",
         "realm_filters",
         "realm_gif_rating_policy",

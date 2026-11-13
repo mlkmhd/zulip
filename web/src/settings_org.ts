@@ -80,7 +80,9 @@ export function maybe_disable_widgets(): void {
 
     if (current_user.is_admin) {
         $(".deactivate-realm-section").hide();
-        $("#org-message-retention").find("input, select").prop("disabled", true);
+        $("#org-message-retention .time-limit-setting")
+            .find("input, select")
+            .prop("disabled", true);
         $("#org-join-settings").find("input, select, button").prop("disabled", true);
         $("#id_realm_invite_required_label").parent().addClass("control-label-disabled");
         return;

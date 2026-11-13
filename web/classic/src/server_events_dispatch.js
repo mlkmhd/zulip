@@ -382,6 +382,7 @@ export function dispatch_normal_event(event) {
                 signup_announcements_stream_id: noop,
                 zulip_update_announcements_stream_id: noop,
                 emails_restricted_to_domains: noop,
+                expire_saved_messages: noop,
                 video_chat_provider: compose_call_ui.update_audio_and_video_chat_button_display,
                 jitsi_server_url: compose_call_ui.update_audio_and_video_chat_button_display,
                 gif_rating_policy: gif_state.update_gif_icon_visibility,

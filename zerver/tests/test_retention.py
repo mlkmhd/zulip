@@ -214,6 +214,37 @@ class ArchiveMessagesTestingBase(RetentionTestingBase):
 
 
 class TestArchiveMessagesGeneral(ArchiveMessagesTestingBase):
+    def test_saved_messages_retention(self) -> None:
+        hamlet = self.example_user("hamlet")
+        cordelia = self.example_user("cordelia")
+        saved_message_id = self.send_personal_message(hamlet, hamlet)
+        recent_saved_message_id = self.send_personal_message(hamlet, hamlet)
+        other_dm_ids = [
+            self.send_personal_message(hamlet, cordelia),
+            self.send_group_direct_message(hamlet, [cordelia, self.example_user("othello")]),
+        ]
+        expired_ids = [saved_message_id, *other_dm_ids]
+        expired_usermessage_ids = self._get_usermessage_ids(expired_ids)
+        other_dm_usermessage_ids = self._get_usermessage_ids(other_dm_ids)
+        self._change_messages_date_sent(
+            expired_ids, timezone_now() - timedelta(days=ZULIP_REALM_DAYS + 1)
+        )
+
+        self.assertFalse(self.zulip_realm.expire_saved_messages)
+        archive_messages()
+        self._verify_archive_data(other_dm_ids, other_dm_usermessage_ids)
+        self.assertTrue(Message.objects.filter(id=saved_message_id).exists())
+
+        self.login("iago")
+        self.assert_json_success(
+            self.client_patch("/json/realm", {"expire_saved_messages": "true"})
+        )
+        self.zulip_realm.refresh_from_db()
+        self.assertTrue(self.zulip_realm.expire_saved_messages)
+        archive_messages()
+        self._verify_archive_data(expired_ids, expired_usermessage_ids)
+        self.assertTrue(Message.objects.filter(id=recent_saved_message_id).exists())
+
     def test_no_expired_messages(self) -> None:
         archive_messages()
 

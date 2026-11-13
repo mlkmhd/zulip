@@ -21,7 +21,9 @@ before being automatically deleted (the default being forever).
 Zulip's system supports:
 
 * Setting an organization-level retention policy, which applies to
-  all direct messages and all channels without a specific policy.
+  direct messages and channels without a specific policy. Use
+  **Apply retention policy to Saved Messages** to include messages
+  users send to themselves.
 * Setting a retention policy for individual channels, which overrides
   the organization-level policy for that channel.  This can be used to
   just delete messages on specific channels, to only retain messages
@@ -39,7 +41,9 @@ Standard hosting.
   <NavigationSteps target="settings/organization-settings" />
 
   1. Under **Message retention period**, configure **Message retention
-     period**.
+     period**. Administrators can use **Apply retention policy to Saved
+     Messages** to control whether the policy applies to messages users
+     send to themselves.
 
   <SaveChanges />
 </FlattenedSteps>

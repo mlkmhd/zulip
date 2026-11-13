@@ -5670,6 +5670,13 @@ paths:
                                         guest users to prominently highlight their status.
 
                                         **Changes**: New in Zulip 8.0 (feature level 216).
+                                    expire_saved_messages:
+                                      type: boolean
+                                      description: |
+                                        Whether messages users send to themselves are subject to the
+                                        organization's message retention policy.
+
+                                        **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
                                     enable_spectator_access:
                                       type: boolean
                                       description: |
@@ -21302,6 +21309,15 @@ paths:
                       realm_send_channel_events_messages:
                         type: boolean
                         description: |
+                      realm_expire_saved_messages:
+                        type: boolean
+                        description: |
+                          Present if `realm` is present in `fetch_event_types`.
+
+                          Whether the organization's [message retention policy](/help/message-retention-policy)
+                          applies to messages users send to themselves. Defaults to `false`.
+
+                          **Changes**: New in Zulip 14.0 (feature level ZF-3c7e42).
                           Present if `realm` is present in `fetch_event_types`.
 
                           Indicates whether channel event messages are sent in this organization.

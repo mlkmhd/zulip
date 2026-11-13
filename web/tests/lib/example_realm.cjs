@@ -99,6 +99,7 @@ exports.make_realm = (opts = {}) => {
         realm_logo_url: "",
         realm_message_content_allowed_in_email_notifications: false,
         realm_enable_reaction_notifications: true,
+        realm_expire_saved_messages: false,
         realm_message_content_edit_limit_seconds: null,
         realm_message_content_delete_limit_seconds: null,
         realm_message_edit_history_visibility_policy: "all",

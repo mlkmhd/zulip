@@ -82,6 +82,7 @@ const admin_settings_label = {
         defaultMessage: "Language for automated messages and invitation emails",
     }),
     realm_allow_message_editing: $t({defaultMessage: "Allow message editing"}),
+    realm_expire_saved_messages: $t({defaultMessage: "Apply retention policy to Saved Messages"}),
     realm_enable_reaction_notifications: $t({
         defaultMessage: "Enable emoji reaction notifications",
     }),
@@ -199,6 +200,8 @@ export function build_page(): void {
                 "realm_message_content_delete_limit_seconds",
             ),
         realm_message_retention_days: realm.realm_message_retention_days,
+        realm_expire_saved_messages: realm.realm_expire_saved_messages,
+        disable_expire_saved_messages: !realm.zulip_plan_is_not_limited,
         realm_message_edit_history_visibility_policy:
             realm.realm_message_edit_history_visibility_policy,
         realm_allow_message_editing: realm.realm_allow_message_editing,
