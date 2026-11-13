@@ -8,6 +8,25 @@ const {run_test} = require("./lib/test.cjs");
 const recent_emojis = zrequire("recent_emojis");
 const {set_current_user} = zrequire("state_data");
 
+run_test("ignores emoji history for spectators", () => {
+    set_current_user(undefined);
+    recent_emojis.record({emoji_code: "1f680", reaction_type: "unicode_emoji"});
+    assert.deepEqual(recent_emojis.get(), []);
+});
+
+run_test("keeps recent emojis in the session when storage writes fail", () => {
+    set_global("localStorage", {
+        getItem: () => null,
+        setItem() {
+            throw new Error("Storage quota exceeded");
+        },
+    });
+    const rocket = {emoji_code: "1f680", reaction_type: "unicode_emoji"};
+    set_current_user({user_id: 30});
+    recent_emojis.record(rocket);
+    assert.deepEqual(recent_emojis.get(), [rocket]);
+});
+
 run_test("stores recent emojis per account", () => {
     const entries = new Map();
     set_global("localStorage", {

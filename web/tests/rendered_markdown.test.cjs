@@ -181,6 +181,21 @@ run_test("misc_helpers", ({override}) => {
     assert.equal($elem.text(), "Polonius");
 });
 
+run_test("reply link text does not determine message direction", () => {
+    const $content = get_content_element();
+    const $direction_content = $.create("direction content").text("English reply preview سلام");
+    const $reply_link = $.create("reply link").text("English reply preview");
+    $content.set_find_results(".message-reply-link", $reply_link);
+    $content.clone = () => $direction_content;
+    const $cloned_link = $.create("cloned reply link");
+    $cloned_link[0].remove = () => $direction_content.text("سلام");
+    $direction_content.set_find_results(".message-reply-link", $cloned_link);
+
+    rm.update_elements($content);
+    assert.ok($content.hasClass("rtl"));
+    assert.equal($reply_link.text(), "English reply preview");
+});
+
 run_test("message_inline_video", () => {
     const $content = get_content_element();
     const $elem = $.create("message_inline_video");

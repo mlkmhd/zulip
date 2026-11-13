@@ -54,6 +54,7 @@ const message_events = mock_esm("../src/message_events", {
     update_current_view_for_topic_visibility: noop,
 });
 const message_lists = mock_esm("../src/message_lists");
+const message_notifications = mock_esm("../src/message_notifications");
 const user_topics_ui = mock_esm("../src/user_topics_ui");
 const muted_users_ui = mock_esm("../src/muted_users_ui");
 const narrow_title = mock_esm("../src/narrow_title");
@@ -524,6 +525,22 @@ run_test("reaction", ({override}) => {
         assert_same(args.event.emoji_name, event.emoji_name);
         assert_same(args.event.message_id, event.message_id);
     }
+});
+
+run_test("reaction notifications follow the organization setting", ({override}) => {
+    override(reactions, "add_reaction", noop);
+    override(emoji_frequency, "update_emoji_frequency_on_add_reaction_event", noop);
+    const notify = make_stub();
+    override(message_notifications, "notify_reaction", notify.f);
+    const event = {...event_fixtures.reaction__add, notify: true};
+    override(realm, "realm_enable_reaction_notifications", true);
+    dispatch(event);
+    assert.equal(notify.num_calls, 1);
+    assert.equal(notify.get_args("event").event, event);
+
+    realm.realm_enable_reaction_notifications = false;
+    dispatch(event);
+    assert.equal(notify.num_calls, 1);
 });
 
 run_test("reminders", ({override}) => {
@@ -1672,6 +1689,16 @@ run_test("delete_message", ({override}) => {
     assert_same(args.opts.max_removed_msg_id, 1337);
 });
 
+run_test("direct_message_conversation", ({override}) => {
+    const set_pinned = make_stub();
+    const refresh = make_stub();
+    override(pm_conversations.recent, "set_pinned", set_pinned.f);
+    override(pm_list, "update_private_messages", refresh.f);
+    dispatch({type: "direct_message_conversation", user_ids: [4], pinned: true});
+    assert.deepEqual(set_pinned.get_args("user_ids", "pinned"), {user_ids: [4], pinned: true});
+    assert.equal(refresh.num_calls, 1);
+});
+
 run_test("delete_message_private", ({override}) => {
     const user4 = make_user({user_id: 4, email: "user4@example.com", full_name: "User 4"});
     people.add_active_user(user4);
@@ -1712,25 +1739,23 @@ run_test("delete_message_private", ({override}) => {
 });
 
 run_test("delete_message_private_not_cached", ({override}) => {
-    // When none of the deleted messages are in our local cache, we can't
-    // identify the conversation, so we take no DM-specific action.
     override(unread_ops, "process_read_messages_event", noop);
     override(emoji_frequency, "update_emoji_frequency_on_messages_deletion", noop);
     override(message_events, "remove_messages", noop);
 
-    override(pm_list, "invalidate_message_previews", () => false);
-    const maybe_remove_stub = make_stub();
-    override(pm_conversations.recent, "maybe_remove", maybe_remove_stub.f, {
-        unused: false,
+    const refresh = make_stub();
+    override(pm_list, "update_private_messages", refresh.f);
+    const event = {type: "delete_message", message_type: "private", message_ids: [99999]};
+    let previews_changed = false;
+    override(pm_list, "invalidate_message_previews", (ids) => {
+        assert.deepEqual(ids, new Set(event.message_ids));
+        return previews_changed;
     });
-
-    dispatch({
-        type: "delete_message",
-        message_type: "private",
-        message_ids: [99999],
-    });
-
-    assert.equal(maybe_remove_stub.num_calls, 0);
+    dispatch(event);
+    assert.equal(refresh.num_calls, 0);
+    previews_changed = true;
+    dispatch(event);
+    assert.equal(refresh.num_calls, 1);
 });
 
 run_test("user_status", ({override}) => {

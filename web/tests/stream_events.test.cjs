@@ -236,6 +236,38 @@ test("update_property", ({override, override_rewire}) => {
         assert.equal(args.val, "we write code");
     }
 
+    {
+        const $row = $(`.narrow-filter[data-stream-id="${stream_id}"]`);
+        const $settings = $(
+            `#stream_settings .subscription_settings[data-stream-id="${stream_id}"]`,
+        );
+        const $picture = $.create("channel picture");
+        const $fallback = $.create("channel picture fallback");
+        const $preview = $.create("channel picture preview");
+        const $remove = $.create("channel picture remove");
+        $row.set_find_results(".channel-sidebar-picture", $picture);
+        $row.set_find_results(".channel-sidebar-picture-fallback", $fallback);
+        $settings.set_find_results(".channel-picture-preview", $preview);
+        $settings.set_find_results(".channel-picture-remove", $remove);
+
+        const url = "/user_uploads/channel-picture.png";
+        stream_events.update_property(stream_id, "icon_url", url);
+        assert.equal(sub.icon_url, url);
+        assert.equal($picture.attr("src"), url);
+        assert.equal($picture.prop("hidden"), false);
+        assert.equal($fallback.prop("hidden"), true);
+        assert.equal($preview.attr("src"), url);
+        assert.equal($preview.prop("hidden"), false);
+        assert.ok(!$remove.hasClass("hide"));
+
+        stream_events.update_property(stream_id, "icon_url", null);
+        assert.equal(sub.icon_url, null);
+        assert.equal($picture.prop("hidden"), true);
+        assert.equal($fallback.prop("hidden"), false);
+        assert.equal($preview.prop("hidden"), true);
+        assert.ok($remove.hasClass("hide"));
+    }
+
     // Test pin to top
     {
         override(stream_list, "refresh_pinned_or_unpinned_stream", noop);
