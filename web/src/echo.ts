@@ -518,7 +518,9 @@ export let reify_message_id = (local_id: string, server_id: number): void => {
     } else {
         const user_ids = people.pm_with_user_ids(message);
         if (user_ids !== undefined) {
+            pm_conversations.recent.insert(user_ids, server_id);
             pm_conversations.recent.increment_local_message_count(user_ids);
+            pm_list.update_private_messages();
         }
     }
     update_topic_hash_to_contain_with_term(message);

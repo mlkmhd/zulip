@@ -79,10 +79,10 @@ export function invalidate_message_previews(message_ids: ReadonlySet<number>): b
 }
 
 function preview_version(key: string): number | undefined {
+    const user_ids = people.split_to_ints(key);
     if (
-        key.includes(",") ||
-        people.is_my_user_id(Number(key)) ||
-        muted_users.is_user_muted(Number(key))
+        people.is_direct_message_conversation_with_self(user_ids) ||
+        user_ids.every((user_id) => muted_users.is_user_muted(user_id))
     ) {
         return undefined;
     }
@@ -101,7 +101,7 @@ function fetch_preview(key: string): void {
     void channel.get({
         url: "/json/messages",
         data: {
-            narrow: JSON.stringify([{operator: "dm", operand: [Number(key)]}]),
+            narrow: JSON.stringify([{operator: "dm", operand: people.split_to_ints(key)}]),
             anchor: "newest",
             num_before: 1,
             num_after: 0,
@@ -119,6 +119,11 @@ function fetch_preview(key: string): void {
             if (message !== undefined) {
                 const template = document.createElement("template");
                 template.innerHTML = message.content;
+                for (const emoji of template.content.querySelectorAll<HTMLSpanElement>(
+                    "span.emoji",
+                )) {
+                    emoji.replaceWith(ui_util.convert_emoji_element_to_unicode($(emoji)));
+                }
                 for (const image of template.content.querySelectorAll("img")) {
                     image.replaceWith(image.alt);
                 }

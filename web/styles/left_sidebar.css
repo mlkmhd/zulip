@@ -2197,11 +2197,12 @@ li.active-sub-filter {
 
 .dm-message-preview {
     font-size: 0.75em;
-    line-height: 1;
+    line-height: 1.4;
 }
 
-.conversation-partners:has(.dm-message-preview) .conversation-partners-list {
-    line-height: 1;
+#direct-messages-list .dm-box:has(.dm-message-preview) {
+    block-size: auto;
+    padding-block: 0.125em;
 }
 
 /*

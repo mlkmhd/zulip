@@ -825,9 +825,19 @@ run_test("reify_message_id counts a sent direct message", ({override}) => {
 
     const increment_stub = make_stub();
     override(pm_conversations.recent, "increment_local_message_count", increment_stub.f);
+    const insert_stub = make_stub();
+    override(pm_conversations.recent, "insert", insert_stub.f);
+    const update_sidebar_stub = make_stub();
+    override(pm_list, "update_private_messages", update_sidebar_stub.f);
 
     echo.reify_message_id(local_id_float.toString(), 120);
 
+    assert.equal(insert_stub.num_calls, 1);
+    assert.deepEqual(insert_stub.get_args("user_ids", "message_id"), {
+        user_ids: [cordelia.user_id],
+        message_id: 120,
+    });
+    assert.equal(update_sidebar_stub.num_calls, 1);
     assert.equal(increment_stub.num_calls, 1);
     const {user_ids} = increment_stub.get_args("user_ids");
     assert.deepEqual(user_ids, [cordelia.user_id]);

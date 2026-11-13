@@ -6,16 +6,37 @@ import * as common from "./lib/common.ts";
 
 async function visual_test(page: Page): Promise<void> {
     await common.log_in(page);
-    const message = "Checking the web interface message preview";
+    await Promise.all([page.waitForNavigation(), page.click(".accept-web-ui-version")]);
+    const message = "پیش‌نمایش پیام فارسی";
     await common.send_message(page, "private", {
         recipient: "hamlet@zulip.com",
-        content: message,
+        content: `${message} :melting_face:`,
     });
-    await Promise.all([page.waitForNavigation(), page.click(".accept-web-ui-version")]);
+    await common.send_message(page, "private", {
+        recipient: "hamlet@zulip.com, cordelia@zulip.com",
+        content: "Group preview :+1:",
+    });
     const preview = "#direct-messages-list .dm-message-preview";
-    await page.waitForSelector(preview, {visible: true});
-    const previews = await page.$$eval(preview, (nodes) => nodes.map((node) => node.textContent));
-    assert.ok(previews.includes(message));
+    const expected = [
+        {selector: `.dm-box[data-is-group="false"] .dm-message-preview`, text: `${message} 🫠`},
+        {selector: `.dm-box[data-is-group="true"] .dm-message-preview`, text: "Group preview 👍"},
+    ];
+    await page.waitForFunction(
+        (entries) =>
+            entries.every(({selector, text}) =>
+                [...document.querySelectorAll(selector)].some((node) => node.textContent === text),
+            ),
+        {},
+        expected,
+    );
+    const preview_size = await page.$eval(preview, (element) => {
+        const style = getComputedStyle(element);
+        return {
+            line_height: Number.parseFloat(style.lineHeight),
+            font_size: Number.parseFloat(style.fontSize),
+        };
+    });
+    assert.ok(preview_size.line_height > preview_size.font_size);
 
     await page.$eval(preview, (element) => {
         element.scrollIntoView({block: "center"});
