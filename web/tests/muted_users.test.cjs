@@ -10,6 +10,7 @@ const muted_users = zrequire("muted_users");
 const {initialize_user_settings} = zrequire("user_settings");
 
 initialize_user_settings({user_settings: {}});
+zrequire("timerender").initialize("persian");
 
 function test(label, f) {
     run_test(label, ({override}) => {

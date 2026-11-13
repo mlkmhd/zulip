@@ -15,6 +15,7 @@ const user_topics = zrequire("user_topics");
 const {initialize_user_settings} = zrequire("user_settings");
 
 initialize_user_settings({user_settings: {}});
+zrequire("timerender").initialize("persian");
 
 const frontend = make_stream({
     stream_id: 101,

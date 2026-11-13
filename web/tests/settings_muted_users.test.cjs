@@ -24,6 +24,7 @@ const {initialize_user_settings} = zrequire("user_settings");
 
 set_realm(make_realm());
 initialize_user_settings({user_settings: {}});
+zrequire("timerender").initialize("persian");
 
 run_test("settings", ({override}) => {
     people.add_active_user(

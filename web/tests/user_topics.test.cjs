@@ -14,6 +14,7 @@ const stream_data = zrequire("stream_data");
 const {initialize_user_settings} = zrequire("user_settings");
 
 initialize_user_settings({user_settings: {}});
+zrequire("timerender").initialize("persian");
 
 const design = make_stream({
     stream_id: 100,

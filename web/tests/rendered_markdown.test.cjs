@@ -46,6 +46,7 @@ const realm = make_realm({realm_empty_topic_display_name: REALM_EMPTY_TOPIC_DISP
 set_realm(realm);
 const user_settings = {};
 initialize_user_settings({user_settings});
+zrequire("timerender").initialize("persian");
 
 const iago = make_user({
     email: "iago@zulip.com",
