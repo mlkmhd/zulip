@@ -338,37 +338,23 @@ async function test_stream_search_filters_stream_list(page: Page): Promise<void>
         hidden: true,
     });
 
-    // Navigate through suggestions using arrow keys
-    // Reach core team
-    for (let i = 0; i < 12; i += 1) {
+    // Check navigation against the rendered suggestions, since the number of
+    // rows before the channel list depends on the sidebar contents.
+    const verona_highlight = (await get_stream_li(page, "Verona")) + " .highlighted_row";
+    const row_count = await page.$$eval(
+        "#left-sidebar :is(.top_left_row, .bottom_left_row, .stream-list-subsection-header, #direct-messages-section-header, #views-label-container)",
+        (rows) => rows.length,
+    );
+    for (let i = 0; i < row_count && !(await page.$(verona_highlight)); i += 1) {
         await arrow(page, "Down");
     }
-    await arrow(page, "Down"); // core team -> Denmark
-    await arrow(page, "Down"); // Denmark -> sandbox
-    await arrow(page, "Up"); // sandbox -> Denmark
-    await arrow(page, "Up"); // Denmark -> core team
-    await arrow(page, "Up"); // core team -> core team
-    await arrow(page, "Down"); // core team -> Denmark
-    await arrow(page, "Down"); // Denmark -> sandbox
-    await arrow(page, "Down"); // sandbox-> Venice
-    await arrow(page, "Down"); // Venice -> Verona
+    await page.waitForSelector(verona_highlight, {visible: true});
 
-    await page.waitForSelector((await get_stream_li(page, "Verona")) + " .highlighted_row", {
-        visible: true,
-    });
+    await arrow(page, "Up");
+    await page.waitForSelector(verona_highlight, {hidden: true});
+    await arrow(page, "Down");
+    await page.waitForSelector(verona_highlight, {visible: true});
 
-    await page.waitForSelector((await get_stream_li(page, "core team")) + " .highlighted_row", {
-        hidden: true,
-    });
-    await page.waitForSelector((await get_stream_li(page, "Denmark")) + " .highlighted_row", {
-        hidden: true,
-    });
-    await page.waitForSelector((await get_stream_li(page, "Venice")) + " .highlighted_row", {
-        hidden: true,
-    });
-    await page.waitForSelector((await get_stream_li(page, "Zulip")) + " .highlighted_row", {
-        hidden: true,
-    });
     await test_search_venice(page);
 
     // Search for beginning of "Verona".
