@@ -21,7 +21,7 @@ def do_set_direct_message_group_pin(
     # The current user is always a member of a direct message group
     # keyed by a membership hash that includes them, so their
     # subscription row is guaranteed to exist.
-    subscription = Subscription.objects.select_for_update().get(
+    subscription = Subscription.objects.select_for_update(no_key=True).get(
         user_profile=user_profile,
         recipient=direct_message_group.recipient,
     )
