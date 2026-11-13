@@ -93,7 +93,7 @@ class ChannelIconTest(ZulipTestCase):
         url = f"/api/v1/streams/{stream.id}/icon"
         self.assert_json_error(self.api_post(admin, url), "You must upload exactly one icon.")
         self.assert_json_error(
-            self.api_post(admin, url, {"file": [self.image(), self.image()]}),
+            self.api_post(admin, url, {"file": self.image(), "extra_file": self.image()}),
             "You must upload exactly one icon.",
         )
         with override_settings(MAX_ICON_FILE_SIZE_MIB=0):
