@@ -410,6 +410,11 @@ class ChangeSettingsTest(ZulipTestCase):
             self.do_test_change_user_setting(setting)
         self.do_test_change_user_setting("timezone")
 
+    def test_legacy_tehran_timezone(self) -> None:
+        self.login("hamlet")
+        self.assert_json_success(self.client_patch("/json/settings", {"timezone": "Iran/Tehran"}))
+        self.assertEqual(self.example_user("hamlet").timezone, "Asia/Tehran")
+
     def test_invalid_setting_value(self) -> None:
         mocked_language_list = [
             {"code": "de", "locale": "de", "name": "Deutsch", "percent_translated": 97},

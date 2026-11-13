@@ -76,6 +76,7 @@ from zerver.models import (
     Stream,
     Subscription,
     UserMessage,
+    UserPresence,
     UserProfile,
 )
 from zerver.models.clients import get_client
@@ -2631,6 +2632,77 @@ class TestReactionPushNotification(ZulipTestCase):
             self.assert_json_success(self.api_delete(reactor, endpoint, {"emoji_name": "tada"}))
             handle_reaction_push_notification(author.id, reaction.id)
             send.assert_not_called()
+
+    @mock.patch("zerver.lib.push_notifications.push_notifications_configured", return_value=True)
+    @mock.patch("zerver.lib.push_notifications.prepare_payload_and_send_push_notifications")
+    def test_reaction_notification_delivery_settings(
+        self, send: mock.MagicMock, mock_configured: mock.MagicMock
+    ) -> None:
+        author = self.example_user("hamlet")
+        reactor = self.example_user("othello")
+        message_id = self.send_personal_message(author, reactor)
+        self.assert_json_success(
+            self.api_post(
+                reactor, f"/api/v1/messages/{message_id}/reactions", {"emoji_name": "tada"}
+            )
+        )
+        reaction = Reaction.objects.get(message_id=message_id, user_profile=reactor)
+
+        with mock.patch(
+            "zerver.lib.push_notifications.get_user_profile_by_id", return_value=author
+        ):
+            author.realm.enable_reaction_notifications = False
+            handle_reaction_push_notification(author.id, reaction.id)
+            send.assert_not_called()
+
+            author.realm.enable_reaction_notifications = True
+            author.enable_online_push_notifications = False
+            author.enable_offline_push_notifications = False
+            handle_reaction_push_notification(author.id, reaction.id)
+            send.assert_not_called()
+
+            author.enable_offline_push_notifications = True
+            UserPresence.objects.update_or_create(
+                user_profile=author, defaults={"realm": author.realm, "last_active_time": now()}
+            )
+            handle_reaction_push_notification(author.id, reaction.id)
+            send.assert_not_called()
+
+            UserPresence.objects.filter(user_profile=author).update(
+                last_active_time=now() - timedelta(seconds=settings.OFFLINE_THRESHOLD_SECS + 1)
+            )
+            handle_reaction_push_notification(author.id, reaction.id)
+            send.assert_called_once()
+
+    @mock.patch("zerver.lib.push_notifications.push_notifications_configured", return_value=True)
+    @mock.patch("zerver.lib.push_notifications.prepare_payload_and_send_push_notifications")
+    def test_reaction_notification_access(
+        self, send: mock.MagicMock, mock_configured: mock.MagicMock
+    ) -> None:
+        author = self.example_user("hamlet")
+        reactor = self.example_user("othello")
+        outsider = self.example_user("cordelia")
+        message_id = self.send_personal_message(author, reactor)
+        self.assert_json_success(
+            self.api_post(
+                reactor, f"/api/v1/messages/{message_id}/reactions", {"emoji_name": "tada"}
+            )
+        )
+        reaction = Reaction.objects.get(message_id=message_id, user_profile=reactor)
+
+        handle_reaction_push_notification(outsider.id, reaction.id)
+        handle_reaction_push_notification(reactor.id, reaction.id)
+        send.assert_not_called()
+
+        with mock.patch("zerver.lib.push_notifications.check_can_access_user", return_value=False):
+            handle_reaction_push_notification(author.id, reaction.id)
+        send.assert_called_once()
+        _, get_legacy_payload, _ = send.call_args.args
+        apns, _, _ = get_legacy_payload(True, True)
+        self.assertEqual(
+            apns["alert"]["body"],
+            f"{UserProfile.INACCESSIBLE_USER_NAME} reacted to your message with 🎉",
+        )
 
 
 class TestPushNotificationsContent(ZulipTestCase):

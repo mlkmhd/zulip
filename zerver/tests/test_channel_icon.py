@@ -2,6 +2,7 @@ from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 
+from zerver.actions.streams import do_deactivate_stream
 from zerver.lib.test_classes import ZulipTestCase
 from zerver.lib.test_helpers import create_s3_buckets, read_test_image_file, use_s3_backend
 from zerver.models.realms import get_realm
@@ -86,6 +87,17 @@ class ChannelIconTest(ZulipTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "image/png")
         self.assertTrue(response.content.startswith(b"\x89PNG"))
+
+    def test_archived_channel_picture_cannot_be_changed(self) -> None:
+        admin = self.example_user("iago")
+        stream = self.make_stream("Archived channel")
+        url = f"/api/v1/streams/{stream.id}/icon"
+        do_deactivate_stream(stream, acting_user=admin)
+        self.assert_json_error(
+            self.api_post(admin, url, {"file": self.image()}), "This channel is archived."
+        )
+        stream.refresh_from_db()
+        self.assertIsNone(stream.icon_key)
 
     def test_invalid_upload(self) -> None:
         admin = self.example_user("iago")
