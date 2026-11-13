@@ -18,9 +18,10 @@ async function test_saved_messages(page: Page): Promise<void> {
     await common.clear_and_type(page, "#compose-textarea", note);
     await page.click("#compose-send-button");
     await page.waitForFunction(
-        (content) => [...document.querySelectorAll(".message_content")].some(
-            (element) => element.textContent?.trim() === content,
-        ),
+        (content) =>
+            [...document.querySelectorAll(".message_content")].some(
+                (element) => element.textContent?.trim() === content,
+            ),
         {},
         note,
     );
