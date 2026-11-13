@@ -9,9 +9,7 @@ from zerver.models.realms import get_realm
 
 class ChannelIconTest(ZulipTestCase):
     def image(self) -> SimpleUploadedFile:
-        return SimpleUploadedFile(
-            "picture.png", read_test_image_file("img.png"), "image/png"
-        )
+        return SimpleUploadedFile("picture.png", read_test_image_file("img.png"), "image/png")
 
     def test_private_channel_picture_lifecycle(self) -> None:
         admin = self.example_user("iago")
@@ -47,7 +45,9 @@ class ChannelIconTest(ZulipTestCase):
         self.assertIsNotNone(stream.icon_key)
         channel = self.assert_json_success(self.api_get(member, f"/api/v1/streams/{stream.id}"))
         self.assertEqual(channel["stream"]["icon_url"], first_url)
-        subscriptions = self.assert_json_success(self.api_get(member, "/api/v1/users/me/subscriptions"))
+        subscriptions = self.assert_json_success(
+            self.api_get(member, "/api/v1/users/me/subscriptions")
+        )
         sub = next(sub for sub in subscriptions["subscriptions"] if sub["stream_id"] == stream.id)
         self.assertEqual(sub["icon_url"], first_url)
 

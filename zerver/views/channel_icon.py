@@ -53,7 +53,9 @@ def update_channel_icon(
 ) -> str | None:
     with transaction.atomic(durable=True):
         # Serialize changes so the audit log and events reflect the previous picture.
-        Stream.objects.select_for_update().filter(id=stream_id, realm=user_profile.realm).first()
+        Stream.objects.select_for_update(no_key=True).filter(
+            id=stream_id, realm=user_profile.realm
+        ).first()
         stream, _subscription = access_stream_for_delete_or_update_requiring_metadata_access(
             user_profile, stream_id
         )

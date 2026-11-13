@@ -22,7 +22,10 @@ async function test_reaction_setting(page: Page): Promise<void> {
     await page.waitForSelector(section + ' .save-button[data-status="saved"]', {visible: true});
     await page.reload();
     await page.waitForSelector(label, {visible: true});
-    assert.equal(await page.$eval(input, (element) => (element as HTMLInputElement).checked), false);
+    assert.equal(
+        await page.$eval(input, (element) => (element as HTMLInputElement).checked),
+        false,
+    );
     await page.setViewport({width: 480, height: 820});
     await page.$eval(section, (element) => element.scrollIntoView({block: "center"}));
     await common.screenshot(page, "reaction-notifications-disabled-mobile");
