@@ -39,6 +39,7 @@ IGNORED_PHRASES = [
     r"OAuth",
     r"OTP",
     r"Recent conversations",
+    r"Saved Messages",
     r"DM",
     r"DMs",
     r"Slack",
