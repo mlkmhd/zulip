@@ -27,9 +27,9 @@
            line height, but at a 16.8px em. */
         line-height: 1.19em;
         font-weight: 400;
-        color: hsl(0deg 0% 100%);
+        color: light-dark(hsl(0deg 0% 100%), var(--color-text-default));
         background-color: var(--color-background-compose-new-message-button);
-        border: 1px solid transparent;
+        border: 1px solid light-dark(transparent, hsl(0deg 0% 0% / 60%));
 
         &:focus-visible {
             outline: 2px solid var(--color-outline-focus);
@@ -159,9 +159,9 @@
         padding: 3px 10px;
         border-radius: 0.5em;
         outline: none;
-        color: hsl(0deg 0% 100%);
+        color: light-dark(hsl(0deg 0% 100%), var(--color-text-default));
         background-color: var(--color-background-compose-new-message-button);
-        border: 1px solid transparent;
+        border: 1px solid light-dark(transparent, hsl(0deg 0% 0% / 60%));
 
         &:focus-visible {
             outline: 2px solid var(--color-outline-focus);

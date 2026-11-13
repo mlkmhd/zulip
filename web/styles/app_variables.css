@@ -849,15 +849,15 @@
     );
     --color-background-own-message-content: light-dark(
         hsl(211deg 80% 94%),
-        hsl(208deg 48% 31%)
+        hsl(0deg 0% 23%)
     );
     --color-background-received-message-bubble: light-dark(
         hsl(214deg 27% 92%),
-        hsl(210deg 27% 17%)
+        hsl(0deg 0% 17%)
     );
     --color-background-message-date-pill: light-dark(
         hsl(214deg 23% 91%),
-        hsl(210deg 24% 21%)
+        hsl(0deg 0% 20%)
     );
     --color-selected-message-outline: light-dark(
         hsl(217deg 64% 59% / 60%),
@@ -901,7 +901,7 @@
     );
     /* Soft, slightly warm off-white background for a modern minimal feel.
        A very subtle blue-grey tint replaces the flat neutral grey. */
-    --color-background: light-dark(hsl(218deg 34% 98%), hsl(220deg 24% 13%));
+    --color-background: light-dark(hsl(218deg 34% 98%), hsl(0deg 0% 11%));
     --color-background-widget-input: light-dark(
         hsl(0deg 0% 100%),
         hsl(225deg 6% 10%)
@@ -912,7 +912,7 @@
     );
     --color-background-navbar: light-dark(
         hsl(218deg 34% 99%),
-        hsl(220deg 24% 14%)
+        hsl(0deg 0% 13%)
     );
     --color-text-sidebar-row: light-dark(
         hsl(0deg 0% 20%),
@@ -924,11 +924,11 @@
     );
     --color-background-active-narrow-filter: light-dark(
         hsl(231deg 75% 93%),
-        hsl(231deg 32% 29%)
+        color-mix(in srgb, hsl(0deg 0% 100%) 8%, hsl(0deg 0% 11%))
     );
     --color-background-hover-narrow-filter: light-dark(
         hsl(227deg 45% 95%),
-        hsl(225deg 23% 22%)
+        color-mix(in srgb, hsl(0deg 0% 97%) 8%, hsl(0deg 0% 11%))
     );
     --color-shadow-sidebar-row-hover: light-dark(
         hsl(0deg 0% 0% / 30%),
@@ -964,7 +964,7 @@
     );
     --color-navbar-bottom-border: light-dark(
         hsl(220deg 29% 90%),
-        hsl(220deg 17% 26%)
+        hsl(0deg 0% 0% / 60%)
     );
     --color-left-sidebar-direct-messages-bottom-divider: light-dark(
         hsl(0deg 0% 0% / 15%),
@@ -1057,9 +1057,7 @@
         hsl(0deg 0% 0% / 19%),
         hsl(0deg 0% 100% / 19%)
     );
-    /* A softer, slightly warmer focus ring that reads as contemporary
-       rather than a hard blue outline. */
-    --color-outline-focus: hsl(245deg 65% 62%);
+    --color-outline-focus: light-dark(hsl(245deg 65% 62%), hsl(215deg 47% 50%));
     --focus-ring-width-in-views: 1.5px;
     /* Standard focus ring stroke; used by `:focus-visible`
        outlines on inbox rows, recent-view rows, action-button
@@ -1079,7 +1077,7 @@
     --color-background-search: light-dark(hsl(0deg 0% 100%), hsl(0deg 0% 17%));
     --color-background-search-collapsed: light-dark(
         hsl(222deg 42% 95%),
-        hsl(220deg 22% 22%)
+        hsl(0deg 0% 20%)
     );
     --color-background-search-option-hover: light-dark(
         hsl(0deg 0% 94%),
@@ -1216,7 +1214,7 @@
     /* Softer, low-opacity sidebar borders for a less boxy feel. */
     --color-border-sidebar: light-dark(
         hsl(218deg 28% 90%),
-        hsl(220deg 24% 20%)
+        hsl(0deg 0% 0% / 20%)
     );
     --color-text-sidebar-base: light-dark(hsl(0deg 0% 0%), hsl(0deg 0% 100%));
     --color-border-sidebar-subheader: light-dark(
@@ -1460,15 +1458,15 @@
     );
     --color-background-compose-new-message-button: light-dark(
         hsl(231deg 57% 46%),
-        hsl(231deg 62% 49%)
+        hsl(0deg 0% 0% / 20%)
     );
     --color-background-compose-new-message-button-hover: light-dark(
         hsl(231deg 58% 40%),
-        hsl(231deg 63% 53%)
+        hsl(0deg 0% 0% / 15%)
     );
     --color-background-compose-new-message-button-active: light-dark(
         hsl(231deg 60% 34%),
-        hsl(231deg 62% 43%)
+        hsl(0deg 0% 0% / 20%)
     );
     --color-compose-chevron-arrow: hsl(0deg 0% 58%);
     --color-limit-indicator: light-dark(
@@ -1573,7 +1571,7 @@
     );
 
     /* Text colors */
-    --color-text-default: light-dark(hsl(220deg 25% 18%), hsl(218deg 30% 90%));
+    --color-text-default: light-dark(hsl(220deg 25% 18%), hsl(0deg 0% 87%));
     /* Unlike the light theme, the dark theme renders message
        text in the default color. */
     --color-text-message-default: light-dark(
