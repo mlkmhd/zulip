@@ -44,6 +44,7 @@ from zerver.lib.display_recipient import get_display_recipient
 from zerver.lib.emoji_utils import hex_codepoint_to_emoji
 from zerver.lib.event_types import DeviceUpdateEvent
 from zerver.lib.exceptions import ErrorCode, JsonableError, MissingRemoteRealmError
+from zerver.lib.markdown.reply_links import render_plain_reply_links
 from zerver.lib.message import (
     OnlyMessageFields,
     access_message,
@@ -992,7 +993,9 @@ def get_mobile_push_content(rendered_content: str) -> str:
                     assert parent is not None
                     parent.replace(child, collapse_element)
 
-    elem = lxml.html.fragment_fromstring(rendered_content, create_parent=True)
+    elem = lxml.html.fragment_fromstring(
+        render_plain_reply_links(rendered_content), create_parent=True
+    )
     change_katex_to_raw_latex(elem)
     potentially_collapse_quotes(elem)
     plain_text = process(elem)

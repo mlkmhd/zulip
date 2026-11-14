@@ -139,6 +139,20 @@ the href for those is the default behavior of the link that also
 encodes the channel alongside the data-stream-id field, but clients
 can override that default based on `web_channel_default_view` setting.
 
+## Reply previews
+
+A reply preview links to the original message and includes its sender and
+a short excerpt. The web app renders the preview with separate sender and
+excerpt elements inside an anchor with the `message-reply-link` class.
+
+For clients identifying themselves as `ZulipFlutter`, `ZulipMobile`,
+`ZulipAndroid`, or `ZulipiOS`, the server renders the same preview as a
+plain anchor with the sender and excerpt separated by ` · `. The original
+message URL is retained.
+
+**Changes**: New in Zulip 14.0 (feature level 525). Previously, mobile
+clients received the same reply preview markup as the web app.
+
 ## Emoji
 
 Zulip's [emoji][help-emoji] support includes standard Unicode emoji, a

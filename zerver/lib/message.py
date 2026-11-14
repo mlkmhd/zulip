@@ -315,6 +315,8 @@ def messages_for_ids(
     message_edit_history_visibility_policy: int,
     user_profile: UserProfile | None,
     realm: Realm,
+    *,
+    plain_reply_links: bool = False,
 ) -> list[dict[str, Any]]:
     id_fetcher = lambda row: row["id"]
 
@@ -391,6 +393,7 @@ def messages_for_ids(
         client_gravatar=client_gravatar,
         allow_empty_topic_name=allow_empty_topic_name,
         realm=realm,
+        plain_reply_links=plain_reply_links,
     )
 
     return message_list

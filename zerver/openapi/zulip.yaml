@@ -350,6 +350,10 @@ paths:
         calls to this endpoint. It is guaranteed to be higher than
         heartbeat timeout and should be respected by clients to
         avoid breaking when heartbeat timeout increases.
+
+        **Changes**: New in Zulip 14.0 (feature level 525):
+        [Reply previews](/api/message-formatting#reply-previews) in message
+        events are rendered as plain links for Zulip mobile clients.
       x-curl-examples-parameters:
         oneOf:
           - type: include
@@ -8844,6 +8848,10 @@ paths:
         large HTTP responses. A maximum of 5000 messages can be obtained per request;
         attempting to exceed this will result in an error.
 
+        **Changes**: New in Zulip 14.0 (feature level 525):
+        [Reply previews](/api/message-formatting#reply-previews) in rendered
+        messages are returned as plain links to Zulip mobile clients.
+
         **Changes**: The `message_ids` option is new in Zulip 10.0 (feature level 300).
       x-curl-examples-parameters:
         oneOf:
@@ -9533,6 +9541,10 @@ paths:
         Note that edit history may be disabled in some organizations; see the
         [Zulip help center documentation on editing messages][edit-settings].
 
+        **Changes**: New in Zulip 14.0 (feature level 525):
+        [Reply previews](/api/message-formatting#reply-previews) in rendered
+        edit history are returned as plain links to Zulip mobile clients.
+
         [edit-settings]: /help/view-a-messages-edit-history
       parameters:
         - $ref: "#/components/parameters/MessageId"
@@ -10124,6 +10136,10 @@ paths:
       tags: ["messages"]
       description: |
         Render a message to HTML.
+
+        **Changes**: New in Zulip 14.0 (feature level 525):
+        [Reply previews](/api/message-formatting#reply-previews) are rendered
+        as plain links for Zulip mobile clients.
       requestBody:
         required: true
         content:
@@ -10412,6 +10428,10 @@ paths:
         received from [`GET /events`](/api/get-events#message) and end up with an
         extended message object identical to how a [`GET /messages`](/api/get-messages)
         request for the current narrow would have returned the message.
+
+        **Changes**: New in Zulip 14.0 (feature level 525):
+        [Reply previews](/api/message-formatting#reply-previews) in
+        `match_content` are returned as plain links to Zulip mobile clients.
       parameters:
         - name: msg_ids
           in: query
@@ -10504,6 +10524,10 @@ paths:
         raw [Zulip-flavored Markdown](/help/format-your-message-using-markdown) (e.g. for [view
         source](/help/view-the-markdown-source-of-a-message) or
         prefilling a message edit textarea).
+
+        **Changes**: New in Zulip 14.0 (feature level 525):
+        [Reply previews](/api/message-formatting#reply-previews) in rendered
+        messages are returned as plain links to Zulip mobile clients.
 
         **Changes**: Before Zulip 5.0 (feature level 120), this
         endpoint only returned the `raw_content` field.

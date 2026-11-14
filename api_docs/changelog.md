@@ -20,6 +20,12 @@ format used by the Zulip server that they are interacting with.
 
 ## Changes in Zulip 14.0
 
+**Feature level 525**
+
+* [Message formatting](/api/message-formatting#reply-previews): Zulip mobile
+  clients receive reply previews as ordinary links with the sender name and
+  excerpt in the link text.
+
 **Feature level 524**
 
 * [POST /register](/api/register-queue), [GET /events](/api/get-events):

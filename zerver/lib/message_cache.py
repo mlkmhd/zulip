@@ -11,6 +11,7 @@ from zerver.lib.cache import cache_set_many, cache_with_key, to_dict_cache_key, 
 from zerver.lib.display_recipient import bulk_fetch_display_recipients
 from zerver.lib.markdown import render_message_markdown, topic_links
 from zerver.lib.markdown import version as markdown_version
+from zerver.lib.markdown.reply_links import plain_reply_link_fields
 from zerver.lib.query_helpers import query_for_ids
 from zerver.lib.timestamp import datetime_to_timestamp
 from zerver.lib.topic import DB_TOPIC_NAME, TOPIC_LINKS, TOPIC_NAME
@@ -173,6 +174,7 @@ class MessageDict:
         client_gravatar: bool,
         allow_empty_topic_name: bool,
         realm: Realm,
+        plain_reply_links: bool = False,
     ) -> None:
         """
         NOTE: This function mutates the objects in
@@ -195,6 +197,7 @@ class MessageDict:
                 skip_copy=True,
                 can_access_sender=can_access_sender,
                 realm_host=realm.host,
+                plain_reply_links=plain_reply_links,
             )
 
     @staticmethod
@@ -208,6 +211,7 @@ class MessageDict:
         skip_copy: bool = False,
         can_access_sender: bool,
         realm_host: str,
+        plain_reply_links: bool = False,
     ) -> dict[str, Any]:
         """
         By default, we make a shallow copy of the incoming dict to avoid
@@ -252,6 +256,15 @@ class MessageDict:
             obj["content"] = obj["rendered_content"]
         else:
             obj["content_type"] = "text/x-markdown"
+
+        if plain_reply_links:
+            html_fields = ("content", "match_content") if apply_markdown else ("match_content",)
+            obj.update(plain_reply_link_fields(obj, *html_fields))
+            if "edit_history" in obj:
+                obj["edit_history"] = [
+                    {**item, **plain_reply_link_fields(item, "prev_rendered_content")}
+                    for item in obj["edit_history"]
+                ]
 
         for item in obj.get("edit_history", []):
             if "prev_rendered_content_version" in item:

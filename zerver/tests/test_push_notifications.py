@@ -2736,6 +2736,16 @@ class TestPushNotificationsContent(ZulipTestCase):
                 "rendered_content": f'<p>Testing stream names <a class="stream" data-stream-id="{stream.id}" href="/#narrow/channel/Verona">#Verona</a>.</p>',
                 "expected_output": "Testing stream names #Verona.",
             },
+            {
+                "name": "message_reply",
+                "rendered_content": (
+                    '<p><a class="message-reply-link" href="#narrow/dm/12-dm/near/31">'
+                    '<strong class="message-reply-sender" dir="auto">Othello</strong>'
+                    '<span class="message-reply-excerpt" dir="auto">سلام &amp; متن</span>'
+                    "</a></p>\n<p>Response</p>"
+                ),
+                "expected_output": "Othello · سلام & متن\nResponse",
+            },
         ]
 
         for test in fixtures:

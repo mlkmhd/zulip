@@ -384,6 +384,113 @@ class GetEventsTest(ZulipTestCase):
         request = HostRequestMock(post_data, user_profile, tornado_handler=dummy_handler)
         return view_func(request, user_profile)
 
+    def test_message_reply_html_compatibility(self) -> None:
+        sender = self.example_user("hamlet")
+        recipient = self.example_user("othello")
+        original_id = self.send_personal_message(recipient, sender, "سلام")
+        target = f"#narrow/dm/{recipient.id}-dm/near/{original_id}"
+        reply = f'[Othello | سلام &amp; &#91;متن&#93;]({sender.realm.url}/{target} "zulip-message-reply")'
+        content = f"{reply}\n\n**Response**"
+        mobile_html = (
+            f'<p><a href="{target}">Othello · سلام &amp; &#91;متن&#93;</a></p>\n'
+            "<p><strong>Response</strong></p>"
+        )
+        web_html = (
+            f'<p><a class="message-reply-link" href="{target}">'
+            '<strong class="message-reply-sender" dir="auto">Othello</strong>'
+            '<span class="message-reply-excerpt" dir="auto">سلام &amp; &#91;متن&#93;</span>'
+            "</a></p>\n<p><strong>Response</strong></p>"
+        )
+
+        queues = {}
+        for client_name in ("ZulipFlutter", "website", "ZulipMobile"):
+            events_response = self.tornado_call(
+                get_events,
+                recipient,
+                {
+                    "apply_markdown": "true",
+                    "event_types": '["message", "update_message"]',
+                    "user_client": client_name,
+                    "dont_block": "true",
+                },
+            )
+            queues[client_name] = self.assert_json_success(events_response)["queue_id"]
+
+        with self.captureOnCommitCallbacks(execute=True):
+            message_id = self.send_personal_message(sender, recipient, content)
+        message_url = f"/api/v1/messages/{message_id}"
+        with self.captureOnCommitCallbacks(execute=True):
+            result = self.api_patch(sender, message_url, {"content": f"{content} edited"})
+            self.assert_json_success(result)
+
+        for client_name, queue_id in queues.items():
+            with self.subTest(client=client_name):
+                expected_html = web_html if client_name == "website" else mobile_html
+                edited_html = expected_html.replace("Response</strong>", "Response</strong> edited")
+                user_agent = f"{client_name}/1.2.3 (Android 15)"
+                events_response = self.tornado_call(
+                    get_events,
+                    recipient,
+                    {
+                        "queue_id": queue_id,
+                        "last_event_id": -1,
+                        "user_client": client_name,
+                        "dont_block": "true",
+                    },
+                )
+                events = self.assert_json_success(events_response)["events"]
+                message_event = next(event for event in events if event["type"] == "message")
+                update_event = next(event for event in events if event["type"] == "update_message")
+                self.assertEqual(message_event["message"]["content"], expected_html)
+                self.assertEqual(update_event["rendered_content"], edited_html)
+                self.assertEqual(update_event["orig_rendered_content"], expected_html)
+
+                result = self.api_get(recipient, message_url, HTTP_USER_AGENT=user_agent)
+                message = self.assert_json_success(result)["message"]
+                self.assertEqual(message["content"], edited_html)
+                self.assertEqual(message["edit_history"][0]["prev_rendered_content"], expected_html)
+
+                result = self.api_get(
+                    recipient, message_url, {"apply_markdown": "false"}, HTTP_USER_AGENT=user_agent
+                )
+                self.assertEqual(
+                    self.assert_json_success(result)["message"]["content"], f"{content} edited"
+                )
+                result = self.api_get(
+                    recipient,
+                    "/api/v1/messages",
+                    {"message_ids": orjson.dumps([message_id]).decode()},
+                    HTTP_USER_AGENT=user_agent,
+                )
+                self.assertEqual(
+                    self.assert_json_success(result)["messages"][0]["content"], edited_html
+                )
+                result = self.api_get(
+                    recipient,
+                    "/api/v1/messages/matches_narrow",
+                    {"msg_ids": orjson.dumps([message_id]).decode(), "narrow": "[]"},
+                    HTTP_USER_AGENT=user_agent,
+                )
+                self.assertEqual(
+                    self.assert_json_success(result)["messages"][str(message_id)]["match_content"],
+                    edited_html,
+                )
+                result = self.api_get(
+                    recipient, f"{message_url}/history", HTTP_USER_AGENT=user_agent
+                )
+                original, edited = self.assert_json_success(result)["message_history"]
+                self.assertEqual(original["rendered_content"], expected_html)
+                self.assertEqual(edited["rendered_content"], edited_html)
+                self.assertEqual(edited["content"], f"{content} edited")
+
+                result = self.api_post(
+                    recipient,
+                    "/api/v1/messages/render",
+                    {"content": content},
+                    HTTP_USER_AGENT=user_agent,
+                )
+                self.assertEqual(self.assert_json_success(result)["rendered"], expected_html)
+
     def test_get_events(self) -> None:
         user_profile = self.example_user("hamlet")
         email = user_profile.email

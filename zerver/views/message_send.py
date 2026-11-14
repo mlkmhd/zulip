@@ -15,6 +15,7 @@ from zerver.actions.message_send import (
     render_unsaved_message,
 )
 from zerver.lib.exceptions import JsonableError
+from zerver.lib.markdown.reply_links import needs_plain_reply_links, render_plain_reply_links
 from zerver.lib.request import RequestNotes
 from zerver.lib.response import json_success
 from zerver.lib.typed_endpoint import (
@@ -183,4 +184,7 @@ def render_message_backend(
                 user_profile, content, url_embed_data=url_embed_data
             )
 
-    return json_success(request, data={"rendered": rendering_result.rendered_content})
+    rendered = rendering_result.rendered_content
+    if needs_plain_reply_links(RequestNotes.get_notes(request).client_name):
+        rendered = render_plain_reply_links(rendered)
+    return json_success(request, data={"rendered": rendered})

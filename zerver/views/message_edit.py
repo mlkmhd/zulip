@@ -13,6 +13,7 @@ from zerver.actions.message_edit import check_update_message
 from zerver.context_processors import get_valid_realm_from_request
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.html_diff import highlight_html_differences
+from zerver.lib.markdown.reply_links import needs_plain_reply_links, render_plain_reply_links
 from zerver.lib.message import (
     access_message,
     access_message_and_usermessage,
@@ -36,6 +37,8 @@ def fill_edit_history_entries(
     raw_edit_history: list[EditHistoryEvent],
     message: Message,
     allow_empty_topic_name: bool,
+    *,
+    plain_reply_links: bool = False,
 ) -> list[FormattedEditHistoryEvent]:
     """
     This fills out the message edit history entries from the database
@@ -45,6 +48,8 @@ def fill_edit_history_entries(
     """
     prev_content = message.content
     prev_rendered_content = message.rendered_content
+    if plain_reply_links and prev_rendered_content is not None:
+        prev_rendered_content = render_plain_reply_links(prev_rendered_content)
     is_channel_message = message.is_channel_message
     if is_channel_message:
         prev_topic_name = maybe_rename_empty_topic_to_general_chat(
@@ -79,9 +84,11 @@ def fill_edit_history_entries(
         if "prev_content" in edit_history_event:
             formatted_entry["prev_content"] = edit_history_event["prev_content"]
             prev_content = formatted_entry["prev_content"]
-            formatted_entry["prev_rendered_content"] = edit_history_event["prev_rendered_content"]
-            prev_rendered_content = formatted_entry["prev_rendered_content"]
+            prev_rendered_content = edit_history_event["prev_rendered_content"]
             assert prev_rendered_content is not None
+            if plain_reply_links:
+                prev_rendered_content = render_plain_reply_links(prev_rendered_content)
+            formatted_entry["prev_rendered_content"] = prev_rendered_content
             rendered_content = formatted_entry["rendered_content"]
             assert rendered_content is not None
             formatted_entry["content_html_diff"] = highlight_html_differences(
@@ -135,7 +142,10 @@ def get_message_edit_history(
 
     # Fill in all the extra data that will make it usable
     message_edit_history = fill_edit_history_entries(
-        raw_edit_history, message, allow_empty_topic_name
+        raw_edit_history,
+        message,
+        allow_empty_topic_name,
+        plain_reply_links=needs_plain_reply_links(RequestNotes.get_notes(request).client_name),
     )
 
     visible_message_edit_history = visible_edit_history_for_message(
@@ -281,6 +291,7 @@ def json_fetch_raw_message(
         allow_empty_topic_name=allow_empty_topic_name,
         user_profile=user_profile,
         realm=message.realm,
+        plain_reply_links=needs_plain_reply_links(RequestNotes.get_notes(request).client_name),
     )
     response = dict(
         message=message_dict_list[0],

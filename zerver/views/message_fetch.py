@@ -15,6 +15,7 @@ from zerver.lib.exceptions import (
     JsonableError,
     MissingAuthenticationError,
 )
+from zerver.lib.markdown.reply_links import needs_plain_reply_links, render_plain_reply_links
 from zerver.lib.message import get_first_visible_message_id, messages_for_ids
 from zerver.lib.narrow import (
     NarrowParameter,
@@ -302,6 +303,7 @@ def get_messages_backend(
             message_edit_history_visibility_policy=realm.message_edit_history_visibility_policy,
             user_profile=user_profile,
             realm=realm,
+            plain_reply_links=needs_plain_reply_links(RequestNotes.get_notes(request).client_name),
         )
 
     if client_requested_message_ids is not None:
@@ -362,6 +364,7 @@ def messages_in_narrow_backend(
         )
 
     search_fields = {}
+    plain_reply_links = needs_plain_reply_links(RequestNotes.get_notes(request).client_name)
     for row in query.values(
         "id",
         "escaped_topic_name",
@@ -373,11 +376,14 @@ def messages_in_narrow_backend(
         rendered_content: str = row["rendered_content"]
         content_matches = row.get("content_matches", [])
         topic_matches = row.get("topic_matches", [])
-        search_fields[str(message_id)] = get_search_fields(
+        fields = get_search_fields(
             rendered_content,
             escaped_topic_name,
             content_matches,
             topic_matches,
         )
+        if plain_reply_links:
+            fields["match_content"] = render_plain_reply_links(fields["match_content"])
+        search_fields[str(message_id)] = fields
 
     return json_success(request, data={"messages": search_fields})

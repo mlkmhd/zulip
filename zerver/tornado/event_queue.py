@@ -23,6 +23,7 @@ from typing_extensions import override
 
 from version import API_FEATURE_LEVEL, ZULIP_MERGE_BASE, ZULIP_VERSION
 from zerver.lib.exceptions import JsonableError
+from zerver.lib.markdown.reply_links import needs_plain_reply_links, plain_reply_link_fields
 from zerver.lib.message_cache import MessageDict
 from zerver.lib.narrow_helpers import narrow_dataclasses_from_tuples
 from zerver.lib.narrow_predicate import build_narrow_predicate
@@ -232,7 +233,7 @@ class ClientDescriptor:
             finish_handler(
                 self.current_handler_id,
                 self.event_queue.id,
-                self.event_queue.contents(),
+                self.events_for_client(),
             )
         except Exception:
             logging.exception(
@@ -241,6 +242,24 @@ class ClientDescriptor:
         finally:
             self.disconnect_handler()
         return True
+
+    def events_for_client(self) -> list[dict[str, Any]]:
+        events = self.event_queue.contents()
+        if not needs_plain_reply_links(self.client_type_name):
+            return events
+
+        for index, event in enumerate(events):
+            if event["type"] == "message":
+                message = event["message"]
+                if message["content_type"] == "text/html":
+                    fields = plain_reply_link_fields(message, "content")
+                    if fields:
+                        events[index] = {**event, "message": {**message, **fields}}
+            elif event["type"] in ("update_message", "url_embed_data"):
+                fields = plain_reply_link_fields(event, "rendered_content", "orig_rendered_content")
+                if fields:
+                    events[index] = {**event, **fields}
+        return events
 
     def accepts_event(self, event: Mapping[str, Any]) -> bool:
         if self.event_types is not None:
@@ -843,7 +862,7 @@ def fetch_events(
 
         if not client.event_queue.empty() or dont_block:
             response: dict[str, Any] = dict(
-                events=client.event_queue.contents(),
+                events=client.events_for_client(),
             )
             if orig_queue_id is None:
                 response["queue_id"] = queue_id
