@@ -1,6 +1,6 @@
 import os
 
-ZULIP_VERSION = "13.1.1"
+ZULIP_VERSION = "13.1.2"
 
 # Add information on number of commits and commit hash to version, if available
 ZULIP_VERSION_WITHOUT_COMMIT = ZULIP_VERSION
