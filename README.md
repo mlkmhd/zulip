@@ -2,7 +2,7 @@
 
 A fork of [Zulip](https://github.com/zulip/zulip) with a redesigned web interface, more control over regional display settings, and new options for channel pictures and reaction notifications.
 
-[![The modern Zulip web interface in dark mode, with a custom channel picture, incoming and outgoing message bubbles, and emoji reactions](https://raw.githubusercontent.com/mlkmhd/zulip/main/docs/_static/zulip-fork-dark.png)](https://github.com/mlkmhd/zulip/blob/main/docs/_static/zulip-fork-dark.png)
+[![The modern Zulip web interface in dark mode, with a custom channel picture, incoming and outgoing message bubbles, and emoji reactions](https://cdn.jsdelivr.net/gh/mlkmhd/zulip@069da2c142856b5fdfc139f3e140cc245e1fd3e1/docs/_static/zulip-fork-dark.png)](https://github.com/mlkmhd/zulip/blob/main/docs/_static/zulip-fork-dark.png)
 
 _The Modern interface in dark mode, showing a sample launch-planning conversation._
 
