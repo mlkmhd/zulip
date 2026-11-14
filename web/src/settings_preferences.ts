@@ -190,26 +190,42 @@ export function set_up(settings_panel: SettingsPanel): void {
         }
     });
 
+    const $display_preferences = $container.find(
+        "#web_calendar, #web_font, #web_left_sidebar_show_avatars",
+    );
     for (const [setting, current_value] of [
         ["web_calendar", page_params.web_calendar ?? "auto"],
         ["web_font", page_params.web_font ?? "auto"],
+        ["web_left_sidebar_show_avatars", page_params.web_left_sidebar_show_avatars ?? true],
     ] as const) {
-        const $select = $container.find(`#${setting}`);
-        $select.val(current_value).on("change", (event) => {
+        const $input = $display_preferences.filter(`#${setting}`);
+        const set_value = (): void => {
+            if (typeof current_value === "boolean") {
+                $input.prop("checked", current_value);
+            } else {
+                $input.val(current_value);
+            }
+        };
+        set_value();
+        $input.on("change", (event) => {
             event.stopPropagation();
-            $container.find("#web_calendar, #web_font").prop("disabled", true);
+            $display_preferences.prop("disabled", true);
+            const value =
+                typeof current_value === "boolean"
+                    ? JSON.stringify($input.prop("checked"))
+                    : $input.val();
             settings_ui.do_settings_change(
                 channel.patch,
                 "/json/settings/web_display_preferences",
-                {[setting]: $select.val()},
-                $select.closest(".input-group").find(".alert-notification"),
+                {[setting]: value},
+                $input.closest(".web-display-preference").find(".web-display-preference-status"),
                 {
                     success_continuation() {
                         reload.initiate({immediate: true});
                     },
                     error_continuation() {
-                        $select.val(current_value);
-                        $container.find("#web_calendar, #web_font").prop("disabled", false);
+                        set_value();
+                        $display_preferences.prop("disabled", false);
                     },
                 },
             );

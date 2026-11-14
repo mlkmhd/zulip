@@ -452,6 +452,7 @@ class UserProfile(AbstractBaseUser, PermissionsMixin, UserBaseSettings):
 
     web_calendar = models.CharField(max_length=12, default="auto")
     web_font = models.CharField(max_length=12, default="auto")
+    web_left_sidebar_show_avatars = models.BooleanField(default=True, db_default=True)
     web_ui_version = models.CharField(max_length=7, default="", blank=True)
 
     DEFAULT_BOT = 1

@@ -3,21 +3,26 @@
 
         {{#if is_group}}
         <span class="conversation-partners-icon zulip-icon zulip-icon-dm-groups-3"></span>
-        {{else}}
+        {{else if show_avatar}}
         <span class="dm-avatar">
             <img src="{{avatar_url}}" alt="" loading="lazy" draggable="false" />
             <span class="dm-avatar-presence">
                 <span class="zulip-icon zulip-icon-{{user_circle_class}} {{user_circle_class}} user-circle"></span>
             </span>
-            <span class="dm-avatar-typing" hidden>
+            <span class="dm-typing-indicator dm-avatar-typing" hidden>
                 {{> typing_notification_dots}}
             </span>
         </span>
+        {{else}}
+        <span class="conversation-partners-icon zulip-icon zulip-icon-{{user_circle_class}} {{user_circle_class}} user-circle"></span>
         {{/if}}
 
         <span class="conversation-partners">
             <span class="conversation-partners-list">{{recipients}}
                 {{> status_emoji status_emoji_info}}
+                {{#unless (or is_group show_avatar)}}
+                    <span class="dm-typing-indicator" hidden>{{> typing_notification_dots}}</span>
+                {{/unless}}
                 {{#if is_bot}}
                     <i class="zulip-icon zulip-icon-bot" aria-label="{{t 'Bot' }}"></i>
                 {{/if}}

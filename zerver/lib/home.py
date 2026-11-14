@@ -203,6 +203,7 @@ def build_page_params_for_home_page_load(
     if user_profile is not None:
         page_params["web_calendar"] = user_profile.web_calendar
         page_params["web_font"] = user_profile.web_font
+        page_params["web_left_sidebar_show_avatars"] = user_profile.web_left_sidebar_show_avatars
 
     page_params["state_data"] = state_data
 

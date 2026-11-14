@@ -4,6 +4,20 @@
         {{> settings_save_discard_widget section_name="left-sidebar-settings" show_save_discard_buttons=for_realm_settings }}
     </div>
 
+    {{#unless for_realm_settings}}
+        {{#if (eq page_params.web_ui_version "modern")}}
+            <div class="web-display-preference">
+                {{> settings_checkbox
+                  setting_name="web_left_sidebar_show_avatars"
+                  is_checked=(not (eq page_params.web_left_sidebar_show_avatars false))
+                  label=(t "Show profile and channel pictures in the left sidebar")
+                  prefix=""
+                  skip_prop_element=true}}
+                <div class="alert-notification web-display-preference-status"></div>
+            </div>
+        {{/if}}
+    {{/unless}}
+
     <div class="input-group">
         <label for="{{prefix}}web_stream_unreads_count_display_policy" class="settings-field-label">
             {{t "Show unread counts for" }}

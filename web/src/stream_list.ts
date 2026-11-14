@@ -840,6 +840,7 @@ function build_stream_sidebar_li(sub: StreamSubscription, for_modal = false): JQ
         ),
         is_empty_topic_only_channel: stream_data.is_empty_topic_only_channel(sub.stream_id),
         for_modal,
+        show_channel_avatar: !for_modal && page_params.web_left_sidebar_show_avatars !== false,
     };
     const $list_item = $(render_stream_sidebar_row(args));
     return $list_item;

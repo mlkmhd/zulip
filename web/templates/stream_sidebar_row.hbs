@@ -3,15 +3,15 @@
     <div class="bottom_left_row channel-header">
         <a href="{{url}}" class="subscription_block selectable_sidebar_block" draggable="false">
 
-            <span class="stream-privacy filter-icon{{#unless for_modal}} channel-avatar{{/unless}}" aria-hidden="true">
-                {{#unless for_modal}}
+            <span class="stream-privacy filter-icon{{#if show_channel_avatar}} channel-avatar{{/if}}" aria-hidden="true">
+                {{#if show_channel_avatar}}
                     <img class="channel-sidebar-picture" {{#if icon_url}}src="{{icon_url}}"{{/if}} alt="" {{#unless icon_url}}hidden{{/unless}} />
                     <span class="channel-sidebar-picture-fallback" {{#if icon_url}}hidden{{/if}}>{{> sidebar_avatar_initials .}}</span>
                 {{else}}
                     <span class="stream-privacy-original-color-{{id}} channel-privacy-icon" style="color: {{color}}">
                         {{> stream_privacy . }}
                     </span>
-                {{/unless}}
+                {{/if}}
             </span>
 
             <span class="stream-name">{{name}}</span>

@@ -585,6 +585,7 @@ test_ui("rename_stream", ({mock_template, override, override_rewire}) => {
             is_web_public: false,
             color: payload.color,
             for_modal: false,
+            show_channel_avatar: true,
             pin_to_top: true,
             can_post_messages: true,
             is_empty_topic_only_channel: false,

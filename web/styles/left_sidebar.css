@@ -1817,7 +1817,7 @@ li.active-sub-filter {
     }
 }
 
-.dm-box.dm-user-status,
+.dm-box:has(.dm-avatar, .zulip-icon-dm-groups-3),
 .subscription_block:has(.channel-avatar) {
     --sidebar-avatar-size: 1.5em;
 

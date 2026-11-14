@@ -4,6 +4,7 @@ import _ from "lodash";
 import render_more_private_conversations from "../templates/more_pms.hbs";
 import render_pm_list_item from "../templates/pm_list_item.hbs";
 
+import {page_params} from "./page_params.ts";
 import * as pm_conversations from "./pm_conversations.ts";
 import type {PMListConversation} from "./pm_list_data.ts";
 import {current_user} from "./state_data.ts";
@@ -21,7 +22,7 @@ export type PMNode =
       };
 
 export function update_typing_indicators(): void {
-    for (const avatar_indicator of $(".dm-list .dm-avatar-typing")) {
+    for (const avatar_indicator of $(".dm-list .dm-typing-indicator")) {
         const user_id = Number(
             avatar_indicator.closest(".dm-box")?.getAttribute("data-user-ids-string"),
         );
@@ -37,7 +38,11 @@ export function keyed_pm_li(conversation: PMListConversation): vdom.Node<PMNode>
         (pm_conversations.recent.recent_message_ids.get(conversation.user_ids_string)
             ?.max_message_id ?? -1) > 0;
     const row = {...conversation, can_pin};
-    const render = (): string => render_pm_list_item(row);
+    const render = (): string =>
+        render_pm_list_item({
+            ...row,
+            show_avatar: page_params.web_left_sidebar_show_avatars !== false,
+        });
 
     const eq = (other: PMNode): boolean =>
         other.type === "conversation" && _.isEqual(row, other.conversation);

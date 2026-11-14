@@ -555,6 +555,7 @@ def update_web_display_preferences(
     web_calendar: Literal["auto", "gregory", "persian", "islamic-civil", "hebrew"] | None = None,
     web_font: Literal["auto", "default", "vazir", "sahel", "samim", "yekan", "nazanin"]
     | None = None,
+    web_left_sidebar_show_avatars: Json[bool] | None = None,
 ) -> HttpResponse:
     update_fields = []
     if web_calendar is not None:
@@ -563,6 +564,9 @@ def update_web_display_preferences(
     if web_font is not None:
         user_profile.web_font = web_font
         update_fields.append("web_font")
+    if web_left_sidebar_show_avatars is not None:
+        user_profile.web_left_sidebar_show_avatars = web_left_sidebar_show_avatars
+        update_fields.append("web_left_sidebar_show_avatars")
     if update_fields:
         user_profile.save(update_fields=update_fields)
     return json_success(request)

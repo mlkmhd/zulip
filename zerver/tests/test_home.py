@@ -73,6 +73,7 @@ class HomeTest(ZulipTestCase):
         "warn_no_email",
         "web_calendar",
         "web_font",
+        "web_left_sidebar_show_avatars",
         "web_ui_version",
     ]
     expected_state_data_keys = [
@@ -373,6 +374,22 @@ class HomeTest(ZulipTestCase):
         params = self._get_page_params(self._get_home_page())
         self.assertEqual(params["web_calendar"], "gregory")
         self.assertEqual(params["web_font"], "sahel")
+
+    def test_web_left_sidebar_show_avatars(self) -> None:
+        self.login("hamlet")
+        url = "/json/settings/web_display_preferences"
+        setting = "web_left_sidebar_show_avatars"
+        self.assertIs(self._get_page_params(self._get_home_page())[setting], True)
+
+        for show_avatars in [False, True]:
+            self.assert_json_success(
+                self.client_patch(
+                    url,
+                    {setting: orjson.dumps(show_avatars).decode()},
+                    intentionally_undocumented=True,
+                )
+            )
+            self.assertIs(self._get_page_params(self._get_home_page())[setting], show_avatars)
 
     def test_reset_web_time_zone(self) -> None:
         self.login("hamlet")
