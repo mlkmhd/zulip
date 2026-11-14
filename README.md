@@ -9,7 +9,7 @@ _The Modern interface in dark mode, showing a sample launch-planning conversatio
 ## What this fork adds
 
 - **Classic and Modern interfaces**. Switch layouts under **Personal settings → Preferences → General → Web interface**. Zulip saves your choice to your account.
-- **Redesigned conversations**. In Modern, scan incoming and outgoing message bubbles, and see animated typing indicators. Users without a profile photo get initials in their avatar.
+- **Redesigned conversations**. In Modern, scan incoming and outgoing message bubbles, and see animated typing indicators. Users without a profile photo use Zulip's default avatars.
 - **Pinned conversations and Saved Messages**. Pin direct messages in the sidebar and open Saved Messages from **Views** to keep notes and files.
 - **Custom channel pictures**. Channel administrators can upload, crop, replace, or remove a picture in channel settings. The picture appears beside the channel name in the sidebar.
 - **Emoji reactions and notifications**. Find recently used emoji in the picker. Eligible reactions can notify the message author on desktop or mobile, and organization administrators can disable reaction notifications.

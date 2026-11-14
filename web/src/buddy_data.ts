@@ -206,7 +206,6 @@ export type BuddyUserInfo = {
     name: string;
     user_id: number;
     profile_picture: string | undefined;
-    avatar_initials: string | undefined;
     status_emoji_info: user_status.UserStatusEmojiInfo | undefined;
     is_current_user: boolean;
     num_unread: number;
@@ -238,15 +237,13 @@ export function info_for(user_id: number, direct_message_recipients: Set<number>
     };
 
     const person = people.get_by_user_id(user_id);
-    const avatar_initials = people.default_avatar_initials(person);
 
     return {
         href: hash_util.pm_with_url(user_id.toString()),
         name: person.full_name,
         user_id,
         status_emoji_info,
-        profile_picture: avatar_initials ? undefined : people.small_avatar_url_for_person(person),
-        avatar_initials,
+        profile_picture: people.small_avatar_url_for_person(person),
         is_current_user: people.is_my_user_id(user_id),
         num_unread: get_num_unread(user_id),
         user_circle_class,

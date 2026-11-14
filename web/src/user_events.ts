@@ -126,9 +126,6 @@ export const update_person = function update(event: UserUpdate): void {
             current_user.full_name = event.full_name;
             settings_account.update_full_name(event.full_name);
             settings_preferences.update_user_list_style_preview_name(event.full_name);
-            if (people.default_avatar_initials(current_user)) {
-                refresh_current_user_avatar();
-            }
         }
         if (user.is_bot && bot_data.get(event.user_id) !== undefined) {
             bot_data.update(event.user_id, {user_id: event.user_id, full_name: event.full_name});

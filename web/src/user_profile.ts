@@ -174,10 +174,7 @@ export function update_profile_modal_ui(
         const $bot_owner_field = $(".bot_owner_user_field");
         $bot_owner_field.attr("data-field-id", new_data.bot_owner_id);
     }
-    if (
-        new_data.avatar_url !== undefined ||
-        (new_data.full_name !== undefined && people.default_avatar_initials(user))
-    ) {
+    if (new_data.avatar_url !== undefined) {
         $("#avatar").css(
             "background-image",
             `url(${CSS.escape(people.medium_avatar_url_for_person(user))})`,

@@ -5,11 +5,7 @@
         <span class="conversation-partners-icon zulip-icon zulip-icon-dm-groups-3"></span>
         {{else}}
         <span class="dm-avatar">
-            {{#if avatar_initials}}
-                {{> sidebar_avatar_initials .}}
-            {{else}}
-                <img src="{{avatar_url}}" alt="" loading="lazy" draggable="false" />
-            {{/if}}
+            <img src="{{avatar_url}}" alt="" loading="lazy" draggable="false" />
             <span class="dm-avatar-presence">
                 <span class="zulip-icon zulip-icon-{{user_circle_class}} {{user_circle_class}} user-circle"></span>
             </span>
