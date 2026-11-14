@@ -171,6 +171,7 @@ export function initialize(): void {
     const update_compose_max_height = new ResizeObserver((_entries) => {
         requestAnimationFrame(() => {
             resize.reset_compose_message_max_height();
+            resize.update_message_feed_bottom_space();
             scroll_to_bottom_button.update();
         });
     });

@@ -1293,9 +1293,46 @@ nav {
     }
 }
 
+#main_div {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100dvh - var(--navbar-fixed-height));
+}
+
+#message-lists-container {
+    margin-top: auto;
+
+    &:has(> .focused-message-list.is-conversation-view) {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        margin-top: 0;
+
+        .focused-message-list {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+        }
+
+        .recipient_row {
+            display: flex;
+            flex: 1;
+            flex-direction: column;
+        }
+
+        .message_header + .message_row {
+            margin-top: auto;
+        }
+    }
+}
+
+#mark_read_on_scroll_state_banner_place_holder.invisible {
+    display: none;
+}
+
 #bottom_whitespace {
     display: block;
-    height: var(--max-unmaximized-compose-height);
+    flex: 0 0 var(--message-feed-bottom-space, 0px);
 }
 
 .operator_value {

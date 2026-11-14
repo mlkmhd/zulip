@@ -21,7 +21,7 @@ export function set_recent_view_participants_column_class_update(
     recent_view_participants_column_class_update = update_func;
 }
 
-function get_bottom_whitespace_height(): number {
+function get_compose_max_height(): number {
     return message_viewport.height() * 0.4;
 }
 
@@ -111,16 +111,16 @@ function height_of($element: JQuery): number {
     return $element.get(0)!.getBoundingClientRect().height;
 }
 
-export function reset_compose_message_max_height(bottom_whitespace_height?: number): void {
+export function reset_compose_message_max_height(compose_max_height?: number): void {
     // If the compose-box is open, we set the `max-height` property of
     // `compose-textarea` and `preview-textarea`, so that the
     // compose-box's maximum extent does not overlap the last message
     // in the current stream.  We also leave a tiny bit of space after
     // the last message of the current stream.
 
-    // Compute bottom_whitespace_height if not provided by caller.
-    if (typeof bottom_whitespace_height !== "number") {
-        bottom_whitespace_height = get_bottom_whitespace_height();
+    // Compute compose_max_height if not provided by caller.
+    if (typeof compose_max_height !== "number") {
+        compose_max_height = get_compose_max_height();
     }
 
     const compose_height = height_of($("#compose"));
@@ -133,27 +133,36 @@ export function reset_compose_message_max_height(bottom_whitespace_height?: numb
     // We ensure that the last message is not overlapped by compose box.
     $("textarea#compose-textarea").css(
         "max-height",
-        bottom_whitespace_height - compose_non_textarea_height,
+        compose_max_height - compose_non_textarea_height,
     );
-    $("#preview_message_area").css(
-        "max-height",
-        bottom_whitespace_height - compose_non_textarea_height,
-    );
+    $("#preview_message_area").css("max-height", compose_max_height - compose_non_textarea_height);
     $("#scroll-to-bottom-button-container").css("bottom", compose_height);
     compose_ui.autosize_textarea($("#compose-textarea"));
 }
 
+export function update_message_feed_bottom_space(): void {
+    const $compose = $("#compose");
+    if ($compose.length === 0) {
+        return;
+    }
+    const was_at_bottom = message_viewport.at_rendered_bottom();
+    $(":root").css("--message-feed-bottom-space", `${height_of($compose)}px`);
+    if (was_at_bottom) {
+        message_viewport.scrollTop(message_viewport.$scroll_container.get(0)!.scrollHeight);
+    }
+}
+
 export function resize_bottom_whitespace(): void {
-    const bottom_whitespace_height = get_bottom_whitespace_height();
-    $(":root").css("--max-unmaximized-compose-height", `${bottom_whitespace_height}px`);
-    // The height of the compose box is tied to that of
-    // bottom_whitespace, so update it if necessary.
+    update_message_feed_bottom_space();
+    const compose_max_height = get_compose_max_height();
+    $(":root").css("--max-unmaximized-compose-height", `${compose_max_height}px`);
+    // Update the compose textarea limit for the available viewport height.
     //
     // reset_compose_message_max_height cannot compute the right
     // height correctly while compose is hidden. This is OK, because
     // we also resize compose every time it is opened.
     if (compose_state.composing()) {
-        reset_compose_message_max_height(bottom_whitespace_height);
+        reset_compose_message_max_height(compose_max_height);
     }
 }
 

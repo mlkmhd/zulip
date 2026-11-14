@@ -734,7 +734,7 @@
 
     /*
     Maximum height of the compose box when it is not in maximised state. This
-    is equal to the height of `#bottom_whitespace`. We expect resize.ts to
+    is independent of the space reserved below messages. We expect resize.ts to
     replace it with its pixel calculation since even if `vh` has great support,
     it can change depending on browser / OS on mobile devices.
     */
