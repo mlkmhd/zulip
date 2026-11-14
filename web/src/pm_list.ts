@@ -7,7 +7,6 @@ import type {Filter} from "./filter.ts";
 import {$t} from "./i18n.ts";
 import {localstorage} from "./localstorage.ts";
 import * as mouse_drag from "./mouse_drag.ts";
-import * as muted_users from "./muted_users.ts";
 import * as people from "./people.ts";
 import * as pm_conversations from "./pm_conversations.ts";
 import * as pm_list_data from "./pm_list_data.ts";
@@ -47,107 +46,6 @@ export function close(): void {
     update_private_messages();
 }
 
-const preview_response_schema = z.object({
-    messages: z.array(z.object({id: z.number(), content: z.string()})),
-});
-
-type DMPreview = {
-    conversation_version: number;
-    pending: boolean;
-    message_id?: number | undefined;
-    text?: string | undefined;
-};
-
-const dm_previews = new Map<string, DMPreview>();
-
-export function invalidate_message_previews(message_ids: ReadonlySet<number>): boolean {
-    if (message_ids.size === 0) {
-        return false;
-    }
-
-    let changed = false;
-    for (const [key, preview] of dm_previews) {
-        if (
-            preview.pending ||
-            (preview.message_id !== undefined && message_ids.has(preview.message_id))
-        ) {
-            dm_previews.delete(key);
-            changed = true;
-        }
-    }
-    return changed;
-}
-
-function preview_version(key: string): number | undefined {
-    const user_ids = people.split_to_ints(key);
-    if (
-        people.is_direct_message_conversation_with_self(user_ids) ||
-        user_ids.every((user_id) => muted_users.is_user_muted(user_id))
-    ) {
-        return undefined;
-    }
-    return pm_conversations.recent.recent_message_ids.get(key)?.max_message_id;
-}
-
-function fetch_preview(key: string): void {
-    const version = preview_version(key);
-    const cached = dm_previews.get(key);
-    if (version === undefined || cached?.conversation_version === version) {
-        return;
-    }
-    // Keep the previous preview visible while checking for a newer message.
-    const preview: DMPreview = {...cached, conversation_version: version, pending: true};
-    dm_previews.set(key, preview);
-    void channel.get({
-        url: "/json/messages",
-        data: {
-            narrow: JSON.stringify([{operator: "dm", operand: people.split_to_ints(key)}]),
-            anchor: "newest",
-            num_before: 1,
-            num_after: 0,
-        },
-        success(raw_data) {
-            if (dm_previews.get(key) !== preview) {
-                return;
-            }
-
-            const {messages} = preview_response_schema.parse(raw_data);
-            const message = messages[0];
-            preview.pending = false;
-            preview.message_id = message?.id;
-            preview.text = undefined;
-            if (message !== undefined) {
-                const template = document.createElement("template");
-                template.innerHTML = message.content;
-                for (const emoji of template.content.querySelectorAll<HTMLSpanElement>(
-                    "span.emoji",
-                )) {
-                    emoji.replaceWith(ui_util.convert_emoji_element_to_unicode($(emoji)));
-                }
-                for (const image of template.content.querySelectorAll("img")) {
-                    image.replaceWith(image.alt);
-                }
-                for (const block of template.content.querySelectorAll(
-                    "p, li, br, pre, blockquote",
-                )) {
-                    block.after(" ");
-                }
-                const text = (template.content.textContent ?? "").replaceAll(/\s+/g, " ").trim();
-                preview.text = text === "" ? $t({defaultMessage: "Attachment"}) : text;
-            }
-            refresh_previews();
-        },
-        error() {
-            if (dm_previews.get(key) === preview) {
-                dm_previews.delete(key);
-            }
-        },
-    });
-}
-
-const refresh_previews = _.debounce(update_private_messages, 50);
-let preview_observer: IntersectionObserver | undefined;
-
 function set_dom_to(new_dom: vdom.Tag<PMNode>): void {
     const $container = $("#direct-messages-list");
 
@@ -172,17 +70,6 @@ function set_dom_to(new_dom: vdom.Tag<PMNode>): void {
     }
     prior_dom = new_dom;
     pm_list_dom.update_typing_indicators();
-
-    preview_observer?.disconnect();
-    if (preview_observer) {
-        for (const row of $container.find(".dm-list-item")) {
-            const key = row.dataset["userIdsString"]!;
-            const version = preview_version(key);
-            if (version !== undefined && dm_previews.get(key)?.conversation_version !== version) {
-                preview_observer.observe(row);
-            }
-        }
-    }
 }
 
 export function update_private_messages(): void {
@@ -207,10 +94,9 @@ export function update_private_messages(): void {
         : conversations.filter((conversation) => conversation.is_active);
     const nodes = visible_conversations.map((conversation) => {
         const key = conversation.user_ids_string;
-        const preview = preview_version(key) === undefined ? undefined : dm_previews.get(key)?.text;
         const can_pin =
             (pm_conversations.recent.recent_message_ids.get(key)?.max_message_id ?? -1) > 0;
-        return pm_list_dom.keyed_pm_li({...conversation, preview, can_pin});
+        return pm_list_dom.keyed_pm_li({...conversation, can_pin});
     });
     set_dom_to(pm_list_dom.pm_ul(nodes));
     // Make sure to update the left sidebar heights after updating
@@ -371,17 +257,6 @@ export function toggle_private_messages_section(): void {
 }
 
 export function initialize(): void {
-    if (typeof IntersectionObserver !== "undefined") {
-        preview_observer = new IntersectionObserver((entries, observer) => {
-            for (const entry of entries) {
-                if (entry.isIntersecting && entry.target instanceof HTMLElement) {
-                    observer.unobserve(entry.target);
-                    fetch_preview(entry.target.dataset["userIdsString"]!);
-                }
-            }
-        });
-    }
-
     // Restore collapsed status.
     private_messages_collapsed = ls_schema.parse(ls.get(ls_key));
     if (private_messages_collapsed) {

@@ -1717,7 +1717,6 @@ run_test("delete_message_private", ({override}) => {
     override(emoji_frequency, "update_emoji_frequency_on_messages_deletion", noop);
     override(message_events, "remove_messages", noop);
 
-    override(pm_list, "invalidate_message_previews", () => false);
     const maybe_remove_stub = make_stub();
     override(pm_conversations.recent, "maybe_remove", maybe_remove_stub.f);
     const update_private_messages_stub = make_stub();
@@ -1744,18 +1743,10 @@ run_test("delete_message_private_not_cached", ({override}) => {
     override(message_events, "remove_messages", noop);
 
     const refresh = make_stub();
-    override(pm_list, "update_private_messages", refresh.f);
+    override(pm_list, "update_private_messages", refresh.f, {unused: false});
     const event = {type: "delete_message", message_type: "private", message_ids: [99999]};
-    let previews_changed = false;
-    override(pm_list, "invalidate_message_previews", (ids) => {
-        assert.deepEqual(ids, new Set(event.message_ids));
-        return previews_changed;
-    });
     dispatch(event);
     assert.equal(refresh.num_calls, 0);
-    previews_changed = true;
-    dispatch(event);
-    assert.equal(refresh.num_calls, 1);
 });
 
 run_test("user_status", ({override}) => {

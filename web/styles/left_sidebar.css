@@ -2165,27 +2165,13 @@ li.active-sub-filter {
     padding: 0 var(--left-sidebar-before-unread-count-padding) 0 0;
 }
 
-.conversation-partners-list,
-.dm-message-preview {
+.conversation-partners-list {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     padding-inline-end: var(--left-sidebar-before-unread-count-padding);
-}
-
-.conversation-partners-list {
     line-height: var(--line-height-sidebar-topic-inner);
-}
-
-.dm-message-preview {
-    font-size: 0.75em;
-    line-height: 1.4;
-}
-
-#direct-messages-list .dm-box:has(.dm-message-preview) {
-    block-size: auto;
-    padding-block: 0.125em;
 }
 
 /*
