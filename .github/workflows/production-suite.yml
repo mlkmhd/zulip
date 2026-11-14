@@ -385,7 +385,7 @@ jobs:
         with:
           name: production-tarball
 
-      - name: Publish release with tarball and checksum
+      - name: Publish release with tarball, checksum, and screenshots
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -443,7 +443,9 @@ jobs:
                   --title "Zulip Server $RELEASE_VERSION (mlkmhd fork)" \
                   --notes-file release-notes.md --generate-notes
           fi
-          gh release upload "$RELEASE_VERSION" "$tarball" SHA256SUMS --clobber
+          shopt -s nullglob
+          screenshots=("docs/releases/$RELEASE_VERSION/"*.png)
+          gh release upload "$RELEASE_VERSION" "$tarball" SHA256SUMS "${screenshots[@]}" --clobber
           gh release edit "$RELEASE_VERSION" --draft=false
 
   required-jobs:
