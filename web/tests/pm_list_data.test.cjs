@@ -309,8 +309,282 @@ test("get_conversations includes older read conversations", ({override}) => {
     const conversations = pm_list_data.get_conversations();
     assert.equal(conversations.length, 10);
     assert.equal(conversations.at(-1).recipients, "Alice");
+    assert.equal(pm_list_data.get_list_info(false).conversations_to_be_shown.length, 8);
+    assert.equal(pm_list_data.get_list_info(true).conversations_to_be_shown.length, 10);
+    pm_conversations.recent.set_pinned([alice.user_id], true);
+    const visible = pm_list_data.get_list_info(false).conversations_to_be_shown;
+    assert.equal(visible[0].recipients, "Alice");
+    assert.equal(visible[0].is_pinned, true);
+    pm_conversations.recent.set_pinned([alice.user_id], false);
     assert.deepEqual(
         pm_list_data.get_conversations("Alice").map((conversation) => conversation.recipients),
         ["Alice, Cardelio", "Alice, Bob", "Alice"],
     );
+});
+
+function check_list_info(list, length, more_unread, recipients_array) {
+    assert.deepEqual(list.conversations_to_be_shown.length, length);
+    assert.deepEqual(list.more_conversations_unread_count, more_unread);
+    assert.deepEqual(
+        list.conversations_to_be_shown.map((conversation) => conversation.recipients),
+        recipients_array,
+    );
+}
+
+test("get_list_info_unread_messages", ({override}) => {
+    let list_info;
+    assert.equal(narrow_state.filter(), undefined);
+
+    // Initialize an empty list to start.
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 0, 0, []);
+
+    // Mock to arrange that each user has exactly 1 unread.
+    override(unread, "num_unread_for_user_ids_string", () => 1);
+
+    // Initially, append 2 conversations and check for the
+    // `conversations_to_be_shown` returned in list_info.
+    pm_conversations.recent.insert([alice.user_id], 1);
+    pm_conversations.recent.insert([me.user_id], 2);
+
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 2, 0, ["translated: Saved Messages", "Alice"]);
+
+    // Visible conversations are limited to value of
+    // `max_conversations_to_show_with_unreads`.
+    // Verify that the oldest conversations are not shown and
+    // their unreads are counted in more_conversations_unread_count.
+    pm_conversations.recent.insert([bob.user_id], 3);
+    pm_conversations.recent.insert([alice.user_id, bob.user_id], 4);
+    pm_conversations.recent.insert([zoe.user_id], 5);
+    pm_conversations.recent.insert([zoe.user_id, bob.user_id], 6);
+    pm_conversations.recent.insert([zoe.user_id, alice.user_id], 7);
+    pm_conversations.recent.insert([zoe.user_id, bob.user_id, alice.user_id], 8);
+    pm_conversations.recent.insert([cardelio.user_id, zoe.user_id], 9);
+    pm_conversations.recent.insert([cardelio.user_id, bob.user_id], 10);
+    pm_conversations.recent.insert([cardelio.user_id, alice.user_id], 11);
+    pm_conversations.recent.insert([cardelio.user_id, zoe.user_id, bob.user_id], 12);
+    pm_conversations.recent.insert([cardelio.user_id, zoe.user_id, alice.user_id], 13);
+    pm_conversations.recent.insert([cardelio.user_id, bob.user_id, alice.user_id], 14);
+    pm_conversations.recent.insert([cardelio.user_id, bob.user_id, alice.user_id, zoe.user_id], 15);
+    pm_conversations.recent.insert([cardelio.user_id], 16);
+    pm_conversations.recent.insert([iago.user_id], 17);
+
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 15, 2, [
+        "Iago",
+        "Cardelio",
+        "Alice, Bob, Cardelio, Zoe",
+        "Alice, Bob, Cardelio",
+        "Alice, Cardelio, Zoe",
+        "Bob, Cardelio, Zoe",
+        "Alice, Cardelio",
+        "Bob, Cardelio",
+        "Cardelio, Zoe",
+        "Alice, Bob, Zoe",
+        "Alice, Zoe",
+        "Bob, Zoe",
+        "Zoe",
+        "Alice, Bob",
+        "Bob",
+    ]);
+
+    // Narrowing to direct messages with Alice adds older
+    // one-on-one conversation with her to the list and one
+    // unread is removed from more_conversations_unread_count.
+    set_pm_with_filter([alice.user_id]);
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 16, 1, [
+        "Iago",
+        "Cardelio",
+        "Alice, Bob, Cardelio, Zoe",
+        "Alice, Bob, Cardelio",
+        "Alice, Cardelio, Zoe",
+        "Bob, Cardelio, Zoe",
+        "Alice, Cardelio",
+        "Bob, Cardelio",
+        "Cardelio, Zoe",
+        "Alice, Bob, Zoe",
+        "Alice, Zoe",
+        "Bob, Zoe",
+        "Zoe",
+        "Alice, Bob",
+        "Bob",
+        "Alice",
+    ]);
+
+    // Zooming will show all conversations and there will
+    // be no unreads in more_conversations_unread_count.
+    list_info = pm_list_data.get_list_info(true);
+    check_list_info(list_info, 17, 0, [
+        "Iago",
+        "Cardelio",
+        "Alice, Bob, Cardelio, Zoe",
+        "Alice, Bob, Cardelio",
+        "Alice, Cardelio, Zoe",
+        "Bob, Cardelio, Zoe",
+        "Alice, Cardelio",
+        "Bob, Cardelio",
+        "Cardelio, Zoe",
+        "Alice, Bob, Zoe",
+        "Alice, Zoe",
+        "Bob, Zoe",
+        "Zoe",
+        "Alice, Bob",
+        "Bob",
+        "translated: Saved Messages",
+        "Alice",
+    ]);
+});
+
+test("get_list_info_no_unread_messages", ({override}) => {
+    let list_info;
+    override(unread, "num_unread_for_user_ids_string", () => 0);
+
+    pm_conversations.recent.insert([alice.user_id], 1);
+    pm_conversations.recent.insert([me.user_id], 2);
+    pm_conversations.recent.insert([bob.user_id], 3);
+    pm_conversations.recent.insert([zoe.user_id], 4);
+    pm_conversations.recent.insert([cardelio.user_id], 5);
+    pm_conversations.recent.insert([zoe.user_id, cardelio.user_id], 6);
+    pm_conversations.recent.insert([alice.user_id, bob.user_id], 7);
+    pm_conversations.recent.insert([zoe.user_id, bob.user_id], 8);
+    pm_conversations.recent.insert([alice.user_id, cardelio.user_id], 9);
+    pm_conversations.recent.insert([bob.user_id, cardelio.user_id], 10);
+
+    // Visible conversations are limited to value of
+    // `max_conversations_to_show`.
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 8, 0, [
+        "Bob, Cardelio",
+        "Alice, Cardelio",
+        "Bob, Zoe",
+        "Alice, Bob",
+        "Cardelio, Zoe",
+        "Cardelio",
+        "Zoe",
+        "Bob",
+    ]);
+
+    // Narrowing to direct messages with Alice adds older
+    // one-on-one conversation with her to the list.
+    set_pm_with_filter([alice.user_id]);
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 9, 0, [
+        "Bob, Cardelio",
+        "Alice, Cardelio",
+        "Bob, Zoe",
+        "Alice, Bob",
+        "Cardelio, Zoe",
+        "Cardelio",
+        "Zoe",
+        "Bob",
+        "Alice",
+    ]);
+
+    // Zooming will show all conversations.
+    list_info = pm_list_data.get_list_info(true);
+    check_list_info(list_info, 10, 0, [
+        "Bob, Cardelio",
+        "Alice, Cardelio",
+        "Bob, Zoe",
+        "Alice, Bob",
+        "Cardelio, Zoe",
+        "Cardelio",
+        "Zoe",
+        "Bob",
+        "translated: Saved Messages",
+        "Alice",
+    ]);
+});
+
+test("get_list_info_deactivated_users", ({override}) => {
+    override(unread, "num_unread_for_user_ids_string", () => 0);
+
+    // Set up recent direct message conversations.
+    pm_conversations.recent.insert([alice.user_id], 1);
+    pm_conversations.recent.insert([me.user_id], 2);
+    pm_conversations.recent.insert([bob.user_id], 3);
+    pm_conversations.recent.insert([zoe.user_id], 4);
+    pm_conversations.recent.insert([cardelio.user_id], 5);
+
+    // Deactivate Bob.
+    const bob_from_people = people.get_by_user_id(bob.user_id);
+    people.deactivate(bob_from_people);
+
+    // When only 5 direct message conversations are present
+    // and Bob is deactivated, we should show only 4.
+    let list_info = pm_list_data.get_list_info(false);
+    // Verify that Bob (deactivated) is not included.
+    check_list_info(list_info, 4, 0, ["Cardelio", "Zoe", "translated: Saved Messages", "Alice"]);
+
+    // Set up more conversations than max_conversations_to_show
+    // (which is 8), including one recent group conversation that
+    // involves Bob who has been deactivated.
+    pm_conversations.recent.insert([zoe.user_id, cardelio.user_id], 6);
+    pm_conversations.recent.insert([bob.user_id, cardelio.user_id], 7);
+    pm_conversations.recent.insert([alice.user_id, iago.user_id], 8);
+    pm_conversations.recent.insert([alice.user_id, cardelio.user_id], 9);
+    pm_conversations.recent.insert([zoe.user_id, iago.user_id], 10);
+    pm_conversations.recent.insert([iago.user_id], 11);
+    pm_conversations.recent.insert([alice.user_id, zoe.user_id], 12);
+    pm_conversations.recent.insert([cardelio.user_id, iago.user_id], 13);
+
+    // There are 13 total conversations, 2 involve Bob and are excluded.
+    // From the remaining 11 conversantions latest 8 are included.
+    list_info = pm_list_data.get_list_info(false);
+    // Verify that Bob (deactivated) is not included.
+    check_list_info(list_info, 8, 0, [
+        "Cardelio, Iago",
+        "Alice, Zoe",
+        "Iago",
+        "Iago, Zoe",
+        "Alice, Cardelio",
+        "Alice, Iago",
+        "Cardelio, Zoe",
+        "Cardelio",
+    ]);
+
+    // Zooming in should reveal all direct message conversations including
+    // the conversations with Bob.
+    list_info = pm_list_data.get_list_info(true);
+    check_list_info(list_info, 13, 0, [
+        "Cardelio, Iago",
+        "Alice, Zoe",
+        "Iago",
+        "Iago, Zoe",
+        "Alice, Cardelio",
+        "Alice, Iago",
+        "Bob, Cardelio",
+        "Cardelio, Zoe",
+        "Cardelio",
+        "Zoe",
+        "Bob",
+        "translated: Saved Messages",
+        "Alice",
+    ]);
+
+    override(unread, "num_unread_for_user_ids_string", () => 1);
+
+    // Verify that with unread messages, conversations with Bob
+    // (deactivated) are shown in the unzoomed case.
+    list_info = pm_list_data.get_list_info(false);
+    check_list_info(list_info, 13, 0, [
+        "Cardelio, Iago",
+        "Alice, Zoe",
+        "Iago",
+        "Iago, Zoe",
+        "Alice, Cardelio",
+        "Alice, Iago",
+        "Bob, Cardelio",
+        "Cardelio, Zoe",
+        "Cardelio",
+        "Zoe",
+        "Bob",
+        "translated: Saved Messages",
+        "Alice",
+    ]);
+
+    // Reactivate Bob to not affect other tests.
+    people.add_active_user(bob);
 });

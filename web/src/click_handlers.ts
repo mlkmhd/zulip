@@ -990,11 +990,47 @@ export function initialize(): void {
 
         e.preventDefault();
         e.stopPropagation();
+        const $left_sidebar_scrollbar = $(
+            "#left_sidebar_scroll_container .simplebar-content-wrapper",
+        );
+        const scroll_position = $left_sidebar_scrollbar.scrollTop();
+
         if (stream_list.is_zoomed_in()) {
             stream_list.zoom_out();
         }
 
-        pm_list.toggle_private_messages_section();
+        // This next bit of logic is a bit subtle; this header
+        // button scrolls to the top of the direct messages
+        // section is uncollapsed but out of view; otherwise, we
+        // toggle its collapsed state.
+        if (scroll_position === 0 || pm_list.is_private_messages_collapsed()) {
+            pm_list.toggle_private_messages_section();
+        }
+        $left_sidebar_scrollbar.scrollTop(0);
+    });
+
+    $("body").on("click", "#show-more-direct-messages", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        stream_list.zoom_out();
+        pm_list.zoom_in();
+    });
+
+    /* The DIRECT MESSAGES label's click behavior is complicated;
+     * only when zoomed in does it have a navigation effect, so we need
+     * this click handler rather than just a link. */
+    $("body").on("click", "#direct-messages-modal-section-header", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        window.location.hash = "narrow/is/dm";
+    });
+
+    $("body").on("click", ".direct-messages-search-section", (e) => {
+        // We don't want clicking on the filter to trigger the DM
+        // narrow defined on click for
+        // `#direct-messages-modal-section-header`.
+        e.stopPropagation();
     });
 
     // disable the draggability for left-sidebar components

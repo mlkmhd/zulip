@@ -826,7 +826,9 @@ function handle_left_sidebar_arrow_navigation(e: JQuery.KeyDownEvent): void {
 
     // Search inputs have their own arrow key handlers.
     const $active = $(document.activeElement);
-    if ($active.is(".left-sidebar-search-input, #topic_filter_query")) {
+    if (
+        $active.is(".left-sidebar-search-input, .direct-messages-list-filter, #topic_filter_query")
+    ) {
         return;
     }
 
@@ -862,6 +864,13 @@ function handle_left_sidebar_arrow_navigation(e: JQuery.KeyDownEvent): void {
 function focus_left_sidebar_filter(e: JQuery.ClickEvent): void {
     left_sidebar_cursor.reset();
     e.stopPropagation();
+}
+
+export function focus_pm_search_filter(): void {
+    popovers.hide_all();
+    show_left_sidebar();
+    const $filter = $(".direct-messages-list-filter").expectOne();
+    $filter.trigger("focus");
 }
 
 export function set_event_handlers(): void {

@@ -190,6 +190,10 @@ export function initialize(): void {
     tippy.delegate("body", {
         target: ".dm-tooltip-target",
         onShow(instance) {
+            if (!$("#direct-messages-modal").hasClass("no-display")) {
+                return false;
+            }
+
             observe_toggle_class(instance, () => {
                 if ($("#toggle-direct-messages-section-icon").hasClass("rotate-icon-down")) {
                     instance.setContent($t({defaultMessage: "Collapse direct messages"}));

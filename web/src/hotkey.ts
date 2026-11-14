@@ -46,6 +46,7 @@ import * as navigate from "./navigate.ts";
 import * as overlays from "./overlays.ts";
 import {page_params} from "./page_params.ts";
 import * as playground_links_popover from "./playground_links_popover.ts";
+import * as pm_list from "./pm_list.ts";
 import * as popover_menus from "./popover_menus.ts";
 import * as popover_menus_data from "./popover_menus_data.ts";
 import * as popovers from "./popovers.ts";
@@ -498,6 +499,11 @@ function process_escape_key(e: JQuery.KeyDownEvent): boolean {
             return true;
         }
 
+        if (pm_list.is_zoomed_in() && $(".direct-messages-list-filter").is(":focus")) {
+            pm_list.clear_search();
+            return true;
+        }
+
         if (compose_state.composing()) {
             // Check if the GIF picker popover was open using compose box.
             // Hide GIF picker popover if it's open.
@@ -533,6 +539,11 @@ function process_escape_key(e: JQuery.KeyDownEvent): boolean {
 
     if (compose_state.composing()) {
         compose_actions.cancel();
+        return true;
+    }
+
+    if (pm_list.is_zoomed_in()) {
+        pm_list.zoom_out();
         return true;
     }
 
@@ -1173,7 +1184,9 @@ function process_hotkey(e: JQuery.KeyDownEvent, hotkey: Hotkey): boolean {
             );
             return true;
         case "query_streams":
-            if (stream_list.is_zoomed_in()) {
+            if (pm_list.is_zoomed_in()) {
+                sidebar_ui.focus_pm_search_filter();
+            } else if (stream_list.is_zoomed_in()) {
                 sidebar_ui.focus_topic_search_filter();
             } else {
                 sidebar_ui.initiate_search();

@@ -14,6 +14,8 @@ run_test("update_dom_with_unread_counts", () => {
     const $total_count = $.create("total-count-stub");
     const $dm_li = $("#direct-messages-section-header");
     $dm_li.set_find_results(".unread_count", $total_count);
+    const $modal_count = $.create("modal-count-stub");
+    $("#direct-messages-modal-section-header").set_find_results(".unread_count", $modal_count);
 
     counts = {
         direct_message_count: 10,
@@ -21,6 +23,7 @@ run_test("update_dom_with_unread_counts", () => {
 
     pm_list.set_count(counts.direct_message_count);
     assert.equal($total_count.text(), "10");
+    assert.equal($modal_count.text(), "10");
     assert.equal($total_count.hasClass("hide"), false);
 
     counts = {
@@ -29,5 +32,6 @@ run_test("update_dom_with_unread_counts", () => {
 
     pm_list.set_count(counts.direct_message_count);
     assert.equal($total_count.text(), "");
+    assert.equal($modal_count.text(), "");
     assert.equal($total_count.hasClass("hide"), true);
 });

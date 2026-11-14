@@ -26,6 +26,7 @@ import type {Message} from "./message_store.ts";
 import * as mouse_drag from "./mouse_drag.ts";
 import * as narrow_state from "./narrow_state.ts";
 import {page_params} from "./page_params.ts";
+import * as pm_list from "./pm_list.ts";
 import * as popovers from "./popovers.ts";
 import * as scroll_util from "./scroll_util.ts";
 import {web_channel_default_view_values} from "./settings_config.ts";
@@ -155,6 +156,7 @@ export function update_streams_sidebar_for_messages(messages: Message[]): void {
 }
 
 export let show_channel_topics_panel = function (stream_id: number): void {
+    pm_list.zoom_out();
     zoomed_in = true;
     $("body").removeClass("channel-topics-panel-closing");
     popovers.hide_all();
@@ -169,6 +171,7 @@ export function rewire_show_channel_topics_panel(value: typeof show_channel_topi
 }
 
 export function zoom_out(): void {
+    pm_list.zoom_out();
     zoomed_in = false;
     popovers.hide_all();
     topic_list.zoom_out();

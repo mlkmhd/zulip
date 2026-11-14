@@ -2,14 +2,18 @@ import {$} from "jquery";
 import _ from "lodash";
 import * as z from "zod/mini";
 
+import * as blueslip from "./blueslip.ts";
 import * as channel from "./channel.ts";
 import type {Filter} from "./filter.ts";
 import {$t} from "./i18n.ts";
+import * as keydown_util from "./keydown_util.ts";
+import {ListCursor} from "./list_cursor.ts";
 import {localstorage} from "./localstorage.ts";
 import * as mouse_drag from "./mouse_drag.ts";
 import * as people from "./people.ts";
 import * as pm_conversations from "./pm_conversations.ts";
 import * as pm_list_data from "./pm_list_data.ts";
+import type {DisplayObject} from "./pm_list_data.ts";
 import * as pm_list_dom from "./pm_list_dom.ts";
 import type {PMNode} from "./pm_list_dom.ts";
 import * as resize from "./resize.ts";
@@ -30,24 +34,119 @@ const ls_key = "left_sidebar_direct_messages_collapsed_state";
 const ls_schema = z._default(z.boolean(), false);
 const ls = localstorage();
 let private_messages_collapsed = false;
+let temporarily_collapsed = false;
 let last_direct_message_count: number | undefined;
+
+// The direct messages section can be zoomed in to view more messages.
+// This keeps track of if we're zoomed in or not.
+let zoomed = false;
+
+// Limits reporting in update_private_messages to once per page load.
+let reported_zoomed_render_with_hidden_modal = false;
+
+// Scroll position before user started searching.
+let pre_search_scroll_position = 0;
+let previous_search_term = "";
+
+export function is_zoomed_in(): boolean {
+    return zoomed;
+}
+
+let dm_list_cursor: ListCursor<JQuery>;
+
+function get_dm_items(): JQuery {
+    return scroll_util
+        .get_content_element($("#modal-direct-messages-list"))
+        .find("li.dm-list-item");
+}
+
+function reset_dm_list_cursor({show_highlight}: {show_highlight: boolean}): void {
+    dm_list_cursor.set_is_highlight_visible(show_highlight);
+    dm_list_cursor.reset();
+}
+
+function initialize_dm_list_cursor(): void {
+    dm_list_cursor = new ListCursor({
+        highlight_class: "highlighted_row",
+        list: {
+            scroll_container_selector: "#modal-direct-messages-list",
+            find_li(opts) {
+                return opts.key;
+            },
+            first_key() {
+                const $items = get_dm_items();
+                if ($items.length === 0) {
+                    return undefined;
+                }
+                return $items.first();
+            },
+            prev_key($key) {
+                const $prev = $key.prev("li.dm-list-item");
+                if ($prev.length === 0) {
+                    return $key;
+                }
+                return $prev;
+            },
+            next_key($key) {
+                const $next = $key.next("li.dm-list-item");
+                if ($next.length === 0) {
+                    return $key;
+                }
+                return $next;
+            },
+        },
+    });
+}
 
 function get_private_messages_section_header(): JQuery {
     return $("#direct-messages-section-header");
 }
 
+function get_private_messages_modal_section_header(): JQuery {
+    return $("#direct-messages-modal-section-header");
+}
+
 export function set_count(count: number): void {
     ui_util.update_unread_count_in_dom(get_private_messages_section_header(), count);
+    ui_util.update_unread_count_in_dom(get_private_messages_modal_section_header(), count);
 }
 
 export function close(): void {
     private_messages_collapsed = true;
+    set_temporarily_collapsed(false);
     ls.set(ls_key, private_messages_collapsed);
     update_private_messages();
 }
 
-function set_dom_to(new_dom: vdom.Tag<PMNode>): void {
-    const $container = $("#direct-messages-list");
+export function set_temporarily_collapsed(value: boolean): void {
+    temporarily_collapsed = value;
+}
+
+export function _build_direct_messages_list(opts: {
+    all_conversations_shown: boolean;
+    conversations_to_be_shown: DisplayObject[];
+    search_term: string;
+}): vdom.Tag<PMNode> {
+    const pm_list_nodes = opts.conversations_to_be_shown.map((conversation) =>
+        pm_list_dom.keyed_pm_li(conversation),
+    );
+    const pm_list_info = pm_list_data.get_list_info(zoomed, opts.search_term);
+    const more_conversations_unread_count = pm_list_info.more_conversations_unread_count;
+
+    if (!opts.all_conversations_shown) {
+        pm_list_nodes.push(
+            pm_list_dom.more_private_conversations_li(more_conversations_unread_count),
+        );
+    }
+    const dom_ast = pm_list_dom.pm_ul(pm_list_nodes);
+
+    return dom_ast;
+}
+
+function set_dom_to(new_dom: vdom.Tag<PMNode>, for_modal: boolean): void {
+    const $container = for_modal
+        ? scroll_util.get_content_element($("#modal-direct-messages-list"))
+        : scroll_util.get_content_element($("#direct-messages-list"));
 
     function replace_content(html: string): void {
         $container.html(html);
@@ -73,32 +172,86 @@ function set_dom_to(new_dom: vdom.Tag<PMNode>): void {
 }
 
 export function update_private_messages(): void {
+    if (
+        zoomed &&
+        !reported_zoomed_render_with_hidden_modal &&
+        $("#direct-messages-modal").hasClass("no-display")
+    ) {
+        // This render targets the zoomed modal, but the modal isn't
+        // visible, so the sidebar list the user sees will go stale.
+        // No known code path reaches this state; report it so that
+        // error reports can identify any path that does.
+        reported_zoomed_render_with_hidden_modal = true;
+        blueslip.error("Rendering zoomed DM list while its modal is hidden");
+    }
+
     const is_left_sidebar_search_active = ui_util.get_left_sidebar_search_term() !== "";
     const is_dm_section_expanded = is_left_sidebar_search_active || !private_messages_collapsed;
-    $("#toggle-direct-messages-section-icon")
-        .toggleClass("rotate-icon-down", is_dm_section_expanded)
-        .toggleClass("rotate-icon-right", !is_dm_section_expanded);
+    if (!temporarily_collapsed) {
+        $("#toggle-direct-messages-section-icon").toggleClass(
+            "rotate-icon-down",
+            is_dm_section_expanded,
+        );
+        $("#toggle-direct-messages-section-icon").toggleClass(
+            "rotate-icon-right",
+            !is_dm_section_expanded,
+        );
+    }
 
-    let search_term = ui_util.get_left_sidebar_search_term();
-    if (util.prefix_match({value: LEFT_SIDEBAR_DIRECT_MESSAGES_TITLE, search_term})) {
-        search_term = "";
+    let search_term = "";
+    if (zoomed) {
+        const $filter = $<HTMLInputElement>(".direct-messages-list-filter").expectOne();
+        search_term = $filter.val()!;
+    } else if (is_left_sidebar_search_active) {
+        search_term = ui_util.get_left_sidebar_search_term();
+        if (util.prefix_match({value: LEFT_SIDEBAR_DIRECT_MESSAGES_TITLE, search_term})) {
+            // Show all DMs if the search term matches the header text.
+            search_term = "";
+        }
     }
 
     const conversations = pm_list_data.get_conversations(search_term);
-    const is_header_visible = conversations.length > 0 || !search_term;
+    const pm_list_info = pm_list_data.get_list_info(zoomed, search_term);
+    const conversations_to_be_shown = pm_list_info.conversations_to_be_shown;
+
+    const all_conversations_shown = conversations_to_be_shown.length === conversations.length;
+    const is_header_visible =
+        // Always show header when zoomed in.
+        zoomed ||
+        // Show header if there are conversations to be shown.
+        conversations_to_be_shown.length > 0 ||
+        // Show header if there are hidden conversations somehow.
+        !all_conversations_shown ||
+        // If there is no search term, always show the header.
+        !search_term;
     $("#left-sidebar").toggleClass("direct-messages-hidden-by-filters", !is_header_visible);
 
-    // Keep the selected conversation highlighted when the section is collapsed.
-    const visible_conversations = is_dm_section_expanded
-        ? conversations
-        : conversations.filter((conversation) => conversation.is_active);
-    const nodes = visible_conversations.map((conversation) => {
-        const key = conversation.user_ids_string;
-        const can_pin =
-            (pm_conversations.recent.recent_message_ids.get(key)?.max_message_id ?? -1) > 0;
-        return pm_list_dom.keyed_pm_li({...conversation, can_pin});
-    });
-    set_dom_to(pm_list_dom.pm_ul(nodes));
+    if (!is_dm_section_expanded) {
+        // In the collapsed state, we will still display the current
+        // conversation, to preserve the UI invariant that there's
+        // always something highlighted in the left sidebar.
+        const all_conversations = pm_list_data.get_conversations();
+        const active_conversation = all_conversations.find(
+            (conversation) => conversation.is_active,
+        );
+
+        if (active_conversation) {
+            const node = [pm_list_dom.keyed_pm_li(active_conversation)];
+            const new_dom = pm_list_dom.pm_ul(node);
+            set_dom_to(new_dom, zoomed);
+        } else {
+            // Otherwise, empty the section.
+            $(".dm-list").empty();
+            prior_dom = undefined;
+        }
+    } else {
+        const new_dom = _build_direct_messages_list({
+            all_conversations_shown,
+            conversations_to_be_shown,
+            search_term,
+        });
+        set_dom_to(new_dom, zoomed);
+    }
     // Make sure to update the left sidebar heights after updating
     // direct messages.
     setTimeout(resize.resize_stream_filters_container, 0);
@@ -106,6 +259,7 @@ export function update_private_messages(): void {
 
 export function expand(): void {
     private_messages_collapsed = false;
+    set_temporarily_collapsed(false);
     ls.set(ls_key, private_messages_collapsed);
     update_private_messages();
 }
@@ -216,7 +370,9 @@ export function handle_narrow_activated(filter: Filter): void {
         // top, but empirically that doesn't occur, so we just ensure the
         // section is expanded before scrolling.
         expand();
-        highlight_all_private_messages_view();
+        if (!zoomed) {
+            highlight_all_private_messages_view();
+        }
         scroll_all_private_into_view();
     } else {
         unhighlight_all_private_messages_view();
@@ -256,6 +412,43 @@ export function toggle_private_messages_section(): void {
     }
 }
 
+export function zoom_in(): void {
+    prior_dom = undefined;
+    zoomed = true;
+    previous_search_term = "";
+    pre_search_scroll_position = 0;
+    $("#left-sidebar").addClass("zoom-in");
+    $("#left-sidebar").addClass("zoom-in-conversations");
+    $("#direct-messages-modal").toggleClass("no-display", false);
+    ui_util.disable_left_sidebar_search();
+    update_private_messages();
+
+    const $filter = $(".direct-messages-list-filter").expectOne();
+    $filter.trigger("focus");
+}
+
+export function zoom_out(): void {
+    if (!zoomed) {
+        return;
+    }
+    zoomed = false;
+    prior_dom = undefined;
+    dm_list_cursor.clear();
+    ui_util.enable_left_sidebar_search();
+    clear_search();
+    $("#left-sidebar").removeClass("zoom-in");
+    $("#left-sidebar").removeClass("zoom-in-conversations");
+    $("#direct-messages-modal").toggleClass("no-display", true);
+}
+
+export function clear_search(): void {
+    const $filter = $(".direct-messages-list-filter").expectOne();
+    dm_list_cursor.set_is_highlight_visible(false);
+    $filter.val("");
+    update_private_messages();
+    $filter.trigger("blur");
+}
+
 export function initialize(): void {
     // Restore collapsed status.
     private_messages_collapsed = ls_schema.parse(ls.get(ls_key));
@@ -265,14 +458,52 @@ export function initialize(): void {
         expand();
     }
 
-    $("#direct-messages-list").on("click", ".dm-box", (e) => {
+    initialize_dm_list_cursor();
+
+    const $filter = $(".direct-messages-list-filter").expectOne();
+    $filter.on("focus", () => {
+        reset_dm_list_cursor({show_highlight: $filter.val() !== ""});
+    });
+    $filter.on("blur", () => {
+        dm_list_cursor.clear();
+    });
+    keydown_util.handle({
+        $elem: $filter,
+        handlers: {
+            ArrowUp() {
+                dm_list_cursor.prev();
+                return true;
+            },
+            ArrowDown() {
+                dm_list_cursor.next();
+                return true;
+            },
+            Enter() {
+                const $current_row = dm_list_cursor.get_key();
+                if ($current_row === undefined) {
+                    // This can happen for empty searches, no need to warn.
+                    return false;
+                }
+                // If the row has a link, we click it.
+                const $nearest_link = $current_row.find("a").first();
+                if ($nearest_link.length > 0) {
+                    $nearest_link[0]!.click();
+                    return true;
+                }
+                // If the row does not have a link, let the browser handle it.
+                return false;
+            },
+        },
+    });
+
+    $("body").on("click", ".dm-list .dm-box", (e) => {
         // To avoid the click behavior if a dm box is selected.
         if (mouse_drag.is_drag(e)) {
             e.preventDefault();
         }
     });
 
-    $("#direct-messages-list").on("click", ".dm-pin-button", function (this: HTMLElement) {
+    $("body").on("click", ".dm-list .dm-pin-button", function (this: HTMLElement) {
         const user_ids_string = this.closest(".dm-list-item")?.getAttribute("data-user-ids-string");
         if (user_ids_string === null || user_ids_string === undefined) {
             return;
@@ -288,6 +519,57 @@ export function initialize(): void {
                 pinned: JSON.stringify(!pm_conversations.recent.is_pinned(user_ids_string)),
             },
         });
+    });
+
+    $("body").on("click", ".zoom-in-conversations .left-sidebar-modal-close-area", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        zoom_out();
+    });
+
+    $("body").on("keydown", ".zoom-in-conversations .left-sidebar-modal-close-area", (e) => {
+        if (!keydown_util.is_enter_event(e)) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        zoom_out();
+    });
+
+    const throttled_update_private_message = _.throttle(() => {
+        const $filter = $<HTMLInputElement>(".direct-messages-list-filter").expectOne();
+        const search_term = $filter.val()!;
+        const is_previous_search_term_empty = previous_search_term === "";
+        previous_search_term = search_term;
+
+        const left_sidebar_scroll_container = scroll_util.get_left_sidebar_scroll_container();
+        if (search_term === "") {
+            requestAnimationFrame(() => {
+                update_private_messages();
+                // Restore previous scroll position.
+                left_sidebar_scroll_container.scrollTop(pre_search_scroll_position);
+                reset_dm_list_cursor({show_highlight: false});
+            });
+        } else {
+            if (is_previous_search_term_empty) {
+                // Store original scroll position to be restored later.
+                pre_search_scroll_position = left_sidebar_scroll_container.scrollTop()!;
+            }
+            requestAnimationFrame(() => {
+                update_private_messages();
+                // Always scroll to top when there is a search term present.
+                left_sidebar_scroll_container.scrollTop(0);
+                reset_dm_list_cursor({show_highlight: true});
+            });
+        }
+    }, 50);
+
+    $(".direct-messages-container").on("input", ".direct-messages-list-filter", (e) => {
+        e.preventDefault();
+
+        throttled_update_private_message();
     });
 
     $(".direct-messages-container").on("mouseenter", () => {
