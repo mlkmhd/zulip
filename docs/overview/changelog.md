@@ -187,9 +187,6 @@ _Released 2026-10-30_
 - Fixed the Azure DevOps, Linear, OpenProject, Redmine, and RhodeCode
   integrations ignoring the `only_events` and `exclude_events` event
   filters.
-- Fixed the Azure DevOps, Linear, OpenProject, Redmine, and RhodeCode
-  integrations ignoring the `only_events` and `exclude_events` event
-  filters.
 - Improved the Slack data import tool: each thread's first message now
   stays in the channel's main topic, with a link to the thread's own
   topic, and thread topic names are cleaner.
