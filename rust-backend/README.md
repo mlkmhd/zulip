@@ -39,6 +39,19 @@ to try the same path there. If you enable it without installing the extension,
 Python reports the import error instead of silently running the old code.
 Unset the variable to switch back.
 
+`ZULIP_RUST_ALERT_WORDS=1` selects the Rust implementation for trimming and
+deduplicating additions through `POST /api/v1/users/me/alert_words` and its
+web app equivalent. Django still handles HTTP validation, transactions,
+cache invalidation, and events. The extension uses Python's Unicode lowercase
+rules so existing words are matched the same way during the transition.
+
+Run the existing alert-word and event tests in both modes:
+
+```sh
+ZULIP_RUST_ALERT_WORDS=0 ./tools/test-backend zerver.tests.test_alert_words zerver.tests.test_events.NormalActionsTest.test_alert_words_events
+ZULIP_RUST_ALERT_WORDS=1 ./tools/test-backend zerver.tests.test_alert_words zerver.tests.test_events.NormalActionsTest.test_alert_words_events
+```
+
 ## Migration sequence
 
 1. Port backend logic that does not depend on services. For each component,

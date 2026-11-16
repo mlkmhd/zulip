@@ -1,3 +1,5 @@
+import os
+from importlib import import_module
 from typing import Annotated
 
 from django.http import HttpRequest, HttpResponse
@@ -17,6 +19,10 @@ def list_alert_words(request: HttpRequest, user_profile: UserProfile) -> HttpRes
 def clean_alert_words(alert_words: list[str]) -> list[str]:
     alert_words = [w.strip() for w in alert_words]
     return [w for w in alert_words if w != ""]
+
+
+if os.environ.get("ZULIP_RUST_ALERT_WORDS") == "1":
+    clean_alert_words = import_module("_zulip_backend").clean_alert_words
 
 
 @typed_endpoint

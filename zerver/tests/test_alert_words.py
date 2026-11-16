@@ -172,6 +172,23 @@ class AlertWordTests(ZulipTestCase):
         response_dict = self.assert_json_success(result)
         self.assertEqual(set(response_dict["alert_words"]), {"two", "three"})
 
+    def test_api_add_normalizes_and_deduplicates_alert_words(self) -> None:
+        user = self.get_user()
+        do_add_alert_words(user, ["Keep"])
+
+        result = self.api_post(
+            user,
+            "/api/v1/users/me/alert_words",
+            {
+                "alert_words": orjson.dumps(
+                    ["KEEP", "\u00a0tea\u2003", "\u001c", "cake", "TEA"]
+                ).decode()
+            },
+        )
+        response = self.assert_json_success(result)
+        self.assertCountEqual(response["alert_words"], ["Keep", "TEA", "cake"])
+        self.assertCountEqual(user_alert_words(user), ["Keep", "TEA", "cake"])
+
     def message_does_alert(self, user: UserProfile, message: str) -> bool:
         """Send a bunch of messages as othello, so our user is notified"""
         self.send_stream_message(self.example_user("othello"), "Denmark", message)
