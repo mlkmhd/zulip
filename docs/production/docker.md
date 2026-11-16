@@ -24,7 +24,7 @@ operational topics, see the {doc}`Docker documentation
 
 ## Publishing this fork's image
 
-The `Publish Zulip Docker image` GitHub Actions workflow in `mlkmhd/zulip`
+The `Publish Zulip Docker image` GitHub Actions workflow in `mlkmhd/zulip-gold`
 builds this fork with the production Dockerfile and startup scripts from a
 pinned revision of [zulip/docker-zulip](https://github.com/zulip/docker-zulip).
 It builds the exact source commit selected for the workflow, including the

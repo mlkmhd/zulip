@@ -1,8 +1,10 @@
 # Zulip Gold
 
+<img src="static/images/logo/zulip-icon-128x128.png" alt="Zulip Gold logo" width="64" height="64">
+
 A fork of [Zulip](https://github.com/zulip/zulip) with a redesigned web interface, more control over regional display settings, and new options for channel pictures and reaction notifications.
 
-[![The modern Zulip web interface in dark mode, with a custom channel picture, incoming and outgoing message bubbles, and emoji reactions](https://cdn.jsdelivr.net/gh/mlkmhd/zulip@069da2c142856b5fdfc139f3e140cc245e1fd3e1/docs/_static/zulip-fork-dark.png)](https://github.com/mlkmhd/zulip/blob/main/docs/_static/zulip-fork-dark.png)
+[![The modern Zulip web interface in dark mode, with a custom channel picture, incoming and outgoing message bubbles, and emoji reactions](docs/_static/zulip-fork-dark.png)](docs/_static/zulip-fork-dark.png)
 
 _The Modern interface in dark mode, showing a sample launch-planning conversation._
 
@@ -19,8 +21,8 @@ _The Modern interface in dark mode, showing a sample launch-planning conversatio
 
 ## Getting started
 
-- **Use this fork**. Start with the [fork’s releases](https://github.com/mlkmhd/zulip/releases).
+- **Use this fork**. Start with the [fork’s releases](https://github.com/mlkmhd/zulip-gold/releases).
 - **Develop locally**. Follow Zulip’s [development setup guide](https://zulip.readthedocs.io/en/latest/development/overview.html) from a checkout of this fork.
 - **Learn about upstream Zulip**. See the [official repository](https://github.com/zulip/zulip) and [self-hosting documentation](https://zulip.com/self-hosting/).
 
-Zulip and this fork are distributed under the [Apache 2.0 license](https://github.com/mlkmhd/zulip/blob/main/LICENSE).
+Zulip and this fork are distributed under the [Apache 2.0 license](LICENSE).

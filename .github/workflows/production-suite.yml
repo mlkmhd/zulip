@@ -104,7 +104,7 @@ jobs:
 
       - name: Identify release tag
         id: release_version
-        if: github.repository == 'mlkmhd/zulip' && github.ref_type == 'tag' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        if: github.repository == 'mlkmhd/zulip-gold' && github.ref_type == 'tag' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -356,7 +356,7 @@ jobs:
   publish_docker:
     name: Publish release Docker image
     needs: [production_build, production_install, production_upgrade]
-    if: github.repository == 'mlkmhd/zulip' && needs.production_build.outputs.release_version != ''
+    if: github.repository == 'mlkmhd/zulip-gold' && needs.production_build.outputs.release_version != ''
     permissions:
       contents: read
       packages: write
@@ -367,7 +367,7 @@ jobs:
   publish_release:
     name: Publish GitHub release
     needs: [production_build, publish_docker]
-    if: github.repository == 'mlkmhd/zulip' && needs.production_build.outputs.release_version != ''
+    if: github.repository == 'mlkmhd/zulip-gold' && needs.production_build.outputs.release_version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
