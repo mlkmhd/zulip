@@ -52,6 +52,15 @@ ZULIP_RUST_ALERT_WORDS=0 ./tools/test-backend zerver.tests.test_alert_words zerv
 ZULIP_RUST_ALERT_WORDS=1 ./tools/test-backend zerver.tests.test_alert_words zerver.tests.test_events.NormalActionsTest.test_alert_words_events
 ```
 
+`ZULIP_RUST_USER_STATUS=1` selects Rust for status response fields and the
+rules for missing values and clearing an emoji in the user status API.
+Django still handles permissions, emoji lookup, and database writes.
+
+```sh
+ZULIP_RUST_USER_STATUS=0 ./tools/test-backend zerver.tests.test_user_status
+ZULIP_RUST_USER_STATUS=1 ./tools/test-backend zerver.tests.test_user_status
+```
+
 ## Migration sequence
 
 1. Port backend logic that does not depend on services. For each component,

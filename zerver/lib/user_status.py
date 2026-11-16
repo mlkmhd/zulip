@@ -1,5 +1,7 @@
+import os
 from dataclasses import dataclass
-from typing import TypedDict
+from importlib import import_module
+from typing import Literal, TypedDict, cast
 
 from django.db.models import Q
 from django.utils.timezone import now as timezone_now
@@ -9,6 +11,10 @@ from zerver.lib.emoji import check_emoji_request, get_emoji_data
 from zerver.lib.exceptions import JsonableError
 from zerver.lib.users import check_user_can_access_all_users, get_accessible_user_ids
 from zerver.models import Realm, UserProfile, UserStatus
+
+_rust_user_status = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_USER_STATUS") == "1" else None
+)
 
 
 class UserInfoDict(TypedDict, total=False):
@@ -29,6 +35,18 @@ class RawUserInfoDict(TypedDict):
 
 
 def format_user_status(row: RawUserInfoDict) -> UserInfoDict:
+    if _rust_user_status is not None:
+        return cast(
+            UserInfoDict,
+            _rust_user_status.format_user_status(
+                row["user_profile__presence_enabled"],
+                row["status_text"],
+                row["emoji_name"],
+                row["emoji_code"],
+                row["reaction_type"],
+            ),
+        )
+
     # Deprecated way for clients to access the user's `presence_enabled`
     # setting, with away != presence_enabled. Can be removed when clients
     # migrate "away" (also referred to as "unavailable") feature to directly
@@ -146,6 +164,27 @@ class NewUserStatus:
     reaction_type: str | None
 
 
+def _prepare_status_update(
+    away: bool | None,
+    status_text: str | None,
+    emoji_name: str | None,
+    emoji_code: str | None,
+    emoji_type: str | None,
+) -> tuple[str | None, str | None, Literal["no_values", "missing_emoji_name"] | None]:
+    if away is None and status_text is None and emoji_name is None:
+        return None, None, "no_values"
+    if emoji_name == "":
+        # Clearing the emoji also resets its code and reaction type.
+        return "", UserStatus.UNICODE_EMOJI, None
+    if emoji_name is None and (emoji_type or emoji_code):
+        return None, None, "missing_emoji_name"
+    return emoji_code, emoji_type, None
+
+
+if _rust_user_status is not None:
+    _prepare_status_update = _rust_user_status.prepare_status_update
+
+
 def check_update_user_status(
     realm: Realm,
     *,
@@ -158,16 +197,17 @@ def check_update_user_status(
     if status_text is not None:
         status_text = status_text.strip()
 
-    if (away is None) and (status_text is None) and (emoji_name is None):
+    emoji_code, emoji_type, error = _prepare_status_update(
+        away, status_text, emoji_name, emoji_code, emoji_type
+    )
+    if error == "no_values":
         raise JsonableError(_("Client did not pass any new values."))
+    if error == "missing_emoji_name":
+        raise JsonableError(
+            _("Client must pass emoji_name if they pass either emoji_code or reaction_type.")
+        )
 
-    if emoji_name == "":
-        # Reset the emoji_code and reaction_type if emoji_name is empty.
-        # This should clear the user's configured emoji.
-        emoji_code = ""
-        emoji_type = UserStatus.UNICODE_EMOJI
-
-    elif emoji_name is not None:
+    if emoji_name:
         if emoji_code is None or emoji_type is None:
             emoji_data = get_emoji_data(realm.id, emoji_name)
             if emoji_code is None:
@@ -180,16 +220,6 @@ def check_update_user_status(
             if emoji_type is None:
                 emoji_type = emoji_data.reaction_type
 
-    elif emoji_type or emoji_code:
-        raise JsonableError(
-            _("Client must pass emoji_name if they pass either emoji_code or reaction_type.")
-        )
-
-    # If we're asking to set an emoji (not clear it ("") or not adjust
-    # it (None)), we need to verify the emoji is valid.
-    if emoji_name not in ["", None]:
-        assert emoji_code is not None
-        assert emoji_type is not None
         check_emoji_request(realm, emoji_name, emoji_code, emoji_type)
 
     return NewUserStatus(

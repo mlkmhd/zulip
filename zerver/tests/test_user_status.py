@@ -25,6 +25,33 @@ def user_status_info(user: UserProfile, acting_user: UserProfile | None = None) 
 
 
 class UserStatusTest(ZulipTestCase):
+    def test_api_clears_emoji_and_preserves_status_text(self) -> None:
+        user = self.example_user("hamlet")
+        update_url = "/api/v1/users/me/status"
+        status_url = f"/api/v1/users/{user.id}/status"
+
+        response = self.api_post(
+            user, update_url, {"status_text": " at lunch ", "emoji_name": "car"}
+        )
+        self.assert_json_success(response)
+        status = self.assert_json_success(self.api_get(user, status_url))["status"]
+        self.assertEqual(
+            status,
+            {
+                "status_text": "at lunch",
+                "emoji_name": "car",
+                "emoji_code": "1f697",
+                "reaction_type": UserStatus.UNICODE_EMOJI,
+            },
+        )
+
+        response = self.api_post(
+            user, update_url, {"emoji_name": "", "emoji_code": "1", "reaction_type": "realm_emoji"}
+        )
+        self.assert_json_success(response)
+        status = self.assert_json_success(self.api_get(user, status_url))["status"]
+        self.assertEqual(status, {"status_text": "at lunch"})
+
     def test_basics(self) -> None:
         hamlet = self.example_user("hamlet")
 
