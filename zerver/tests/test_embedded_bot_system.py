@@ -222,6 +222,32 @@ class TestEmbeddedBotStateHandler(ZulipTestCase):
         result = self.api_delete(self.user_profile, bot_storage_url)
         self.assert_json_error(result, "Must be a bot user")
 
+    @override_settings(USER_STATE_SIZE_LIMIT=4)
+    def test_bot_storage_limit_counts_unicode_code_points(self) -> None:
+        endpoint = "/api/v1/bot_storage"
+        initial_storage = {"🦀": "e\u0301🤝"}
+        result = self.api_put(
+            self.bot_profile, endpoint, {"storage": orjson.dumps(initial_storage).decode()}
+        )
+        self.assert_json_success(result)
+
+        result = self.api_put(
+            self.bot_profile, endpoint, {"storage": orjson.dumps({"🦀": "β", "名": "x界"}).decode()}
+        )
+        self.assert_json_error(
+            result, "Request exceeds storage limit by 1 characters. The limit is 4 characters."
+        )
+        result = self.api_get(self.bot_profile, endpoint)
+        self.assertEqual(self.assert_json_success(result)["storage"], initial_storage)
+
+        updated_storage = {"🦀": "β", "名": "x"}
+        result = self.api_put(
+            self.bot_profile, endpoint, {"storage": orjson.dumps(updated_storage).decode()}
+        )
+        self.assert_json_success(result)
+        result = self.api_get(self.bot_profile, endpoint)
+        self.assertEqual(self.assert_json_success(result)["storage"], updated_storage)
+
     def test_bot_storage_endpoint(self) -> None:
         bot_storage_url = "/api/v1/bot_storage"
 

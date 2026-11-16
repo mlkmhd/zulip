@@ -3,11 +3,16 @@ use std::collections::{HashMap, HashSet};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyString};
 
-use crate::{alert_words, stream_color, user_status};
+use crate::{alert_words, bot_storage, stream_color, user_status};
 
 #[pymodule]
 mod _zulip_backend {
     use super::*;
+
+    #[pyfunction]
+    fn storage_size_difference(entries: Vec<(String, String, u64)>) -> i128 {
+        bot_storage::storage_size_difference(&entries)
+    }
 
     #[pyfunction]
     fn format_user_status<'py>(

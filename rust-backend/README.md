@@ -61,6 +61,15 @@ ZULIP_RUST_USER_STATUS=0 ./tools/test-backend zerver.tests.test_user_status
 ZULIP_RUST_USER_STATUS=1 ./tools/test-backend zerver.tests.test_user_status
 ```
 
+`ZULIP_RUST_BOT_STORAGE=1` selects Rust for computing changes to a bot's
+character quota on `PUT /api/v1/bot_storage` and when embedded bots write
+data. The database reads and writes still use Django.
+
+```sh
+ZULIP_RUST_BOT_STORAGE=0 ./tools/test-backend zerver.tests.test_embedded_bot_system
+ZULIP_RUST_BOT_STORAGE=1 ./tools/test-backend zerver.tests.test_embedded_bot_system
+```
+
 ## Migration sequence
 
 1. Port backend logic that does not depend on services. For each component,

@@ -1,8 +1,15 @@
+import os
+from importlib import import_module
+
 from django.conf import settings
 from django.db.models import F, Sum
 from django.db.models.functions import Length
 
 from zerver.models import BotStorageData, UserProfile
+
+_rust_bot_storage = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_BOT_STORAGE") == "1" else None
+)
 
 
 class StateError(Exception):
@@ -35,11 +42,18 @@ def get_bot_storage_size(bot_profile: UserProfile, key: str | None = None) -> in
 
 def set_bot_storage(bot_profile: UserProfile, entries: list[tuple[str, str]]) -> None:
     storage_size_limit = settings.USER_STATE_SIZE_LIMIT
+    measured_entries: list[tuple[str, str, int]] = []
     storage_size_difference = 0
     for key, value in entries:
         assert isinstance(key, str), "Key type should be str."
         assert isinstance(value, str), "Value type should be str."
-        storage_size_difference += (len(key) + len(value)) - get_bot_storage_size(bot_profile, key)
+        previous_size = get_bot_storage_size(bot_profile, key)
+        if _rust_bot_storage is None:
+            storage_size_difference += len(key) + len(value) - previous_size
+        else:
+            measured_entries.append((key, value, previous_size))
+    if _rust_bot_storage is not None:
+        storage_size_difference = _rust_bot_storage.storage_size_difference(measured_entries)
     new_storage_size = get_bot_storage_size(bot_profile) + storage_size_difference
     if new_storage_size > storage_size_limit:
         raise StateError(
