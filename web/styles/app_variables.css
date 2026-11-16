@@ -2155,11 +2155,8 @@
     --font-weight-message-reaction: 600;
 
     /* Message feed loading indicator colors */
-    --color-zulip-logo: light-dark(
-        hsl(0deg 0% 0% / 34%),
-        hsl(0deg 0% 100% / 50%)
-    );
-    --color-zulip-logo-loading: light-dark(hsl(0deg 0% 27%), hsl(0deg 0% 100%));
+    --color-zulip-logo: light-dark(hsl(37deg 83% 33%), hsl(42deg 85% 68%));
+    --color-zulip-logo-loading: light-dark(hsl(39deg 100% 26%), hsl(42deg 85% 68%));
     --color-recent-view-loading-spinner: light-dark(
         hsl(0deg 0% 27%),
         hsl(0deg 0% 100% / 60%)

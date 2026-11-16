@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 245">
   <rect x="0" y="173" fill="#fff" width="800" height="72"/>
   <linearGradient id="a" x1="0" y1="1" x2="0" y2="0">
-    <stop offset="0" stop-color="#7876fd"/>
-    <stop offset="1" stop-color="#75a5d5"/>
+    <stop offset="0" stop-color="#795006"/>
+    <stop offset="1" stop-color="#b27813"/>
   </linearGradient>
   <g transform="translate(400 173) scale(0.10865066225165562) translate(-386.56 -386.56)">
     <circle cx="386.56" cy="386.56" r="386.56" fill="url(#a)"/>
