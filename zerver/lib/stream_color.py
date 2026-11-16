@@ -1,3 +1,6 @@
+import os
+from importlib import import_module
+
 STREAM_ASSIGNMENT_COLORS = [
     "#76ce90",
     "#fae589",
@@ -26,7 +29,7 @@ STREAM_ASSIGNMENT_COLORS = [
 ]
 
 
-def pick_colors(
+def _pick_colors_python(
     used_colors: set[str], color_map: dict[int, str], recipient_ids: list[int]
 ) -> dict[int, str]:
     used_colors = set(used_colors)
@@ -54,3 +57,8 @@ def pick_colors(
         result[recipient_id] = color
 
     return result
+
+
+pick_colors = _pick_colors_python
+if os.environ.get("ZULIP_RUST_STREAM_COLOR") == "1":
+    pick_colors = import_module("_zulip_backend").pick_colors

@@ -1,0 +1,35 @@
+name: Rust backend compatibility
+
+on:
+  push:
+    paths:
+      - ".github/workflows/rust-backend.yml"
+      - "rust-backend/**"
+      - "zerver/lib/stream_color.py"
+  pull_request:
+    paths:
+      - ".github/workflows/rust-backend.yml"
+      - "rust-backend/**"
+      - "zerver/lib/stream_color.py"
+
+permissions:
+  contents: read
+
+jobs:
+  stream-color:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run Rust tests
+        run: |
+          cargo fmt --manifest-path rust-backend/Cargo.toml --check
+          cargo test --manifest-path rust-backend/Cargo.toml --locked
+          cargo clippy --manifest-path rust-backend/Cargo.toml --all-targets --all-features --locked -- -D warnings
+      - name: Compare with Python
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zulip-rust"
+          source "$RUNNER_TEMP/zulip-rust/bin/activate"
+          python -m pip install ./rust-backend
+          ZULIP_RUST_STREAM_COLOR=1 python -m unittest discover -s rust-backend/tests

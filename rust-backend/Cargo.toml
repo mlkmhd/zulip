@@ -1,0 +1,17 @@
+[package]
+name = "zulip-backend"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "_zulip_backend"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+python = ["dep:pyo3"]
+
+[dependencies]
+pyo3 = { version = "0.30.1", features = ["abi3-py310"], optional = true }
