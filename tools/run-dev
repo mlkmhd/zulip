@@ -61,6 +61,11 @@ parser.add_argument(
 )
 parser.add_argument("--streamlined", action="store_true", help="Avoid process_queue, etc.")
 parser.add_argument(
+    "--rust-http-port",
+    type=int,
+    help="Forward the mobile compatibility API to the Rust server on this loopback port",
+)
+parser.add_argument(
     "--behind-https-proxy",
     action="store_true",
     help="Start app server in HTTPS mode, using reverse proxy",
@@ -143,6 +148,10 @@ tornado_port = base_port + 2
 webpack_port = base_port + 3
 help_center_port = base_port + 4
 tusd_port = base_port + 5
+if options.rust_http_port is not None and (
+    not 1 <= options.rust_http_port <= 65535 or proxy_port <= options.rust_http_port <= tusd_port
+):
+    parser.error("--rust-http-port must be a valid port outside the development server port range")
 
 for mime_type, extension in EXTRA_MIME_TYPES:
     aiohttp.web_fileresponse.CONTENT_TYPES.add_type(mime_type, extension)
@@ -376,7 +385,7 @@ app = web.Application(middlewares=middlewares)
 
 
 def setup_routes(
-    enable_help_center: bool = False, enable_help_center_dev_server: bool = False
+    external_host: str, enable_help_center: bool, enable_help_center_dev_server: bool
 ) -> None:
     if enable_help_center:
         # Order of adding the rules matters. aiohttp will stop at the first
@@ -398,6 +407,16 @@ build step and rerun `run-dev`.""")
                 web.route(hdrs.METH_ANY, r"/{path:(help).*}", redirect_help),
             ]
         )
+    if options.rust_http_port is not None:
+        rust_http_port = options.rust_http_port
+
+        async def forward_compatibility(request: web.Request) -> web.StreamResponse:
+            # The mobile compatibility check uses the canonical server host.
+            port = rust_http_port if request.host.lower() == external_host.lower() else django_port
+            return await forward(port, request)
+
+        app.router.add_get("/compatibility", forward_compatibility)
+
     app.add_routes(
         [
             web.route(
@@ -475,7 +494,7 @@ async def serve() -> None:
         help_center_allowed_hosts = get_help_center_allowed_hosts()
         children.append(run_help_center_dev_server(help_center_allowed_hosts))
 
-    setup_routes(options.help_center_static_build, options.help_center_dev_server)
+    setup_routes(external_host, options.help_center_static_build, options.help_center_dev_server)
 
     children.extend(subprocess.Popen(cmd) for cmd in server_processes())  # noqa: ASYNC220
 

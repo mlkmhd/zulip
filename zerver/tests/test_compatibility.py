@@ -1,4 +1,9 @@
+import os
+from http.client import HTTPConnection
+from typing import TYPE_CHECKING
 from unittest import mock
+
+from django.http import HttpResponse
 
 from zerver.lib.compatibility import (
     find_mobile_os,
@@ -7,6 +12,9 @@ from zerver.lib.compatibility import (
     version_lt,
 )
 from zerver.lib.test_classes import ZulipTestCase
+
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
 
 
 class VersionTest(ZulipTestCase):
@@ -94,19 +102,56 @@ class CompatibilityTest(ZulipTestCase):
         if case
     ]
 
+    def request_compatibility(
+        self, headers: dict[str, str], *, method: str = "GET"
+    ) -> "HttpResponse | TestHttpResponse":
+        rust_port = os.environ.get("ZULIP_RUST_COMPATIBILITY_TEST_PORT")
+        if rust_port is None:
+            return self.client.generic(method, "/compatibility", headers=headers)
+
+        # Keep the existing assertions and send the request over HTTP to Rust.
+        connection = HTTPConnection("127.0.0.1", int(rust_port), timeout=5)
+        try:
+            connection.request(
+                method, "/compatibility", headers={"Host": f"localhost:{rust_port}", **headers}
+            )
+            reply = connection.getresponse()
+            return HttpResponse(reply.read(), status=reply.status, headers=reply.getheaders())
+        finally:
+            connection.close()
+
     def test_compatibility_without_user_agent(self) -> None:
-        result = self.client_get("/compatibility", skip_user_agent=True)
+        result = self.request_compatibility({})
         self.assert_json_error(result, "User-Agent header missing from request")
 
     def test_compatibility(self) -> None:
         for expected, user_agent in self.data:
-            result = self.client_get("/compatibility", HTTP_USER_AGENT=user_agent)
+            result = self.request_compatibility({"User-Agent": user_agent})
             if expected == "ok":
                 self.assert_json_success(result)
             elif expected == "old":
                 self.assert_json_error(result, "Client is too old")
             else:
                 raise AssertionError  # nocoverage
+
+    def test_compatibility_localizes_only_the_missing_header_error(self) -> None:
+        french = {"Accept-Language": "de;q=0.5, fr-CA;q=0.8"}
+        result = self.request_compatibility(french)
+        self.assert_json_error(result, "En-tête User-Agent absent de la requête")
+        self.assertEqual(result["Content-Language"], "fr")
+
+        result = self.request_compatibility({**french, "User-Agent": "ZulipInvalid/5.0"})
+        self.assert_json_error(result, "Client is too old")
+
+        result = self.request_compatibility({**french, "Cookie": "django_language=pt"})
+        self.assert_json_error(result, "Cabeçalho User-Agent em falta no pedido")
+        self.assertEqual(result["Content-Language"], "pt")
+
+    def test_compatibility_head(self) -> None:
+        result = self.request_compatibility({"User-Agent": "ZulipMobile/20.0.103"}, method="HEAD")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result["Content-Type"], "application/json")
+        self.assertEqual(result.content, b"")
 
     @mock.patch("zerver.lib.compatibility.DESKTOP_MINIMUM_VERSION", "5.0.0")
     @mock.patch("zerver.lib.compatibility.DESKTOP_WARNING_VERSION", "5.2.0")

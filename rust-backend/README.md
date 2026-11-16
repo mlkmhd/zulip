@@ -70,6 +70,33 @@ ZULIP_RUST_BOT_STORAGE=0 ./tools/test-backend zerver.tests.test_embedded_bot_sys
 ZULIP_RUST_BOT_STORAGE=1 ./tools/test-backend zerver.tests.test_embedded_bot_system
 ```
 
+## Run the mobile compatibility API over HTTP
+
+`zulip-http` serves `GET /compatibility` and `HEAD /compatibility` directly in
+Rust. Start it in the provisioned environment from the repository root so it
+can read the compiled translation catalogs under `locale/`:
+
+```sh
+cargo run --manifest-path rust-backend/Cargo.toml --locked --features http --bin zulip-http -- 127.0.0.1:9997
+```
+
+In a second terminal in the same environment, use the development proxy to
+route requests on the canonical development host to Rust:
+
+```sh
+source .venv/bin/activate
+./tools/run-dev --rust-http-port 9997
+```
+
+The production configuration continues to route requests through Django.
+The existing test cases run against Django by default. With the Rust server
+running, run the same cases over HTTP by selecting its loopback port:
+
+```sh
+./tools/test-backend zerver.tests.test_compatibility
+ZULIP_RUST_COMPATIBILITY_TEST_PORT=9997 ./tools/test-backend zerver.tests.test_compatibility
+```
+
 ## Migration sequence
 
 1. Port backend logic that does not depend on services. For each component,
