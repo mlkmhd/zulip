@@ -1,4 +1,4 @@
-# Zulip Fork
+# Zulip Gold
 
 A fork of [Zulip](https://github.com/zulip/zulip) with a redesigned web interface, more control over regional display settings, and new options for channel pictures and reaction notifications.
 
