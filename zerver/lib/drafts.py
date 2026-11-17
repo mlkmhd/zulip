@@ -41,6 +41,7 @@ _rust_draft_creation = (
 _rust_draft_edit = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_EDIT") == "1" else None
 )
+_rust_draft_groups = os.environ.get("ZULIP_RUST_DRAFT_GROUPS") == "1"
 
 
 def normalize_draft_body(content: str) -> str:
@@ -128,7 +129,9 @@ def further_validated_draft_dict(
         # check access before calling it.
         check_sender_can_access_recipients(user_profile, to_users)
         try:
-            recipient_id = recipient_for_user_profiles(to_users, None, user_profile).id
+            recipient_id = recipient_for_user_profiles(
+                to_users, None, user_profile, use_rust_for_group_creation=_rust_draft_groups
+            ).id
         except ValidationError as e:  # nocoverage
             raise JsonableError(e.messages[0])
 

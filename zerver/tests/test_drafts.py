@@ -16,7 +16,7 @@ import orjson
 import pika
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
-from django.db import DatabaseError
+from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import LiveServerTestCase
 
 from zerver.lib.drafts import (
@@ -29,7 +29,15 @@ from zerver.lib.drafts import (
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.users import check_can_access_user
-from zerver.models import DirectMessageGroup, Draft, Realm, Recipient, Stream, UserProfile
+from zerver.models import (
+    DirectMessageGroup,
+    Draft,
+    Realm,
+    Recipient,
+    Stream,
+    Subscription,
+    UserProfile,
+)
 from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
 from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
 
@@ -174,6 +182,74 @@ class DraftCreationTests(ZulipTestCase):
             },
         ]
         self.create_and_check_drafts_for_success(draft_dicts)
+
+    def test_create_batch_leaves_direct_message_group_after_later_error(self) -> None:
+        owner = self.example_user("hamlet")
+        othello = self.example_user("othello")
+        zoe = self.example_user("ZOE")
+        members = [owner.id, othello.id, zoe.id]
+        self.assertIsNone(get_direct_message_group(members))
+        direct_draft = {
+            "type": "private",
+            "to": [zoe.id, othello.id, zoe.id],
+            "topic": "Unused",
+            "content": "A new group conversation",
+            "timestamp": 1595479019,
+        }
+        channel_draft = {**direct_draft, "type": "stream", "to": []}
+
+        with self.capture_send_event_calls(expected_num_events=0):
+            self.create_and_check_drafts_for_error(
+                [channel_draft, direct_draft],
+                "Must specify exactly 1 channel ID for channel messages",
+            )
+            self.assertIsNone(get_direct_message_group(members))
+            self.create_and_check_drafts_for_error(
+                [direct_draft, channel_draft],
+                "Must specify exactly 1 channel ID for channel messages",
+            )
+
+        group = get_direct_message_group(members)
+        assert group is not None
+        recipient = group.recipient
+        assert recipient is not None
+        self.assertEqual(recipient.type, Recipient.DIRECT_MESSAGE_GROUP)
+        self.assertEqual(recipient.type_id, group.id)
+        self.assertCountEqual(
+            Subscription.objects.filter(recipient=recipient).values_list(
+                "user_profile_id", "active", "is_user_active", "color"
+            ),
+            [(user_id, True, True, Subscription.DEFAULT_STREAM_COLOR) for user_id in members],
+        )
+
+        self.create_and_check_drafts_for_success(
+            [direct_draft], [{**direct_draft, "to": sorted([othello.id, zoe.id]), "topic": ""}]
+        )
+        self.assertEqual(Draft.objects.get(user_profile=owner).recipient_id, recipient.id)
+
+    def test_create_draft_rolls_back_incomplete_direct_message_group(self) -> None:
+        owner = self.example_user("hamlet")
+        recipient = self.example_user("othello")
+        members = [owner.id, recipient.id]
+        self.assertIsNone(get_direct_message_group(members))
+        recipient_count = Recipient.objects.count()
+        draft = DraftData(type="private", to=[recipient.id], topic="", content="An unsaved draft")
+
+        with (
+            self.capture_send_event_calls(expected_num_events=0),
+            self.assertRaisesRegex(IntegrityError, "reject_draft_group_subscription"),
+            transaction.atomic(durable=True),
+        ):
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "ALTER TABLE zulip.zerver_subscription ADD CONSTRAINT "
+                    "reject_draft_group_subscription CHECK (FALSE) NOT VALID"
+                )
+            do_create_drafts([draft], owner)
+
+        self.assertIsNone(get_direct_message_group(members))
+        self.assertEqual(Recipient.objects.count(), recipient_count)
+        self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
 
     def test_missing_timestamps(self) -> None:
         """If a timestamp is not provided for a draft dict then it should be automatically

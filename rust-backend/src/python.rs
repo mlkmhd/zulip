@@ -17,6 +17,40 @@ mod _zulip_backend {
     }
 
     #[pyfunction]
+    fn initialize_direct_message_group(
+        cursor: &Bound<'_, PyAny>,
+        group_id: i64,
+        recipient_type: i16,
+        member_ids: Vec<i32>,
+        default_color: &str,
+    ) -> PyResult<i32> {
+        cursor.call_method1(
+            "execute",
+            (
+                "WITH recipient AS (
+                     INSERT INTO zulip.zerver_recipient (type_id, type)
+                     VALUES (%s, %s) RETURNING id, type_id
+                 ), initialized_group AS (
+                     UPDATE zulip.zerver_huddle AS h SET recipient_id = recipient.id
+                     FROM recipient WHERE h.id = recipient.type_id
+                     RETURNING h.recipient_id
+                 ), subscriptions AS (
+                     INSERT INTO zulip.zerver_subscription
+                         (recipient_id, user_profile_id, active, is_user_active,
+                          is_muted, color, pin_to_top)
+                     SELECT recipient_id, u.id, TRUE, u.is_active, FALSE, %s, FALSE
+                     FROM initialized_group CROSS JOIN zulip.zerver_userprofile AS u
+                     WHERE u.id = ANY(%s::integer[])
+                 )
+                 SELECT recipient_id FROM initialized_group",
+                (group_id, recipient_type, default_color, member_ids),
+            ),
+        )?;
+        let (recipient_id,) = cursor.call_method0("fetchone")?.extract()?;
+        Ok(recipient_id)
+    }
+
+    #[pyfunction]
     fn normalize_draft_body(
         body: &str,
         max_length: usize,

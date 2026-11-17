@@ -1,8 +1,9 @@
 import hashlib
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from importlib import import_module
+from typing import TYPE_CHECKING, cast
 
-from django.db import models, transaction
+from django.db import connection, models, transaction
 from django.db.models import QuerySet
 from typing_extensions import override
 
@@ -140,7 +141,9 @@ def get_direct_message_group_hash(id_list: list[int]) -> str:
     return hashlib.sha1(hash_key.encode()).hexdigest()
 
 
-def get_or_create_direct_message_group(id_list: list[int]) -> DirectMessageGroup:
+def get_or_create_direct_message_group(
+    id_list: list[int], *, use_rust_for_group_creation: bool = False
+) -> DirectMessageGroup:
     """
     Takes a list of user IDs and returns the DirectMessageGroup
     object for the group consisting of these users. If the
@@ -156,6 +159,21 @@ def get_or_create_direct_message_group(id_list: list[int]) -> DirectMessageGroup
             huddle_hash=direct_message_group_hash,
             group_size=len(id_list),
         )
+        if created and use_rust_for_group_creation:
+            rust_backend = import_module("_zulip_backend")
+            with connection.cursor() as cursor:
+                recipient_id = cast(
+                    int,
+                    rust_backend.initialize_direct_message_group(
+                        cursor,
+                        direct_message_group.id,
+                        Recipient.DIRECT_MESSAGE_GROUP,
+                        id_list,
+                        Subscription.DEFAULT_STREAM_COLOR,
+                    ),
+                )
+            direct_message_group.recipient_id = recipient_id
+            return direct_message_group
         if created:
             recipient = Recipient.objects.create(
                 type_id=direct_message_group.id, type=Recipient.DIRECT_MESSAGE_GROUP

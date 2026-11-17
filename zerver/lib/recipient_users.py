@@ -19,6 +19,8 @@ def get_recipient_from_user_profiles(
     sender: UserProfile,
     create: bool = True,
     forged: bool = False,
+    *,
+    use_rust_for_group_creation: bool = False,
 ) -> Recipient:
     # Avoid mutating the passed in list of recipient_profiles.
     recipient_user_ids = {user_profile.id for user_profile in recipient_profiles}
@@ -37,7 +39,9 @@ def get_recipient_from_user_profiles(
     user_ids = list(recipient_user_ids)
 
     if create:
-        direct_message_group = get_or_create_direct_message_group(user_ids)
+        direct_message_group = get_or_create_direct_message_group(
+            user_ids, use_rust_for_group_creation=use_rust_for_group_creation
+        )
     else:
         # We intentionally let the DirectMessageGroup.DoesNotExist escape,
         # in the case that there is no such direct message group, and the
@@ -90,13 +94,19 @@ def recipient_for_user_profiles(
     allow_deactivated: bool = False,
     create: bool = True,
     forged: bool = False,
+    use_rust_for_group_creation: bool = False,
 ) -> Recipient:
     recipient_profiles = validate_recipient_user_profiles(
         user_profiles, sender, allow_deactivated=allow_deactivated
     )
 
     return get_recipient_from_user_profiles(
-        recipient_profiles, forwarder_user_profile, sender, create=create, forged=forged
+        recipient_profiles,
+        forwarder_user_profile,
+        sender,
+        create=create,
+        forged=forged,
+        use_rust_for_group_creation=use_rust_for_group_creation,
     )
 
 
