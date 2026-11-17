@@ -27,6 +27,7 @@ use super::{
     linkifiers,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
+    realm_domains,
     saved_snippets::{self, SnippetEvent},
     session::{SessionLookup, Sessions},
     unicode_lowercase::UnicodeLowercase,
@@ -43,6 +44,7 @@ enum Endpoint {
     SavedSnippets,
     Drafts,
     Linkifiers,
+    RealmDomains,
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +70,7 @@ impl Endpoint {
             Self::SavedSnippets => "get_saved_snippets",
             Self::Drafts => "fetch_drafts",
             Self::Linkifiers => "list_linkifiers",
+            Self::RealmDomains => "list_realm_domains",
         }
     }
 
@@ -89,6 +92,10 @@ impl Endpoint {
             Self::Linkifiers => (
                 "linkifiers",
                 serde_json::to_string(&linkifiers::list(database, realm_id).await?),
+            ),
+            Self::RealmDomains => (
+                "domains",
+                serde_json::to_string(&realm_domains::list(database, realm_id).await?),
             ),
             Self::Drafts => {
                 require_draft_synchronization(database, user_id).await?;
@@ -640,6 +647,7 @@ async fn respond(
         saved_snippets::PATH | saved_snippets::SESSION_PATH => Endpoint::SavedSnippets,
         drafts::PATH | drafts::SESSION_PATH => Endpoint::Drafts,
         linkifiers::PATH | linkifiers::SESSION_PATH => Endpoint::Linkifiers,
+        realm_domains::PATH | realm_domains::SESSION_PATH => Endpoint::RealmDomains,
         _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
@@ -973,7 +981,7 @@ fn error_response(
                 "GET, POST, DELETE, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"DELETE\",\"HEAD\"]}",
             ),
-            Endpoint::Drafts | Endpoint::Linkifiers => {
+            Endpoint::Drafts | Endpoint::Linkifiers | Endpoint::RealmDomains => {
                 unreachable!("endpoints without a Rust POST do not override methods")
             }
             Endpoint::SavedSnippets => (

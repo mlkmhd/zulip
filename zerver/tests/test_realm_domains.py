@@ -1,6 +1,16 @@
+import os
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from urllib.parse import urlsplit
+
 import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
 from django.core.exceptions import ValidationError
 from django.db.utils import IntegrityError
+from django.test import LiveServerTestCase
 from typing_extensions import override
 
 from zerver.actions.create_realm import do_create_realm
@@ -8,9 +18,102 @@ from zerver.actions.realm_domains import do_change_realm_domain, do_remove_realm
 from zerver.actions.realm_settings import do_set_realm_property
 from zerver.lib.domains import validate_domain
 from zerver.lib.email_validation import email_allowed_for_realm
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.models import RealmDomain, UserProfile
-from zerver.models.realms import DomainNotAllowedForRealmError, get_realm
+from zerver.models.realms import DomainNotAllowedForRealmError, get_realm, get_realm_domains
+
+
+class RealmDomainReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_list_realm_domains_parity_with_rust(self) -> None:
+        user = self.example_user("hamlet")
+        other_user = self.mit_user("sipbtest")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+
+        def api_auth(profile: UserProfile) -> dict[str, str]:
+            token = b64encode(f"{profile.delivery_email}:{profile.api_key}".encode()).decode()
+            return {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(user.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": user.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            added = RealmDomain.objects.create(
+                realm=user.realm, domain="zulip-domain-parity.example", allow_subdomains=True
+            )
+            cleanup.callback(added.delete)
+            other = RealmDomain.objects.create(
+                realm=other_user.realm, domain="other-domain-parity.example"
+            )
+            cleanup.callback(other.delete)
+
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            environment = {
+                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                    settings.AUTHENTICATION_BACKENDS
+                ).decode(),
+            }
+            service = (
+                rust_http_service(environment)
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with service as rust_port:
+
+                def check(
+                    method: str, path: str, host: str, headers: dict[str, str], status: int
+                ) -> bytes:
+                    django = request_test_http(django_port, method, host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        rust = request_test_http(rust_port, method, host, headers, path)
+                        self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                        if method == "GET" and status == 200:
+                            # The list has no ordering guarantee.
+                            rust_body, django_body = orjson.loads(rust[1]), orjson.loads(django[1])
+                            self.assertCountEqual(
+                                rust_body.pop("domains"), django_body.pop("domains")
+                            )
+                            self.assertEqual(rust_body, django_body)
+                        else:
+                            self.assertEqual(rust[1], django[1])
+                    return django[1]
+
+                api = "/api/v1/realm/domains"
+                web = "/json/realm/domains"
+                cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+                for path, credentials in ((api, api_auth(user)), (web, cookie)):
+                    with self.subTest(path=path):
+                        data = orjson.loads(check("GET", path, user.realm.host, credentials, 200))
+                        self.assertCountEqual(data["domains"], get_realm_domains(user.realm))
+                        self.assertNotIn(
+                            other.domain, [entry["domain"] for entry in data["domains"]]
+                        )
+                        self.assertEqual(
+                            check("HEAD", path, user.realm.host, credentials, 200), b""
+                        )
+                        check("GET", path, user.realm.host, {}, 401)
+                check("GET", api, other_user.realm.host, api_auth(user), 401)
+                data = orjson.loads(
+                    check("GET", api, other_user.realm.host, api_auth(other_user), 200)
+                )
+                self.assertCountEqual(data["domains"], get_realm_domains(other_user.realm))
+                self.assertNotIn(added.domain, [entry["domain"] for entry in data["domains"]])
+
+                added.allow_subdomains = False
+                added.save(update_fields=["allow_subdomains"])
+                data = orjson.loads(check("GET", web, user.realm.host, cookie, 200))
+                self.assertIn({"domain": added.domain, "allow_subdomains": False}, data["domains"])
 
 
 class RealmDomainTest(ZulipTestCase):
