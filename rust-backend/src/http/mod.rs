@@ -48,6 +48,8 @@ pub struct UserReadConfig<'a> {
     pub alert_word_lowercase_file: Option<&'a Path>,
     pub alert_word_posts: bool,
     pub draft_deletes: bool,
+    pub reminder_deletes: bool,
+    pub scheduled_message_deletes: bool,
     pub bot_storage_deletes: bool,
     pub bot_storage_size_limit: Option<u64>,
     pub navigation_view_posts: bool,
@@ -89,6 +91,8 @@ pub async fn router_with_user_reads(
     let alert_word_writes = config.alert_word_lowercase_file.is_some();
     let alert_word_posts = config.alert_word_posts;
     let draft_deletes = config.draft_deletes;
+    let reminder_deletes = config.reminder_deletes;
+    let scheduled_message_deletes = config.scheduled_message_deletes;
     let bot_storage_deletes = config.bot_storage_deletes;
     let bot_storage_updates = config.bot_storage_size_limit.is_some();
     let navigation_view_posts = config.navigation_view_posts;
@@ -102,6 +106,8 @@ pub async fn router_with_user_reads(
             && (saved_snippet_writes
                 || alert_word_writes
                 || draft_deletes
+                || reminder_deletes
+                || scheduled_message_deletes
                 || bot_storage_deletes
                 || bot_storage_updates
                 || navigation_view_posts
@@ -176,6 +182,26 @@ pub async fn router_with_user_reads(
     if draft_deletes {
         routes = routes.route(drafts::DETAIL_PATH, draft_detail_route.clone());
     }
+    let scheduled_job_delete: axum::routing::MethodRouter<_> =
+        delete(user_reads::delete_scheduled_job)
+            .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
+    let reminder_detail_route = scheduled_job_delete
+        .clone()
+        .layer(axum::Extension(scheduled_messages::JobKind::Reminder));
+    let scheduled_message_detail_route =
+        scheduled_job_delete.layer(axum::Extension(scheduled_messages::JobKind::Message));
+    if reminder_deletes {
+        routes = routes.route(
+            scheduled_messages::REMINDER_DETAIL_PATH,
+            reminder_detail_route.clone(),
+        );
+    }
+    if scheduled_message_deletes {
+        routes = routes.route(
+            scheduled_messages::DETAIL_PATH,
+            scheduled_message_detail_route.clone(),
+        );
+    }
     let navigation_view_detail_route = patch(user_reads::write_navigation_view_detail)
         .delete(user_reads::write_navigation_view_detail)
         .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
@@ -206,6 +232,18 @@ pub async fn router_with_user_reads(
         }
         if web_writes_enabled && draft_deletes {
             routes = routes.route(drafts::SESSION_DETAIL_PATH, draft_detail_route);
+        }
+        if web_writes_enabled && reminder_deletes {
+            routes = routes.route(
+                scheduled_messages::SESSION_REMINDER_DETAIL_PATH,
+                reminder_detail_route,
+            );
+        }
+        if web_writes_enabled && scheduled_message_deletes {
+            routes = routes.route(
+                scheduled_messages::SESSION_DETAIL_PATH,
+                scheduled_message_detail_route,
+            );
         }
         if web_writes_enabled && navigation_view_details {
             routes = routes.route(

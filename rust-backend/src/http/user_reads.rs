@@ -70,6 +70,7 @@ enum WriteOperation<'a> {
     AddAlertWords,
     RemoveAlertWords,
     DeleteDraft(Option<i64>),
+    DeleteScheduledJob(JobKind, Option<i64>),
     DeleteBotStorage,
     UpdateBotStorage,
 }
@@ -324,6 +325,8 @@ impl UserReads {
                     config,
                     saved_snippet_writes
                         || settings.draft_deletes
+                        || settings.reminder_deletes
+                        || settings.scheduled_message_deletes
                         || settings.navigation_view_posts
                         || settings.navigation_view_details
                         || alert_word_lowercase.is_some(),
@@ -338,6 +341,12 @@ impl UserReads {
             }
             None if settings.draft_deletes => {
                 return Err("Draft DELETE requires ZULIP_RUST_AMQP_URL".into());
+            }
+            None if settings.reminder_deletes => {
+                return Err("Reminder DELETE requires ZULIP_RUST_AMQP_URL".into());
+            }
+            None if settings.scheduled_message_deletes => {
+                return Err("Scheduled message DELETE requires ZULIP_RUST_AMQP_URL".into());
             }
             None if settings.navigation_view_posts || settings.navigation_view_details => {
                 return Err("Navigation view writes require ZULIP_RUST_AMQP_URL".into());
@@ -620,6 +629,7 @@ enum ApiError {
     SnippetNotFound,
     DraftSyncDisabled,
     DraftNotFound,
+    ScheduledJobNotFound(JobKind),
     RateLimited(f64),
 }
 
@@ -766,6 +776,25 @@ pub(super) async fn delete_draft(
     .await
 }
 
+pub(super) async fn delete_scheduled_job(
+    State(state): State<UserReads>,
+    Extension(kind): Extension<JobKind>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    respond_write(
+        state,
+        peer,
+        request,
+        WriteOperation::DeleteScheduledJob(kind, id.parse().ok()),
+    )
+    .await
+}
+
 pub(super) async fn write_saved_snippet_detail(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -859,6 +888,7 @@ async fn respond(
             Some(WriteOperation::AddAlertWords) => "add_alert_words",
             Some(WriteOperation::RemoveAlertWords) => "remove_alert_words",
             Some(WriteOperation::DeleteDraft(_)) => "delete_draft",
+            Some(WriteOperation::DeleteScheduledJob(kind, _)) => kind.delete_activity(),
             Some(WriteOperation::DeleteBotStorage) => "remove_storage",
             Some(WriteOperation::UpdateBotStorage) => "update_storage",
             None => endpoint.activity_name(),
@@ -1082,6 +1112,38 @@ async fn respond(
                     })?;
                 return Ok("{\"result\":\"success\",\"msg\":\"\"}\n".to_owned());
             }
+            if let WriteOperation::DeleteScheduledJob(kind, id) = write {
+                let id = id.ok_or(ApiError::ScheduledJobNotFound(kind))?;
+                let activity = state
+                    .activity
+                    .as_ref()
+                    .expect("scheduled job deletion requires RabbitMQ");
+                let queue = activity
+                    .notification_queue(realm_id, user_id)
+                    .await
+                    .ok_or(ApiError::NotificationUnavailable)?;
+                let deleted = {
+                    let mut writer = state
+                        .database
+                        .writer()
+                        .await
+                        .map_err(ApiError::database_unavailable)?;
+                    scheduled_messages::delete(&mut writer, user_id, id, kind).await?
+                };
+                if !deleted {
+                    return Err(ApiError::ScheduledJobNotFound(kind));
+                }
+                activity
+                    .notify_user(queue, user_id, kind.removed_event(id))
+                    .await
+                    .map_err(|error| {
+                        eprintln!("Could not confirm notification for scheduled job {id}: {error}");
+                        ApiError::NotificationUnavailable
+                    })?;
+                let processed: &[_] = if form.has_query_client() { &["client"] } else { &[] };
+                let extra = ignored_parameters(&form, processed);
+                return Ok(format!("{{\"result\":\"success\",\"msg\":\"\"{extra}}}\n"));
+            }
             if matches!(
                 write,
                 WriteOperation::AddAlertWords | WriteOperation::RemoveAlertWords
@@ -1159,6 +1221,7 @@ async fn respond(
                 | WriteOperation::EditNavigationView(_)
                 | WriteOperation::DeleteNavigationView(_)
                 | WriteOperation::DeleteDraft(_)
+                | WriteOperation::DeleteScheduledJob(..)
                 | WriteOperation::DeleteBotStorage
                 | WriteOperation::UpdateBotStorage => {
                     unreachable!("handled above")
@@ -1431,6 +1494,16 @@ fn error_response(
             "Request exceeds storage limit by {excess} characters. The limit is {limit} characters.",
         ),
         ApiError::DraftNotFound => (StatusCode::NOT_FOUND, "BAD_REQUEST", "Draft does not exist"),
+        ApiError::ScheduledJobNotFound(JobKind::Reminder) => (
+            StatusCode::NOT_FOUND,
+            "BAD_REQUEST",
+            "Reminder does not exist",
+        ),
+        ApiError::ScheduledJobNotFound(JobKind::Message) => (
+            StatusCode::NOT_FOUND,
+            "BAD_REQUEST",
+            "Scheduled message does not exist",
+        ),
         ApiError::NavigationViewNotFound => (
             StatusCode::NOT_FOUND,
             "BAD_REQUEST",
@@ -1498,7 +1571,8 @@ fn error_response(
         | ApiError::BotRequired
         | ApiError::BotStorageKeyNotFound
         | ApiError::BotStorageLimitExceeded { .. }
-        | ApiError::DraftNotFound => (String::new(), "Accept-Language"),
+        | ApiError::DraftNotFound
+        | ApiError::ScheduledJobNotFound(_) => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };
     let mut response = (

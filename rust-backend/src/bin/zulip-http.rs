@@ -56,6 +56,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if draft_deletes {
                 return Err("Draft DELETE requires ZULIP_RUST_DATABASE_URL".into());
             }
+            if enabled("ZULIP_RUST_REMINDER_DELETES")? {
+                return Err("Reminder DELETE requires ZULIP_RUST_DATABASE_URL".into());
+            }
+            if enabled("ZULIP_RUST_SCHEDULED_MESSAGE_DELETES")? {
+                return Err("Scheduled message DELETE requires ZULIP_RUST_DATABASE_URL".into());
+            }
             if enabled("ZULIP_RUST_BOT_STORAGE_DELETES")? {
                 return Err("Bot storage DELETE requires ZULIP_RUST_DATABASE_URL".into());
             }
@@ -157,6 +163,8 @@ async fn user_read_router(
             alert_word_lowercase_file,
             alert_word_posts,
             draft_deletes,
+            reminder_deletes: enabled("ZULIP_RUST_REMINDER_DELETES")?,
+            scheduled_message_deletes: enabled("ZULIP_RUST_SCHEDULED_MESSAGE_DELETES")?,
             bot_storage_deletes: enabled("ZULIP_RUST_BOT_STORAGE_DELETES")?,
             bot_storage_size_limit,
             navigation_view_posts: navigation_view_writes.posts,

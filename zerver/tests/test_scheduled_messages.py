@@ -2,16 +2,18 @@ import os
 import re
 import time
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, nullcontext
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
-from unittest import mock
-from urllib.parse import urlsplit
+from unittest import mock, skipUnless
+from urllib.parse import quote, urlsplit
 
 import orjson
+import pika
 import time_machine
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
@@ -914,3 +916,244 @@ class ScheduledMessageTest(ZulipTestCase):
             [scheduled_message.id],
         )
         self.assertEqual(scheduled_message.has_attachment, True)
+
+
+@skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
+class ScheduledJobDeleteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_reminder_delete_parity(self) -> None:
+        self.check_delete_parity(
+            endpoint="reminders",
+            id_field="reminder_id",
+            target_type=ScheduledMessage.REMIND,
+            other_type=ScheduledMessage.SEND_LATER,
+        )
+
+    def test_scheduled_message_delete_parity(self) -> None:
+        self.check_delete_parity(
+            endpoint="scheduled_messages",
+            id_field="scheduled_message_id",
+            target_type=ScheduledMessage.SEND_LATER,
+            other_type=ScheduledMessage.REMIND,
+        )
+
+    def check_delete_parity(
+        self, *, endpoint: str, id_field: str, target_type: int, other_type: int
+    ) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(settings.RABBITMQ_USERNAME, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        owner = self.example_user("hamlet")
+        other = self.example_user("othello")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+
+        def basic(user: UserProfile) -> dict[str, str]:
+            return {
+                "Authorization": "Basic "
+                + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+            }
+
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(owner.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": owner.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        token = "a" * 32
+        cookie = (
+            f"{settings.SESSION_COOKIE_NAME}={session.session_key}; "
+            f"{settings.CSRF_COOKIE_NAME}={token}"
+        )
+        attachment = Attachment.objects.create(
+            owner=owner,
+            realm=owner.realm,
+            file_name="scheduled-job.txt",
+            path_id="scheduled-job-parity",
+            size=8,
+        )
+        scheduled_job = ScheduledMessage.objects.filter(
+            sender__realm=owner.realm, delivery_type=ScheduledMessage.SEND_LATER
+        ).first()
+        assert scheduled_job is not None
+        fields = dict(
+            sender=owner,
+            recipient=scheduled_job.recipient,
+            realm=owner.realm,
+            content="Please remind me",
+            rendered_content="<p>Please remind me</p>",
+            sending_client=get_client("website"),
+            scheduled_timestamp=timezone_now() + timedelta(days=1),
+            read_by_sender=False,
+        )
+        victim_id = 2**31 + 1
+        scheduled = ScheduledMessage.objects.create(delivery_type=other_type, **fields)
+        attachment.scheduled_messages.add(scheduled)
+        try:
+            with (
+                self.settings(
+                    USING_RABBITMQ=True,
+                    RABBITMQ_VHOST=vhost,
+                    TORNADO_PROCESSES=1,
+                    SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
+                ),
+                pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+                TemporaryDirectory() as directory,
+            ):
+                channel = broker.channel()
+                for name in ("notify_tornado", "user_activity"):
+                    channel.queue_declare(name, durable=True)
+                    channel.queue_purge(name)
+                secret = Path(directory) / "secret"
+                secret.write_text(settings.SECRET_KEY)
+                environment = {
+                    (
+                        "ZULIP_RUST_REMINDER_DELETES"
+                        if target_type == ScheduledMessage.REMIND
+                        else "ZULIP_RUST_SCHEDULED_MESSAGE_DELETES"
+                    ): "1",
+                    "ZULIP_RUST_AMQP_URL": amqp_url,
+                    "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                    "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                        settings.AUTHENTICATION_BACKENDS
+                    ).decode(),
+                }
+
+                def create_victim() -> None:
+                    job = ScheduledMessage.objects.create(
+                        id=victim_id,
+                        delivery_type=target_type,
+                        failed=True,
+                        delivered=target_type == ScheduledMessage.SEND_LATER,
+                        has_attachment=True,
+                        **fields,
+                    )
+                    attachment.scheduled_messages.add(job)
+
+                event = {"type": endpoint, "op": "remove", id_field: victim_id}
+
+                def check(
+                    port: int,
+                    prefix: str,
+                    auth: dict[str, str],
+                    csrf_failure: dict[str, str] | None = None,
+                ) -> list[tuple[int, bytes]]:
+                    create_victim()
+                    cases = [
+                        (scheduled.id, auth, 404, ""),
+                        (2**63, auth, 404, ""),
+                    ]
+                    if prefix.startswith("/api/"):
+                        cases.append((victim_id, basic(other), 404, ""))
+                    if csrf_failure is not None:
+                        cases.append((victim_id, csrf_failure, 403, ""))
+                    cases += [
+                        (victim_id, auth, 200, f"?unused=yes&{id_field}={scheduled.id}"),
+                        (victim_id, auth, 404, ""),
+                    ]
+                    outcomes = []
+                    pending = True
+                    for job_id, headers, expected, query in cases:
+                        status, body, _, _ = request_test_http(
+                            port, "DELETE", owner.realm.host, headers, f"{prefix}/{job_id}{query}"
+                        )
+                        self.assertEqual(status, expected, body)
+                        outcomes.append((status, body))
+                        _, _, notification = channel.basic_get("notify_tornado", auto_ack=True)
+                        if status == 200:
+                            pending = False
+                            assert notification is not None
+                            self.assertEqual(
+                                orjson.loads(notification), {"event": event, "users": [owner.id]}
+                            )
+                            self.assertEqual(
+                                orjson.loads(body)["ignored_parameters_unsupported"],
+                                [id_field, "unused"],
+                            )
+                            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                        else:
+                            self.assertIsNone(notification)
+                        self.assertEqual(
+                            ScheduledMessage.objects.filter(id=victim_id).exists(), pending
+                        )
+                        self.assertTrue(Attachment.objects.filter(id=attachment.id).exists())
+                        self.assertCountEqual(
+                            attachment.scheduled_messages.values_list("id", flat=True),
+                            [scheduled.id, victim_id] if pending else [scheduled.id],
+                        )
+                    return outcomes
+
+                for scheme in ("http", "https"):
+                    web_auth = {"Cookie": cookie, "X-CSRFToken": token}
+                    if scheme == "https":
+                        web_auth.update(
+                            {
+                                "X-Forwarded-Proto": "https",
+                                "Referer": f"https://{owner.realm.host}/",
+                            }
+                        )
+                    else:
+                        web_auth["Origin"] = f"http://{owner.realm.host}"
+                    no_token = {
+                        key: value for key, value in web_auth.items() if key != "X-CSRFToken"
+                    }
+                    routes: list[tuple[str, dict[str, str], dict[str, str] | None]] = [
+                        (f"/json/{endpoint}", web_auth, no_token)
+                    ]
+                    if scheme == "http":
+                        routes.append((f"/api/v1/{endpoint}", basic(owner), None))
+                    service = (
+                        rust_http_service({**environment, "ZULIP_RUST_WEB_POST_SCHEME": scheme})
+                        if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                        else nullcontext(None)
+                    )
+                    with service as rust_port:
+                        for prefix, auth, csrf_failure in routes:
+                            with self.subTest(scheme=scheme, path=prefix):
+                                baseline = check(django_port, prefix, auth, csrf_failure)
+                                if rust_port is not None:
+                                    self.assertEqual(
+                                        check(rust_port, prefix, auth, csrf_failure), baseline
+                                    )
+                        if rust_port is not None and scheme == "http":
+                            create_victim()
+                            with (
+                                rust_http_service(environment) as second_port,
+                                ThreadPoolExecutor(max_workers=2) as requests,
+                            ):
+                                pending = [
+                                    requests.submit(
+                                        request_test_http,
+                                        port,
+                                        "DELETE",
+                                        owner.realm.host,
+                                        basic(owner),
+                                        f"/api/v1/{endpoint}/{victim_id}",
+                                    )
+                                    for port in (rust_port, second_port)
+                                ]
+                                self.assertCountEqual(
+                                    [request.result()[0] for request in pending], [200, 404]
+                                )
+                            self.assertFalse(ScheduledMessage.objects.filter(id=victim_id).exists())
+                            self.assertEqual(
+                                list(attachment.scheduled_messages.values_list("id", flat=True)),
+                                [scheduled.id],
+                            )
+                            notification = channel.basic_get("notify_tornado", auto_ack=True)[2]
+                            assert notification is not None
+                            self.assertEqual(
+                                orjson.loads(notification), {"event": event, "users": [owner.id]}
+                            )
+                            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+        finally:
+            attachment.delete()
+            ScheduledMessage.objects.filter(id__in=[victim_id, scheduled.id]).delete()
+            session.delete()

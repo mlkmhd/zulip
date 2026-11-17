@@ -3,8 +3,12 @@ use tokio_postgres::{Client, Error, Row};
 
 pub(super) const PATH: &str = "/api/v1/scheduled_messages";
 pub(super) const SESSION_PATH: &str = "/json/scheduled_messages";
+pub(super) const DETAIL_PATH: &str = "/api/v1/scheduled_messages/{id}";
+pub(super) const SESSION_DETAIL_PATH: &str = "/json/scheduled_messages/{id}";
 pub(super) const REMINDERS_PATH: &str = "/api/v1/reminders";
 pub(super) const SESSION_REMINDERS_PATH: &str = "/json/reminders";
+pub(super) const REMINDER_DETAIL_PATH: &str = "/api/v1/reminders/{id}";
+pub(super) const SESSION_REMINDER_DETAIL_PATH: &str = "/json/reminders/{id}";
 const STREAM: i16 = 2;
 
 #[derive(Clone, Copy)]
@@ -85,6 +89,26 @@ impl ScheduledJob {
     }
 }
 
+impl JobKind {
+    pub(super) fn delete_activity(self) -> &'static str {
+        match self {
+            Self::Message => "delete_scheduled_messages",
+            Self::Reminder => "delete_reminder",
+        }
+    }
+
+    pub(super) fn removed_event(self, id: i64) -> serde_json::Value {
+        match self {
+            Self::Message => serde_json::json!({
+                "type": "scheduled_messages", "op": "remove", "scheduled_message_id": id,
+            }),
+            Self::Reminder => serde_json::json!({
+                "type": "reminders", "op": "remove", "reminder_id": id,
+            }),
+        }
+    }
+}
+
 pub(super) async fn list(
     database: &Client,
     user_id: i32,
@@ -110,4 +134,30 @@ pub(super) async fn list(
         .iter()
         .map(|row| ScheduledJob::from_row(row, user_id, kind))
         .collect()
+}
+
+pub(super) async fn delete(
+    database: &mut Client,
+    user_id: i32,
+    id: i64,
+    kind: JobKind,
+) -> Result<bool, Error> {
+    let transaction = database.transaction().await?;
+    let found = transaction
+        .query_one(
+            "WITH deleted AS (
+                 DELETE FROM zulip.zerver_scheduledmessage
+                 WHERE id = $1 AND sender_id = $2 AND delivery_type = $3
+                 RETURNING id
+             ), unlinked AS (
+                 DELETE FROM zulip.zerver_attachment_scheduled_messages AS link
+                 USING deleted WHERE link.scheduledmessage_id = deleted.id
+             )
+             SELECT EXISTS (SELECT 1 FROM deleted)",
+            &[&id, &user_id, &(kind as i16)],
+        )
+        .await?
+        .try_get(0)?;
+    transaction.commit().await?;
+    Ok(found)
 }
