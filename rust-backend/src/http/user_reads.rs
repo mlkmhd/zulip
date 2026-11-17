@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     Extension,
-    extract::{ConnectInfo, Request, State},
+    extract::{ConnectInfo, Path, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header, uri::Authority},
     response::{IntoResponse, Response},
 };
@@ -33,6 +33,12 @@ const INCOMING_WEBHOOK_BOT: i16 = 2;
 enum Endpoint {
     AlertWords,
     SavedSnippets,
+}
+
+#[derive(Clone, Copy)]
+enum SnippetWrite {
+    Create,
+    Edit(Option<i64>),
 }
 
 impl Endpoint {
@@ -352,6 +358,7 @@ enum ApiError {
     NotificationUnavailable,
     Form(saved_snippets::FormError),
     UnsupportedMethodOverride,
+    SnippetNotFound,
     RateLimited(f64),
 }
 
@@ -415,7 +422,7 @@ pub(super) async fn get(
     uri: Uri,
     headers: HeaderMap,
 ) -> Response {
-    respond(state, peer, uri, headers, Ok(None)).await
+    respond(state, peer, uri, headers, None).await
 }
 
 pub(super) async fn create_saved_snippet(
@@ -423,9 +430,32 @@ pub(super) async fn create_saved_snippet(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     request: Request,
 ) -> Response {
+    respond_snippet_write(state, peer, request, SnippetWrite::Create).await
+}
+
+pub(super) async fn edit_saved_snippet(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    // An integer outside the storage range can still be used with a no-op edit.
+    let id = id.parse::<i64>().ok();
+    respond_snippet_write(state, peer, request, SnippetWrite::Edit(id)).await
+}
+
+async fn respond_snippet_write(
+    state: UserReads,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+    write: SnippetWrite,
+) -> Response {
     let (uri, headers) = (request.uri().clone(), request.headers().clone());
-    let form = saved_snippets::CreateForm::parse(request).await.map(Some);
-    respond(state, peer, uri, headers, form).await
+    let form = saved_snippets::SnippetForm::parse(request).await;
+    respond(state, peer, uri, headers, Some((write, form))).await
 }
 
 async fn respond(
@@ -433,7 +463,10 @@ async fn respond(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     uri: Uri,
     headers: HeaderMap,
-    form: Result<Option<saved_snippets::CreateForm>, saved_snippets::FormError>,
+    form: Option<(
+        SnippetWrite,
+        Result<saved_snippets::SnippetForm, saved_snippets::FormError>,
+    )>,
 ) -> Response {
     let language = Locales::for_request(&headers);
     let endpoint = if uri.path() == saved_snippets::PATH {
@@ -450,19 +483,25 @@ async fn respond(
     let mut clear_session_cookie = false;
     let mut rate_limit = None;
     let data = async {
-        let form = form.map_err(ApiError::Form)?;
-        let create = match form
-            .as_ref()
-            .and_then(saved_snippets::CreateForm::method_override)
-        {
-            None | Some("POST") => form.as_ref(),
-            Some("GET" | "HEAD") => None,
-            Some(_) => return Err(ApiError::UnsupportedMethodOverride),
+        let (requested_write, form) = match form {
+            Some((write, form)) => (Some(write), Some(form.map_err(ApiError::Form)?)),
+            None => (None, None),
         };
-        let activity_name = if create.is_some() {
-            "create_saved_snippet"
-        } else {
-            endpoint.activity_name()
+        let write = match (
+            requested_write,
+            form.as_ref()
+                .and_then(saved_snippets::SnippetForm::method_override),
+        ) {
+            (Some(SnippetWrite::Create), Some("GET" | "HEAD")) => None,
+            (Some(SnippetWrite::Create), Some(method)) if method != "POST" => {
+                return Err(ApiError::UnsupportedMethodOverride);
+            }
+            _ => requested_write,
+        };
+        let activity_name = match write {
+            Some(SnippetWrite::Create) => "create_saved_snippet",
+            Some(SnippetWrite::Edit(_)) => "edit_saved_snippet",
+            None => endpoint.activity_name(),
         };
         let (database, user_id, realm_id) = if let Some(sessions) = browser_session {
             let subdomain =
@@ -510,11 +549,12 @@ async fn respond(
             (database, user.id, None)
         } else {
             let (database, user) = state.authenticate(&headers).await?;
-            let client = client_name(
-                form.as_ref().and_then(|form| form.value("client")),
-                uri.query(),
-                &headers,
-            );
+            let form_client = if matches!(requested_write, Some(SnippetWrite::Create)) {
+                form.as_ref().and_then(|form| form.value("client"))
+            } else {
+                None
+            };
+            let client = client_name(form_client, uri.query(), &headers);
             // Basic Auth records activity before the quota check.
             state
                 .record_activity(&database, user.id, activity_name, &client)
@@ -532,37 +572,61 @@ async fn respond(
             }
             (database, user.id, Some(user.realm_id))
         };
-        if let Some(form) = create {
+        if let (Some(write), Some(form)) = (write, form) {
             let max = state
                 .saved_snippet_max_content_length
                 .expect("write route configured");
-            let (title, content) = form.values(max).map_err(ApiError::Form)?;
             let activity = state
                 .activity
                 .as_ref()
                 .expect("saved snippet writes require RabbitMQ");
-            if !activity.connected() {
-                return Err(ApiError::NotificationUnavailable);
+            let mut result_fields = String::new();
+            let change = match write {
+                SnippetWrite::Create => {
+                    let (title, content) = form.create_values(max).map_err(ApiError::Form)?;
+                    if !activity.connected() {
+                        return Err(ApiError::NotificationUnavailable);
+                    }
+                    let snippet = saved_snippets::create(
+                        &database,
+                        user_id,
+                        realm_id.expect("Basic Auth supplies realm"),
+                        title,
+                        content,
+                    )
+                    .await?;
+                    result_fields = format!(",\"saved_snippet_id\":{}", snippet.id);
+                    Some(("add", snippet))
+                }
+                SnippetWrite::Edit(id) => {
+                    let (title, content) = form.edit_values(max).map_err(ApiError::Form)?;
+                    if title.is_none() && content.is_none() {
+                        None
+                    } else {
+                        let id = id.ok_or(ApiError::SnippetNotFound)?;
+                        if !activity.connected() {
+                            return Err(ApiError::NotificationUnavailable);
+                        }
+                        let snippet = saved_snippets::edit(&database, user_id, id, title, content)
+                            .await?
+                            .ok_or(ApiError::SnippetNotFound)?;
+                        Some(("update", snippet))
+                    }
+                }
+            };
+            if let Some((operation, snippet)) = change {
+                activity
+                    .saved_snippet_changed(user_id, operation, &snippet)
+                    .await
+                    .map_err(|error| {
+                        eprintln!(
+                            "Could not confirm notification for saved snippet {}: {error}",
+                            snippet.id
+                        );
+                        ApiError::NotificationUnavailable
+                    })?;
             }
-            let snippet = saved_snippets::create(
-                &database,
-                user_id,
-                realm_id.expect("Basic Auth supplies realm"),
-                title,
-                content,
-            )
-            .await?;
-            activity
-                .saved_snippet_added(user_id, &snippet)
-                .await
-                .map_err(|error| {
-                    eprintln!(
-                        "Could not confirm notification for saved snippet {}: {error}",
-                        snippet.id
-                    );
-                    ApiError::NotificationUnavailable
-                })?;
-            let ignored = form.ignored_parameters();
+            let ignored = form.ignored_parameters(matches!(write, SnippetWrite::Edit(_)));
             let extra = if ignored.is_empty() {
                 String::new()
             } else {
@@ -571,8 +635,7 @@ async fn respond(
                 format!(",\"ignored_parameters_unsupported\":{names}")
             };
             return Ok(format!(
-                "{{\"result\":\"success\",\"msg\":\"\",\"saved_snippet_id\":{}{extra}}}\n",
-                snippet.id
+                "{{\"result\":\"success\",\"msg\":\"\"{result_fields}{extra}}}\n"
             ));
         }
         let (field, value) = endpoint.read(&database, user_id).await?;
@@ -725,6 +788,11 @@ fn error_response(
             (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Malformed payload")
         }
         ApiError::UnsupportedMethodOverride => unreachable!("override handled above"),
+        ApiError::SnippetNotFound => (
+            StatusCode::NOT_FOUND,
+            "BAD_REQUEST",
+            "Saved snippet does not exist.",
+        ),
         ApiError::RateLimited(_) => (
             StatusCode::TOO_MANY_REQUESTS,
             "RATE_LIMIT_HIT",
@@ -751,7 +819,7 @@ fn error_response(
         ApiError::RateLimited(seconds) => {
             (format!(",\"retry-after\":{seconds:?}"), "Accept-Language")
         }
-        ApiError::Form(_) => (String::new(), "Accept-Language"),
+        ApiError::Form(_) | ApiError::SnippetNotFound => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };
     let mut response = (

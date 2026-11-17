@@ -325,7 +325,7 @@ an ambiguous result.
 
 To roll back writes while keeping Rust reads, reinstall the read-only map
 and reload nginx, or remove `--rust-saved-snippet-writes` from the development
-proxy. The web alias and edit and delete routes continue through Django.
+proxy. The item routes have separate routing from the collection route.
 
 Use the dedicated RabbitMQ vhost described in the alert-word instructions
 to compare PostgreSQL rows and events from both implementations:
@@ -335,6 +335,26 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
     ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest
 ```
+
+### Enable saved-snippet editing
+
+The same `ZULIP_RUST_SAVED_SNIPPET_WRITES=1` setting enables `PATCH` on the
+Rust listener. Grant the PostgreSQL role `UPDATE` on the `title` and
+`content` columns of `zulip.zerver_savedsnippet`. A request can set either
+field or both. Sending neither succeeds without changing the snippet or
+sending a `saved_snippets/update` event. A committed update
+publishes the full snippet to the owner's Tornado queue.
+
+For nginx staging, include `saved-snippet-edit-map.conf` in the HTTP
+context and add `saved-snippet-edit-routes.conf` to `zulip-include/app.d/`.
+Use the verified realm hostname and port in the map, run `nginx -t`, and
+reload. The include routes only `PATCH /api/v1/saved_snippets/{id}`.
+Django handles `DELETE`, `OPTIONS`, and the web alias. Remove the edit
+routes include and reload to roll back PATCH independently of GET and POST.
+
+For the development proxy, use `--rust-http-port 9997 --rust-saved-snippet-edits`.
+The comparison command above also checks that patches preserve omitted fields,
+deny edits to another user's snippet, and publish the same event as Django.
 
 ## Stage alert-word reads in nginx
 

@@ -1,6 +1,10 @@
 use std::{error::Error, path::Path};
 
-use axum::{Router, extract::DefaultBodyLimit, routing::get};
+use axum::{
+    Router,
+    extract::DefaultBodyLimit,
+    routing::{get, patch},
+};
 pub use rate_limit::ClientIpSource;
 
 mod activity;
@@ -64,6 +68,13 @@ pub async fn router_with_user_reads(
         .route(user_reads::ALERT_WORDS_PATH, get(user_reads::get))
         .route(saved_snippets::PATH, snippet_route)
         .route("/health/rust-alert-words", get(user_reads::ready));
+    if saved_snippet_writes {
+        routes = routes.route(
+            saved_snippets::DETAIL_PATH,
+            patch(user_reads::edit_saved_snippet)
+                .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT)),
+        );
+    }
     if browser_enabled {
         routes = routes.route(user_reads::SESSION_PATH, get(user_reads::get));
     }

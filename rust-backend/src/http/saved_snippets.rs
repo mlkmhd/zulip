@@ -9,6 +9,7 @@ use serde::Serialize;
 use tokio_postgres::{Client, Error, Row};
 
 pub(super) const PATH: &str = "/api/v1/saved_snippets";
+pub(super) const DETAIL_PATH: &str = "/api/v1/saved_snippets/{id}";
 pub(super) const NOTIFICATION_QUEUE: &str = "notify_tornado";
 pub(super) const FORM_BODY_LIMIT: usize = 25 * 1024 * 1024;
 const AUDIT_EVENT_CREATED: i16 = 800;
@@ -55,12 +56,12 @@ pub(super) enum FormError {
     Malformed,
 }
 
-pub(super) struct CreateForm {
+pub(super) struct SnippetForm {
     fields: HashMap<String, String>,
     query: HashMap<String, String>,
 }
 
-impl CreateForm {
+impl SnippetForm {
     pub async fn parse(request: Request) -> Result<Self, FormError> {
         let query = parse_urlencoded(request.uri().query().unwrap_or("").as_bytes())?;
         let content_type = request
@@ -110,33 +111,52 @@ impl CreateForm {
             .map(String::as_str)
     }
 
-    fn required(&self, name: &'static str, max: usize) -> Result<&str, FormError> {
-        let value = self.value(name).ok_or(FormError::Missing(name))?.trim();
+    fn optional(&self, name: &'static str, max: usize) -> Result<Option<&str>, FormError> {
+        let Some(value) = self.value(name).map(str::trim) else {
+            return Ok(None);
+        };
         if value.is_empty() {
             return Err(FormError::Blank(name));
         }
         if value.chars().count() > max {
             return Err(FormError::TooLong(name, max));
         }
-        // Django's view also calls Python str.strip() after Pydantic validation.
-        Ok(
-            value
-                .trim_matches(|ch: char| ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch)),
-        )
+        Ok(Some(value))
     }
 
-    pub fn values(&self, max_content_length: usize) -> Result<(&str, &str), FormError> {
-        let content = self.required("content", max_content_length)?;
-        let title = self.required("title", MAX_TITLE_LENGTH)?;
+    pub fn create_values(&self, max_content_length: usize) -> Result<(&str, &str), FormError> {
+        let content = self
+            .optional("content", max_content_length)?
+            .ok_or(FormError::Missing("content"))?;
+        let title = self
+            .optional("title", MAX_TITLE_LENGTH)?
+            .ok_or(FormError::Missing("title"))?;
+        // Django's create view also calls Python str.strip() after Pydantic validation.
+        let strip = |ch: char| ch.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&ch);
+        Ok((title.trim_matches(strip), content.trim_matches(strip)))
+    }
+
+    pub fn edit_values(
+        &self,
+        max_content_length: usize,
+    ) -> Result<(Option<&str>, Option<&str>), FormError> {
+        let content = self.optional("content", max_content_length)?;
+        let title = self.optional("title", MAX_TITLE_LENGTH)?;
         Ok((title, content))
     }
 
-    pub fn ignored_parameters(&self) -> BTreeSet<&str> {
+    pub fn ignored_parameters(&self, is_edit: bool) -> BTreeSet<&str> {
+        // Django identifies the client before it parses the PATCH body.
+        let client_processed = !is_edit || self.query.contains_key("client");
         self.fields
             .keys()
             .chain(self.query.keys())
             .map(String::as_str)
-            .filter(|name| !matches!(*name, "title" | "content" | "client"))
+            .filter(|name| match *name {
+                "title" | "content" => false,
+                "client" => !client_processed,
+                _ => true,
+            })
             .collect()
     }
 }
@@ -177,4 +197,24 @@ pub(super) async fn create(
         &[&user_id, &realm_id, &title, &content, &AUDIT_EVENT_CREATED],
     ).await?;
     SavedSnippet::from_row(&row)
+}
+
+pub(super) async fn edit(
+    database: &Client,
+    user_id: i32,
+    snippet_id: i64,
+    title: Option<&str>,
+    content: Option<&str>,
+) -> Result<Option<SavedSnippet>, Error> {
+    // Resolve omitted fields in PostgreSQL so concurrent edits of different
+    // fields do not overwrite each other's changes.
+    let row = database.query_opt(
+        "UPDATE zulip.zerver_savedsnippet
+         SET title = COALESCE($3, title), content = COALESCE($4, content)
+         WHERE id = $1 AND user_profile_id = $2
+         RETURNING id, title, content,
+                   trunc(extract(epoch FROM date_created)::double precision)::bigint AS date_created",
+        &[&snippet_id, &user_id, &title, &content],
+    ).await?;
+    row.as_ref().map(SavedSnippet::from_row).transpose()
 }

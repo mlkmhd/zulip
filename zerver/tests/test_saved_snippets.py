@@ -267,7 +267,7 @@ class SavedSnippetReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
 
 @skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
 class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
-    def test_create_saved_snippet_http_and_event_parity(self) -> None:
+    def test_saved_snippet_write_http_and_event_parity(self) -> None:
         vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
         assert vhost.startswith("zulip-rust-test-")
         username, password = settings.RABBITMQ_USERNAME, settings.RABBITMQ_PASSWORD
@@ -303,9 +303,12 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             channel.queue_purge("user_activity")
             try:
                 django = self.check_create_cases(django_port, user, channel)
+                django_edits = self.check_edit_cases(django_port, user, channel)
                 if rust_port is not None:
                     rust = self.check_create_cases(rust_port, user, channel)
                     self.assertEqual(rust, django)
+                    rust_edits = self.check_edit_cases(rust_port, user, channel)
+                    self.assertEqual(rust_edits, django_edits)
                     self.check_failed_insert(rust_port, user, channel)
                     self.check_unroutable_event(rust_port, user, channel)
             finally:
@@ -431,6 +434,149 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 },
             )
             self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+        return responses
+
+    def check_edit_cases(
+        self,
+        port: int,
+        user: UserProfile,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> list[tuple[int, bytes, dict[str, str | None]]]:
+        other = self.example_user("othello")
+        created = datetime(2024, 2, 29, 12, 0, 0, 987654, tzinfo=UTC)
+        own, foreign = SavedSnippet.objects.bulk_create(
+            [
+                SavedSnippet(
+                    user_profile=user,
+                    realm=user.realm,
+                    title="Original",
+                    content="**Old**",
+                    date_created=created,
+                ),
+                SavedSnippet(
+                    user_profile=other,
+                    realm=other.realm,
+                    title="Private",
+                    content="Other user's text",
+                    date_created=created,
+                ),
+            ]
+        )
+        responses = []
+        audit_count = RealmAuditLog.objects.count()
+
+        def patch(
+            snippet_id: int,
+            body: str | bytes,
+            status: int,
+            *,
+            authenticated: bool = True,
+            query: str = "",
+            content_type: str = "application/x-www-form-urlencoded",
+        ) -> dict[str, object]:
+            headers = {"Content-Type": content_type}
+            if authenticated:
+                credentials = f"{user.delivery_email}:{user.api_key}".encode()
+                headers["Authorization"] = "Basic " + b64encode(credentials).decode()
+            response = request_test_http(
+                port,
+                "PATCH",
+                user.realm.host,
+                headers,
+                f"/api/v1/saved_snippets/{snippet_id}{query}",
+                body=body,
+            )
+            self.assertEqual(response[0], status)
+            responses.append(response[:3])
+            return orjson.loads(response[1])
+
+        try:
+            patch(own.id, "title=unauthorized", 401, authenticated=False)
+            patch(own.id, "title=+", 400)
+            patch(own.id, "content=" + "x" * 10001, 400)
+            missing = patch(0, "title=missing", 404)
+            self.assertEqual(missing, patch(foreign.id, "title=private", 404))
+            self.assertEqual(missing, patch(2**63, "title=out+of+range", 404))
+            self.assertEqual(patch(own.id, "", 200), {"result": "success", "msg": ""})
+            self.assertEqual(patch(0, "", 200), {"result": "success", "msg": ""})
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            own.refresh_from_db()
+            self.assertEqual((own.title, own.content), ("Original", "**Old**"))
+
+            for body, query, mime, title, content, ignored in (
+                (
+                    urlencode(
+                        {
+                            "title": "  سلام ☃  ",
+                            "unknown": "1",
+                            "client": "other",
+                            "method": "DELETE",
+                        }
+                    ),
+                    "?title=discard",
+                    "application/x-www-form-urlencoded",
+                    "سلام ☃",
+                    "**Old**",
+                    ["client", "method", "unknown"],
+                ),
+                (
+                    "",
+                    "?content=%2A%2Anew%2A%2A",
+                    "application/x-www-form-urlencoded",
+                    "سلام ☃",
+                    "**new**",
+                    [],
+                ),
+                (
+                    (
+                        b'--boundary\r\nContent-Disposition: form-data; name="title"\r\n\r\nMultipart\r\n'
+                        b'--boundary\r\nContent-Disposition: form-data; name="content"\r\n\r\nBoth\r\n--boundary--\r\n'
+                    ),
+                    "",
+                    "multipart/form-data; boundary=boundary",
+                    "Multipart",
+                    "Both",
+                    [],
+                ),
+                (
+                    "title=Multipart",
+                    "",
+                    "application/x-www-form-urlencoded",
+                    "Multipart",
+                    "Both",
+                    [],
+                ),
+            ):
+                result = patch(own.id, body, 200, query=query, content_type=mime)
+                self.assertEqual(result.get("ignored_parameters_unsupported", []), ignored)
+                own.refresh_from_db()
+                self.assertEqual(
+                    (own.title, own.content, own.date_created), (title, content, created)
+                )
+                self.assertEqual((own.user_profile_id, own.realm_id), (user.id, user.realm_id))
+                delivery, properties, event_body = channel.basic_get(
+                    "notify_tornado", auto_ack=True
+                )
+                assert delivery is not None and properties is not None and event_body is not None
+                self.assertEqual(properties.delivery_mode, 2)
+                self.assertEqual(
+                    orjson.loads(event_body),
+                    {
+                        "users": [user.id],
+                        "event": {
+                            "type": "saved_snippets",
+                            "op": "update",
+                            "saved_snippet": own.to_api_dict(),
+                        },
+                    },
+                )
+                self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+
+            foreign.refresh_from_db()
+            self.assertEqual((foreign.title, foreign.content), ("Private", "Other user's text"))
+            self.assertEqual(RealmAuditLog.objects.count(), audit_count)
+        finally:
+            SavedSnippet.objects.filter(id__in=[own.id, foreign.id]).delete()
         return responses
 
     def check_failed_insert(
