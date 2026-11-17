@@ -89,6 +89,21 @@ ZULIP_RUST_DRAFT_TEXT=0 ./tools/test-backend zerver.tests.test_drafts
 ZULIP_RUST_DRAFT_TEXT=1 ./tools/test-backend zerver.tests.test_drafts
 ```
 
+`ZULIP_RUST_DRAFT_CREATION=1` enables Rust bulk insertion for draft creation
+through both the API and web endpoints. Rust uses the PostgreSQL cursor from
+the existing Django transaction and returns IDs in request order. Django
+validates recipients and timestamps, then schedules the owner-only event for
+delivery after commit. This flag is independent of `ZULIP_RUST_DRAFT_TEXT`.
+Reinstall the extension before enabling it. Unset it and restart Django to
+restore ORM insertion.
+
+```sh
+for mode in 0 1; do
+    ZULIP_RUST_DRAFT_CREATION=$mode ./tools/test-backend \
+        zerver.tests.test_drafts zerver.tests.test_events.DraftActionTest
+done
+```
+
 ### Invalidate alert-word caches through Rust
 
 Reinstall the extension and set `ZULIP_RUST_ALERT_WORD_CACHE=1` in Django.

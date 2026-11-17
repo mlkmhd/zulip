@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 from unittest import skipUnless
+from unittest.mock import patch
 from urllib.parse import quote, urlsplit
 
 import orjson
@@ -17,6 +18,7 @@ from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.test import LiveServerTestCase
 
+from zerver.lib.drafts import DraftData, do_create_drafts
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.users import check_can_access_user
@@ -197,6 +199,67 @@ class DraftCreationTests(ZulipTestCase):
         # Since it would be too tricky to get the same times, perform
         # a relative check.
         self.assertTrue(new_draft["timestamp"] >= current_time)
+
+    def test_create_drafts_preserves_request_order_in_response_and_event(self) -> None:
+        owner = self.example_user("hamlet")
+        recipient = self.example_user("othello")
+        drafts = [
+            {
+                "type": "private",
+                "to": [recipient.id],
+                "topic": "",
+                "content": "First submitted 📝",
+                "timestamp": 1595479021,
+            },
+            {
+                "type": "",
+                "to": [],
+                "topic": "",
+                "content": "Second submitted",
+                "timestamp": 1595479019,
+            },
+        ]
+        with self.capture_send_event_calls(expected_num_events=1) as events:
+            response = self.api_post(
+                owner, "/api/v1/drafts", {"drafts": orjson.dumps(drafts).decode()}
+            )
+            ids = self.assert_json_success(response)["ids"]
+
+        first, second = ids
+        persisted = Draft.objects.in_bulk(ids)
+        self.assertEqual(
+            [persisted[first].user_profile_id, persisted[second].user_profile_id],
+            [owner.id, owner.id],
+        )
+        expected = [{**draft, "id": draft_id} for draft, draft_id in zip(drafts, ids, strict=True)]
+        self.assertEqual([persisted[draft_id].to_dict() for draft_id in ids], expected)
+        self.assertEqual(
+            events,
+            [{"event": {"type": "drafts", "op": "add", "drafts": expected}, "users": [owner.id]}],
+        )
+
+    def test_create_empty_batch(self) -> None:
+        owner = self.example_user("hamlet")
+        count = Draft.objects.count()
+        with self.capture_send_event_calls(expected_num_events=1) as events:
+            response = self.api_post(owner, "/api/v1/drafts", {"drafts": "[]"})
+            self.assertEqual(self.assert_json_success(response)["ids"], [])
+        self.assertEqual(Draft.objects.count(), count)
+        self.assertEqual(
+            events, [{"event": {"type": "drafts", "op": "add", "drafts": []}, "users": [owner.id]}]
+        )
+
+    def test_create_drafts_rolls_back_if_event_serialization_fails(self) -> None:
+        owner = self.example_user("hamlet")
+        content = "Temporary draft"
+        draft = DraftData(type="", to=[], topic="", content=content, timestamp=1595479021)
+        with (
+            self.capture_send_event_calls(expected_num_events=0),
+            patch.object(Draft, "to_dict", side_effect=ValueError("Unable to serialize draft")),
+            self.assertRaisesRegex(ValueError, "Unable to serialize draft"),
+        ):
+            do_create_drafts([draft], owner)
+        self.assertFalse(Draft.objects.filter(user_profile=owner, content=content).exists())
 
     def test_invalid_timestamp(self) -> None:
         draft_dicts = [

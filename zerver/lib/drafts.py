@@ -9,7 +9,7 @@ from typing import Annotated, Concatenate, Literal, cast
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import gettext as _
 from pydantic import BaseModel, ConfigDict
@@ -34,6 +34,9 @@ ParamT = ParamSpec("ParamT")
 
 _rust_draft_text = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_TEXT") == "1" else None
+)
+_rust_draft_creation = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_CREATION") == "1" else None
 )
 
 
@@ -158,8 +161,8 @@ def do_create_drafts(drafts: list[DraftData], user_profile: UserProfile) -> list
     the create_draft view, we assume that these are syntactically valid
     (i.e. they satisfy the @typed_endpoint validation for DraftData)."""
     draft_objects = []
-    for draft in drafts:
-        valid_draft_dict = further_validated_draft_dict(draft, user_profile)
+    for draft_data in drafts:
+        valid_draft_dict = further_validated_draft_dict(draft_data, user_profile)
         draft_objects.append(
             Draft(
                 user_profile=user_profile,
@@ -171,14 +174,30 @@ def do_create_drafts(drafts: list[DraftData], user_profile: UserProfile) -> list
         )
 
     with transaction.atomic(durable=True):
-        created_draft_objects = Draft.objects.bulk_create(draft_objects)
+        if _rust_draft_creation is None:
+            Draft.objects.bulk_create(draft_objects)
+        elif draft_objects:
+            with connection.cursor() as cursor:
+                rows = cast(
+                    list[tuple[int]],
+                    _rust_draft_creation.insert_drafts(
+                        cursor,
+                        user_profile.id,
+                        [draft.recipient_id for draft in draft_objects],
+                        [draft.topic for draft in draft_objects],
+                        [draft.content for draft in draft_objects],
+                        [draft.last_edit_time for draft in draft_objects],
+                    ),
+                )
+            for draft, (draft_id,) in zip(draft_objects, rows, strict=True):
+                draft.id = draft_id
+                draft._state.adding = False
+                draft._state.db = connection.alias
 
-        event = DraftsAddEvent(
-            drafts=[DraftFields(**draft.to_dict()) for draft in created_draft_objects]
-        )
+        event = DraftsAddEvent(drafts=[DraftFields(**draft.to_dict()) for draft in draft_objects])
         send_event_on_commit(user_profile.realm, event, [user_profile.id])
 
-    return created_draft_objects
+    return draft_objects
 
 
 def do_edit_draft(draft_id: int, draft: DraftData, user_profile: UserProfile) -> None:
