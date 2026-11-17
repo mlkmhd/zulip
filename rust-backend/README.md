@@ -415,8 +415,8 @@ when Origin is absent on HTTPS. The configured scheme controls this check.
 Replace `saved-snippets-web-map.conf` with
 `saved-snippets-web-write-map.conf` in the nginx HTTP context. Keep the
 same verified host and port and the same `saved-snippets-web-routes.conf`
-include. Run `nginx -t` and reload. Django serves `OPTIONS` and the web
-item routes. To return only POST to Django, restore the read-only map and
+include. Run `nginx -t` and reload. This map selects the collection route.
+To return only POST to Django, restore the read-only map and
 reload. nginx returns its JSON upstream error if Rust is unavailable.
 
 With the development proxy, add `--rust-saved-snippets-web-writes` to
@@ -430,6 +430,35 @@ owner-only notification with the dedicated RabbitMQ test vhost.
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
     ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest.test_saved_snippet_web_post_http_and_event_parity
+```
+
+### Enable saved-snippet web editing
+
+Use the [web creation settings](#enable-saved-snippet-web-creation),
+including `ZULIP_RUST_WEB_POST_SCHEME`, and grant the Rust database role
+`UPDATE` on `zulip.zerver_savedsnippet`. For
+`PATCH /json/saved_snippets/{id}`, Rust checks the Django session and
+compares the CSRF cookie with the `X-CSRFToken` header before applying
+the quota, recording activity, or updating the snippet. Django's PATCH
+contract uses the header token. A committed edit publishes the full
+snippet to the owner through Tornado.
+
+In nginx staging, include `saved-snippet-web-edit-map.conf` in the HTTP
+context and install `saved-snippet-web-edit-routes.conf` in
+`zulip-include/app.d/`. Use the verified hostname and port, run
+`nginx -t`, and reload. The include selects PATCH on the numeric detail
+path. Django serves DELETE, OPTIONS, and POST method overrides on that
+path. An unavailable Rust listener returns nginx's JSON upstream error.
+To roll back web PATCH, remove the detail routes include and reload.
+
+In the development proxy, use
+`--rust-http-port 9997 --rust-saved-snippets-web-edits`. Remove the edit
+flag to return web PATCH to Django.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
+    ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest.test_saved_snippet_web_patch_http_and_event_parity
 ```
 
 ## Stage alert-word reads in nginx

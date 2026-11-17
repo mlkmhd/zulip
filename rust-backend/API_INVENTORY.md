@@ -31,6 +31,7 @@
 | `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `GET /json/saved_snippets` و `HEAD` متناظر                                              | نشست Django، رفتار CSRF روش‌های امن، سهمیه و فعالیت                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست        | Django               |
 | `POST /json/saved_snippets` | نشست Django، اعتبارسنجی CSRF، ثبت متن و audit، اعلان پس از commit | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست و پروتکل | Django |
+| `PATCH /json/saved_snippets/{saved_snippet_id}` | نشست Django، CSRF از هدر، ویرایش با شرط مالکیت و اعلان پس از commit | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست و پروتکل | Django |
 | `POST /api/v1/saved_snippets`                                                           | ثبت متن و audit، اعلان پس از commit                                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
@@ -120,8 +121,7 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 `GET /json/saved_snippets` و `HEAD` همان فهرست شخصی را با نشست Django
 برمی‌گردانند. Rust از اعتبارسنج مشترک امضا، انقضا و هش نشست، رفتار CSRF
 روش‌های امن، و سهمیهٔ وب قبل از ثبت فعالیت استفاده می‌کند. مسیریابی
-خواندن وب مستقل از API است. Django همچنان `OPTIONS` و مسیرهای ویرایش و حذف
-وب را سرو می‌کند.
+خواندن وب مستقل از API است. Django مسیر `OPTIONS` را سرو می‌کند.
 [راهنمای staging برای خواندن وب](README.md#enable-saved-snippet-web-reads)
 
 `POST /json/saved_snippets` با نشست Django و اعتبارسنجی CSRF اجرا می‌شود.
@@ -131,6 +131,14 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 برای صاحب متن منتشر می‌کند. هدایت POST وب از خواندن وب و مسیر API مستقل
 قابل برگشت است.
 [راهنمای staging برای ایجاد متن در وب](README.md#enable-saved-snippet-web-creation)
+
+`PATCH /json/saved_snippets/{saved_snippet_id}` با نشست Django و مقایسهٔ
+کوکی CSRF با هدر `X-CSRFToken` اجرا می‌شود. بررسی نشست و CSRF پیش از سهمیه
+و ثبت فعالیت است. ویرایش از همان عملیات PostgreSQL و اعلان API استفاده
+می‌کند. کش متن‌ها در این عملیات تغییر نمی‌کند. هدایت PATCH وب مستقل
+است و Django درخواست‌های DELETE و POST با override روش را سرو می‌کند.
+[تست مقایسه](../zerver/tests/test_saved_snippets.py)،
+[راهنمای staging برای ویرایش متن در وب](README.md#enable-saved-snippet-web-editing)
 
 ## فهرست OpenAPI
 
@@ -445,7 +453,7 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 | `/json/reminders/{reminder_id}`                       | `DELETE`                 | Django            |
 | `/json/remove_client_device`                          | `POST`                   | Django            |
 | `/json/saved_snippets`                                | `GET`, `POST`            | Django            |
-| `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Django            |
+| `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Django، Rust اختیاری برای PATCH |
 | `/json/scheduled_messages`                            | `GET`, `POST`            | Django            |
 | `/json/scheduled_messages/{scheduled_message_id}`     | `DELETE`, `PATCH`        | Django            |
 | `/json/self-hosted-billing`                           | `GET`                    | Django (مخصوص وب) |
