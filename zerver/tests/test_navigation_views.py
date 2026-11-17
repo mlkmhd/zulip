@@ -128,7 +128,7 @@ class NavigationViewReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
 
 
 @skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
-class NavigationViewCreateHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+class NavigationViewWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
     def test_create_navigation_view_parity_with_rust(self) -> None:
         vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
         assert vhost.startswith("zulip-rust-test-")
@@ -371,6 +371,244 @@ class NavigationViewCreateHTTPTest(ZulipTransactionTestCase, LiveServerTestCase)
                             cursor.execute(
                                 "ALTER TABLE zerver_realmauditlog DROP CONSTRAINT reject_navigation_view_test"
                             )
+            channel.queue_purge("user_activity")
+
+    def test_navigation_view_detail_parity_with_rust(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(settings.RABBITMQ_USERNAME, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        api = "/api/v1/navigation_views"
+        web = "/json/navigation_views"
+        fragment = "narrow/search/دو views"
+        literal_slashes = quote(fragment)
+        encoded_slashes = quote(fragment, safe="")
+        basic = {
+            "Authorization": "Basic "
+            + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode(),
+        }
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        token = "a" * 32
+        browser = {
+            "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; {settings.CSRF_COOKIE_NAME}={token}",
+            "X-CSRFToken": token,
+        }
+        views = NavigationView.objects.filter(user=user)
+        audits = RealmAuditLog.objects.filter(acting_user=user)
+        with (
+            ExitStack() as cleanup,
+            self.settings(
+                USING_RABBITMQ=True,
+                RABBITMQ_VHOST=vhost,
+                TORNADO_PROCESSES=1,
+                SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
+            ),
+            pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+            TemporaryDirectory() as directory,
+        ):
+            cleanup.callback(session.delete)
+            cleanup.callback(views.delete)
+            cleanup.callback(audits.delete)
+            private = NavigationView.objects.create(user=other, fragment="recent", is_pinned=True)
+            cleanup.callback(private.delete)
+            channel = broker.channel()
+            for queue in ("notify_tornado", "user_activity"):
+                channel.queue_declare(queue, durable=True)
+                channel.queue_purge(queue)
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            environment = {
+                "ZULIP_RUST_NAVIGATION_VIEW_DETAILS": "1",
+                "ZULIP_RUST_AMQP_URL": amqp_url,
+                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                    settings.AUTHENTICATION_BACKENDS
+                ).decode(),
+            }
+
+            def assert_event(event: dict[str, object] | None) -> None:
+                payload = channel.basic_get("notify_tornado", auto_ack=True)[2]
+                if event is None:
+                    self.assertIsNone(payload)
+                    return
+                assert payload is not None
+                self.assertEqual(
+                    orjson.loads(payload),
+                    {"users": [user.id], "event": {"type": "navigation_view", **event}},
+                )
+                self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+
+            def check(
+                port: int, path: str, auth: dict[str, str]
+            ) -> list[tuple[int, bytes, dict[str, str | None]]]:
+                views.delete()
+                audits.delete()
+                view = NavigationView.objects.create(
+                    user=user, fragment=fragment, name="Original", is_pinned=False
+                )
+                NavigationView.objects.create(user=user, fragment="inbox", is_pinned=True)
+                results = []
+
+                def send(
+                    method: str,
+                    suffix: str,
+                    status: int,
+                    form: dict[str, str] | None = None,
+                    *,
+                    headers: dict[str, str] = auth,
+                    event: dict[str, object] | None = None,
+                ) -> None:
+                    result = request_test_http(
+                        port,
+                        method,
+                        user.realm.host,
+                        {**headers, "Content-Type": "application/x-www-form-urlencoded"},
+                        f"{path}/{suffix}",
+                        body=urlencode(form or {}),
+                    )
+                    self.assertEqual(result[0], status, result[1])
+                    results.append(result[:3])
+                    assert_event(event)
+
+                if path == web:
+                    missing_token = {
+                        key: value for key, value in auth.items() if key != "X-CSRFToken"
+                    }
+                    send(
+                        "PATCH", literal_slashes, 403, {"is_pinned": "true"}, headers=missing_token
+                    )
+                    send("DELETE", literal_slashes, 403, headers=missing_token)
+                send("PATCH", private.fragment, 404, {"is_pinned": "false"})
+                send("DELETE", private.fragment, 404)
+                send("PATCH", "inbox", 400, {"name": "Custom"})
+                send("PATCH", literal_slashes, 400, {"name": " "})
+                send("PATCH", literal_slashes, 400, {"is_pinned": "null"})
+                send("PATCH", "missing", 400, {"name": "Original"})
+                send(
+                    "PATCH",
+                    literal_slashes,
+                    200,
+                    event={"op": "update", "fragment": fragment, "data": {}},
+                )
+                self.assertFalse(audits.exists())
+                send(
+                    "PATCH",
+                    encoded_slashes + "?is_pinned=true",
+                    200,
+                    {"name": " تازه ", "fragment": private.fragment, "unknown": "ignored"},
+                    event={
+                        "op": "update",
+                        "fragment": fragment,
+                        "data": {"name": "تازه", "is_pinned": True},
+                    },
+                )
+                view.refresh_from_db()
+                self.assertEqual((view.name, view.is_pinned), ("تازه", True))
+                entries = list(audits.order_by("id"))
+                self.assert_length(entries, 2)
+                self.assertEqual(entries[0].event_time, entries[1].event_time)
+                for entry, field, previous, value in zip(
+                    entries, ("name", "is_pinned"), ("Original", False), ("تازه", True), strict=True
+                ):
+                    self.assertEqual(entry.event_type, AuditLogEventType.NAVIGATION_VIEW_UPDATED)
+                    self.assertEqual(entry.realm_id, user.realm_id)
+                    self.assertEqual(entry.modified_user_id, user.id)
+                    self.assertFalse(entry.backfilled)
+                    self.assertEqual(
+                        entry.extra_data,
+                        {
+                            "fragment": fragment,
+                            "property": field,
+                            RealmAuditLog.OLD_VALUE: previous,
+                            RealmAuditLog.NEW_VALUE: value,
+                        },
+                    )
+                send("PATCH", literal_slashes, 400, {"name": "تازه"})
+                send(
+                    "DELETE",
+                    encoded_slashes,
+                    200,
+                    {"extra": "ignored"},
+                    event={"op": "remove", "fragment": fragment},
+                )
+                self.assertFalse(views.filter(id=view.id).exists())
+                self.assertTrue(
+                    NavigationView.objects.filter(id=private.id, is_pinned=True).exists()
+                )
+                entry = audits.get(event_type=AuditLogEventType.NAVIGATION_VIEW_DELETED)
+                self.assertEqual(entry.realm_id, user.realm_id)
+                self.assertEqual(entry.modified_user_id, user.id)
+                self.assertEqual(entry.extra_data, {"fragment": fragment})
+                send("DELETE", literal_slashes, 404)
+                self.assertEqual(audits.count(), 3)
+                return results
+
+            enabled = os.environ.get("ZULIP_RUST_HTTP_BIN")
+            for scheme in ("http", "https"):
+                auth = (
+                    browser
+                    if scheme == "http"
+                    else {
+                        **browser,
+                        "X-Forwarded-Proto": "https",
+                        "Referer": f"https://{user.realm.host}/",
+                    }
+                )
+                service = (
+                    rust_http_service({**environment, "ZULIP_RUST_WEB_POST_SCHEME": scheme})
+                    if enabled
+                    else nullcontext(None)
+                )
+                with service as rust_port:
+                    routes = [(api, basic), (web, auth)] if scheme == "http" else [(web, auth)]
+                    for path, headers in routes:
+                        with self.subTest(path=path, scheme=scheme):
+                            django = check(django_port, path, headers)
+                            if rust_port is not None:
+                                self.assertEqual(check(rust_port, path, headers), django)
+            if enabled:
+                NavigationView.objects.create(
+                    user=user, fragment=fragment, name="Original", is_pinned=False
+                )
+                audits.delete()
+                with (
+                    rust_http_service(environment) as first,
+                    rust_http_service(environment) as second,
+                    ThreadPoolExecutor(max_workers=2) as requests,
+                ):
+                    responses = [
+                        requests.submit(
+                            request_test_http,
+                            port,
+                            "DELETE",
+                            user.realm.host,
+                            basic,
+                            f"{api}/{encoded_slashes}",
+                        )
+                        for port in (first, second)
+                    ]
+                    self.assertCountEqual(
+                        [response.result()[0] for response in responses], [200, 404]
+                    )
+                    self.assertFalse(views.filter(fragment=fragment).exists())
+                    self.assertEqual(audits.count(), 1)
+                    assert_event({"op": "remove", "fragment": fragment})
             channel.queue_purge("user_activity")
 
 

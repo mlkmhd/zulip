@@ -26,7 +26,7 @@ use super::{
     form::{Form, FormError},
     linkifiers,
     locale::Locales,
-    navigation_views,
+    navigation_views::{self, NavigationViewUpdate, UpdateOutcome},
     rate_limit::{RateLimit, RateLimiter},
     realm_domains,
     saved_snippets::{self, SnippetEvent},
@@ -38,6 +38,7 @@ use super::{
 pub(super) const ALERT_WORDS_PATH: &str = "/api/v1/users/me/alert_words";
 pub(super) const ALERT_WORDS_SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
+const DUPLICATE_NAVIGATION_VIEW: &str = "Navigation view already exists.";
 const NEVER_CACHE: &str = "max-age=0, no-cache, no-store, must-revalidate, private";
 
 #[derive(Clone, Copy)]
@@ -55,9 +56,11 @@ enum Endpoint {
 }
 
 #[derive(Clone, Copy)]
-enum WriteOperation {
+enum WriteOperation<'a> {
     CreateSnippet,
     CreateNavigationView,
+    EditNavigationView(&'a str),
+    DeleteNavigationView(&'a str),
     EditSnippet(Option<i64>),
     DeleteSnippet(Option<i64>),
     AddAlertWords,
@@ -65,7 +68,7 @@ enum WriteOperation {
     DeleteDraft(Option<i64>),
 }
 
-impl WriteOperation {
+impl WriteOperation<'_> {
     fn is_post(self) -> bool {
         matches!(
             self,
@@ -267,6 +270,7 @@ impl UserReads {
                     saved_snippet_writes
                         || settings.draft_deletes
                         || settings.navigation_view_posts
+                        || settings.navigation_view_details
                         || alert_word_lowercase.is_some(),
                 )
                 .await?,
@@ -280,8 +284,8 @@ impl UserReads {
             None if settings.draft_deletes => {
                 return Err("Draft DELETE requires ZULIP_RUST_AMQP_URL".into());
             }
-            None if settings.navigation_view_posts => {
-                return Err("Navigation view POST requires ZULIP_RUST_AMQP_URL".into());
+            None if settings.navigation_view_posts || settings.navigation_view_details => {
+                return Err("Navigation view writes require ZULIP_RUST_AMQP_URL".into());
             }
             None => None,
         };
@@ -540,6 +544,7 @@ enum ApiError {
     Unauthorized(&'static str),
     BadRequest(&'static str),
     InvalidNavigationView(&'static str),
+    NavigationViewNotFound,
     DeactivatedUser,
     DeactivatedRealm,
     InvalidHost,
@@ -651,6 +656,20 @@ pub(super) async fn create_navigation_view(
     respond_write(state, peer, request, WriteOperation::CreateNavigationView).await
 }
 
+pub(super) async fn write_navigation_view_detail(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(fragment): Path<String>,
+    request: Request,
+) -> Response {
+    let write = if request.method() == Method::DELETE {
+        WriteOperation::DeleteNavigationView(&fragment)
+    } else {
+        WriteOperation::EditNavigationView(&fragment)
+    };
+    respond_write(state, peer, request, write).await
+}
+
 pub(super) async fn delete_draft(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -692,7 +711,7 @@ async fn respond_write(
     state: UserReads,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     request: Request,
-    write: WriteOperation,
+    write: WriteOperation<'_>,
 ) -> Response {
     let (uri, headers) = (request.uri().clone(), request.headers().clone());
     let form = Form::parse(request).await;
@@ -704,7 +723,7 @@ async fn respond(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     uri: Uri,
     headers: HeaderMap,
-    form: Option<(WriteOperation, Result<Form, FormError>)>,
+    form: Option<(WriteOperation<'_>, Result<Form, FormError>)>,
 ) -> Response {
     let language = Locales::for_request(&headers);
     let endpoint = match uri.path() {
@@ -752,6 +771,8 @@ async fn respond(
         let activity_name = match write {
             Some(WriteOperation::CreateSnippet) => "create_saved_snippet",
             Some(WriteOperation::CreateNavigationView) => "add_navigation_view",
+            Some(WriteOperation::EditNavigationView(_)) => "update_navigation_view",
+            Some(WriteOperation::DeleteNavigationView(_)) => "remove_navigation_view",
             Some(WriteOperation::EditSnippet(_)) => "edit_saved_snippet",
             Some(WriteOperation::DeleteSnippet(_)) => "delete_saved_snippet",
             Some(WriteOperation::AddAlertWords) => "add_alert_words",
@@ -841,6 +862,57 @@ async fn respond(
             (database, user.id, user.realm_id)
         };
         if let (Some(write), Some(form)) = (write, form) {
+            if let WriteOperation::EditNavigationView(fragment)
+            | WriteOperation::DeleteNavigationView(fragment) = write
+            {
+                let update = if matches!(write, WriteOperation::EditNavigationView(_)) {
+                    let update = NavigationViewUpdate::from_form(&form).map_err(ApiError::Form)?;
+                    update.validate_name(fragment).map_err(ApiError::InvalidNavigationView)?;
+                    Some(update)
+                } else {
+                    None
+                };
+                let activity = state
+                    .activity
+                    .as_ref()
+                    .expect("navigation view writes require RabbitMQ");
+                let queue = activity
+                    .notification_queue(realm_id, user_id)
+                    .await
+                    .ok_or(ApiError::NotificationUnavailable)?;
+                let (event, extra) = {
+                    let mut writer = state
+                        .database
+                        .writer()
+                        .await
+                        .map_err(ApiError::database_unavailable)?;
+                    if let Some(update) = update {
+                        match update.apply(&mut writer, user_id, realm_id, fragment).await? {
+                            UpdateOutcome::Updated => {}
+                            UpdateOutcome::DuplicateName => {
+                                return Err(ApiError::InvalidNavigationView(DUPLICATE_NAVIGATION_VIEW));
+                            }
+                            UpdateOutcome::Missing => return Err(ApiError::NavigationViewNotFound),
+                        }
+                        let processed: &[_] = if form.has_query_client() {
+                            &["is_pinned", "name", "client"]
+                        } else {
+                            &["is_pinned", "name"]
+                        };
+                        (update.event(fragment), ignored_parameters(&form, processed))
+                    } else {
+                        if !navigation_views::delete(&mut writer, user_id, realm_id, fragment).await? {
+                            return Err(ApiError::NavigationViewNotFound);
+                        }
+                        (serde_json::json!({"type": "navigation_view", "op": "remove", "fragment": fragment}), String::new())
+                    }
+                };
+                activity.notify_user(queue, user_id, event).await.map_err(|error| {
+                    eprintln!("Could not confirm navigation view notification for user {user_id}: {error}");
+                    ApiError::NotificationUnavailable
+                })?;
+                return Ok(format!("{{\"result\":\"success\",\"msg\":\"\"{extra}}}\n"));
+            }
             if matches!(write, WriteOperation::CreateNavigationView) {
                 let view = navigation_views::NavigationView::from_form(&form).map_err(ApiError::Form)?;
                 view.validate_name().map_err(ApiError::InvalidNavigationView)?;
@@ -861,7 +933,7 @@ async fn respond(
                     view.create(&mut writer, user_id, realm_id).await?
                 };
                 if !created {
-                    return Err(ApiError::InvalidNavigationView("Navigation view already exists."));
+                    return Err(ApiError::InvalidNavigationView(DUPLICATE_NAVIGATION_VIEW));
                 }
                 activity.notify_user(queue, user_id, view.add_event()).await.map_err(|error| {
                     eprintln!("Could not confirm navigation view notification for user {user_id}: {error}");
@@ -973,6 +1045,8 @@ async fn respond(
                 WriteOperation::AddAlertWords
                 | WriteOperation::RemoveAlertWords
                 | WriteOperation::CreateNavigationView
+                | WriteOperation::EditNavigationView(_)
+                | WriteOperation::DeleteNavigationView(_)
                 | WriteOperation::DeleteDraft(_) => {
                     unreachable!("handled above")
                 }
@@ -1221,6 +1295,11 @@ fn error_response(
             "User has disabled synchronizing drafts.",
         ),
         ApiError::DraftNotFound => (StatusCode::NOT_FOUND, "BAD_REQUEST", "Draft does not exist"),
+        ApiError::NavigationViewNotFound => (
+            StatusCode::NOT_FOUND,
+            "BAD_REQUEST",
+            "Navigation view does not exist.",
+        ),
         ApiError::SnippetNotFound => (
             StatusCode::NOT_FOUND,
             "BAD_REQUEST",
@@ -1271,6 +1350,7 @@ fn error_response(
         ApiError::Form(_)
         | ApiError::SnippetNotFound
         | ApiError::InvalidNavigationView(_)
+        | ApiError::NavigationViewNotFound
         | ApiError::DraftSyncDisabled
         | ApiError::DraftNotFound => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),

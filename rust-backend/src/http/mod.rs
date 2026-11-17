@@ -45,6 +45,7 @@ pub struct UserReadConfig<'a> {
     pub alert_word_posts: bool,
     pub draft_deletes: bool,
     pub navigation_view_posts: bool,
+    pub navigation_view_details: bool,
     pub session: Option<SessionConfig<'a>>,
     pub web_post_scheme: Option<WebPostScheme>,
     pub saved_snippet_max_content_length: Option<usize>,
@@ -82,6 +83,7 @@ pub async fn router_with_user_reads(
     let alert_word_posts = config.alert_word_posts;
     let draft_deletes = config.draft_deletes;
     let navigation_view_posts = config.navigation_view_posts;
+    let navigation_view_details = config.navigation_view_details;
     if alert_word_posts && !alert_word_writes {
         return Err("Alert-word POST requires ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE".into());
     }
@@ -91,7 +93,8 @@ pub async fn router_with_user_reads(
             && (saved_snippet_writes
                 || alert_word_writes
                 || draft_deletes
-                || navigation_view_posts))
+                || navigation_view_posts
+                || navigation_view_details))
     {
         return Err("Web writes require Django sessions and an enabled write route".into());
     }
@@ -149,6 +152,15 @@ pub async fn router_with_user_reads(
     if draft_deletes {
         routes = routes.route(drafts::DETAIL_PATH, draft_detail_route.clone());
     }
+    let navigation_view_detail_route = patch(user_reads::write_navigation_view_detail)
+        .delete(user_reads::write_navigation_view_detail)
+        .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
+    if navigation_view_details {
+        routes = routes.route(
+            navigation_views::DETAIL_PATH,
+            navigation_view_detail_route.clone(),
+        );
+    }
     if browser_enabled {
         let mut web_snippet_route = get(user_reads::get);
         if web_writes_enabled && saved_snippet_writes {
@@ -159,6 +171,12 @@ pub async fn router_with_user_reads(
         }
         if web_writes_enabled && draft_deletes {
             routes = routes.route(drafts::SESSION_DETAIL_PATH, draft_detail_route);
+        }
+        if web_writes_enabled && navigation_view_details {
+            routes = routes.route(
+                navigation_views::SESSION_DETAIL_PATH,
+                navigation_view_detail_route,
+            );
         }
         routes = routes
             .route(

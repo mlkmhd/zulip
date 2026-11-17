@@ -660,8 +660,8 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
 
 For nginx staging, include `navigation-views-map.conf` in the HTTP context
 and `navigation-views-routes.conf` in `app.d/`. Confirm that the allowlisted
-host and port resolve to the same organization in both services. `POST`,
-`OPTIONS` and fragment-specific URLs use Django. To roll back the reads,
+host and port resolve to the same organization in both services. This setup
+sends `POST`, `OPTIONS` and fragment-specific URLs to Django. To roll back the reads,
 remove the development option or the `navigation-views-routes.conf` include
 and reload nginx after validation.
 
@@ -695,6 +695,28 @@ For nginx staging, replace the read map with
 and reload nginx. Restore `navigation-views-map.conf` and reload to
 return POST to Django while keeping GET and HEAD on Rust. In development,
 remove `--rust-navigation-view-posts` for the same rollback.
+
+### Edit and delete navigation views through Rust
+
+Set `ZULIP_RUST_NAVIGATION_VIEW_DETAILS=1` with the same RabbitMQ, session,
+and scheme settings as for creation. Grant the Rust database role
+`UPDATE` and `DELETE` on `zulip.zerver_navigationview`. It also needs
+the audit table and sequence permissions used for creation.
+
+`PATCH` and `DELETE` use the authenticated user's fragment, including
+fragments with slashes. Web requests use the CSRF header. Each patch
+records the old and new value of each supplied field in the same transaction
+as the update. Each successful delete records the deleted fragment.
+The corresponding owner-only event is published after commit.
+
+Use `--rust-navigation-view-details` in development. In nginx staging,
+keep the navigation view collection config and add
+`navigation-views-detail-map.conf` and `navigation-views-detail-routes.conf`
+in the HTTP context and `app.d/` respectively. Make the host and port
+match the collection map, validate and reload nginx. The detail route sends
+physical PATCH and DELETE to Rust. Django handles OPTIONS and POST method
+overrides. Remove the development option or the detail includes to return
+the two methods to Django while preserving the collection routes.
 
 ## Read channel folders through Rust
 

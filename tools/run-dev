@@ -117,6 +117,11 @@ parser.add_argument(
     help="Forward navigation view POST requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-navigation-view-details",
+    action="store_true",
+    help="Forward navigation view PATCH and DELETE requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--rust-channel-folder-reads",
     action="store_true",
     help="Forward channel folder GET and HEAD requests to the Rust HTTP server",
@@ -278,6 +283,8 @@ if options.rust_navigation_view_reads and options.rust_http_port is None:
     parser.error("--rust-navigation-view-reads requires --rust-http-port")
 if options.rust_navigation_view_posts and options.rust_http_port is None:
     parser.error("--rust-navigation-view-posts requires --rust-http-port")
+if options.rust_navigation_view_details and options.rust_http_port is None:
+    parser.error("--rust-navigation-view-details requires --rust-http-port")
 if options.rust_channel_folder_reads and options.rust_http_port is None:
     parser.error("--rust-channel-folder-reads requires --rust-http-port")
 if options.rust_scheduled_message_reads and options.rust_http_port is None:
@@ -622,6 +629,10 @@ build step and rerun `run-dev`.""")
                 view_methods.add(hdrs.METH_POST)
             rust_routes["/api/v1/navigation_views"] = view_methods
             rust_routes["/json/navigation_views"] = view_methods
+        if options.rust_navigation_view_details:
+            view_detail_methods = {hdrs.METH_PATCH, hdrs.METH_DELETE}
+            rust_routes["/api/v1/navigation_views/{fragment:.+}"] = view_detail_methods
+            rust_routes["/json/navigation_views/{fragment:.+}"] = view_detail_methods
         if options.rust_channel_folder_reads:
             rust_routes["/api/v1/channel_folders"] = read_methods
             rust_routes["/json/channel_folders"] = read_methods
@@ -700,7 +711,7 @@ def add_rust_routes(rust_port: int, routes: dict[str, set[str]]) -> None:
                 rust_port,
                 request,
                 replace_real_ip=True,
-                retry_connection=request.method not in {hdrs.METH_DELETE, hdrs.METH_POST},
+                retry_connection=request.method in {hdrs.METH_GET, hdrs.METH_HEAD},
             )
         return await forward(django_port, request)
 
