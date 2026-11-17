@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     error::Error,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -13,7 +14,10 @@ use lapin::{
 use tokio::time::timeout;
 use tokio_postgres::Client;
 
-use super::user_agent;
+use super::{
+    tornado_routing::{DEFAULT_QUEUE, TornadoRouting},
+    user_agent,
+};
 
 #[derive(Clone)]
 pub(super) struct ActivityPublisher(Arc<Publisher>);
@@ -22,11 +26,11 @@ struct Publisher {
     connection: Connection,
     channel: Channel,
     shards: u32,
+    tornado_routing: Option<TornadoRouting>,
 }
 
 type ActivityError = Box<dyn Error + Send + Sync>;
 const BROKER_TIMEOUT: Duration = Duration::from_secs(5);
-const NOTIFICATION_QUEUE: &str = "notify_tornado";
 
 impl ActivityPublisher {
     pub(super) fn connected(&self) -> bool {
@@ -40,6 +44,10 @@ impl ActivityPublisher {
         if settings.shards == 0 {
             return Err("ZULIP_RUST_USER_ACTIVITY_SHARDS must be positive".into());
         }
+        let tornado_routing = settings
+            .tornado_routing_file
+            .map(TornadoRouting::load)
+            .transpose()?;
         let connection = timeout(
             BROKER_TIMEOUT,
             Connection::connect(
@@ -54,9 +62,16 @@ impl ActivityPublisher {
             channel.confirm_select(ConfirmSelectOptions::default()),
         )
         .await??;
-        let queues = (0..settings.shards)
+        let mut queues = (0..settings.shards)
             .map(|shard| queue_name(shard, settings.shards))
-            .chain(publishes_events.then(|| NOTIFICATION_QUEUE.to_owned()));
+            .collect::<BTreeSet<_>>();
+        if publishes_events {
+            if let Some(routing) = &tornado_routing {
+                queues.extend(routing.queues().cloned());
+            } else {
+                queues.insert(DEFAULT_QUEUE.to_owned());
+            }
+        }
         for queue in queues {
             timeout(
                 BROKER_TIMEOUT,
@@ -72,6 +87,7 @@ impl ActivityPublisher {
             connection,
             channel,
             shards: settings.shards,
+            tornado_routing,
         })))
     }
 
@@ -93,13 +109,24 @@ impl ActivityPublisher {
         self.publish(&queue, event).await
     }
 
+    pub(super) fn notification_queue(&self, realm_id: i32, user_id: i32) -> Option<&str> {
+        if !self.connected() {
+            return None;
+        }
+        match &self.0.tornado_routing {
+            Some(routing) => routing.queue_for_user(realm_id, user_id),
+            None => Some(DEFAULT_QUEUE),
+        }
+    }
+
     pub(super) async fn notify_user(
         &self,
+        queue: &str,
         user_id: i32,
         event: serde_json::Value,
     ) -> Result<(), ActivityError> {
         self.publish(
-            NOTIFICATION_QUEUE,
+            queue,
             serde_json::json!({
                 "event": event,
                 "users": [user_id],

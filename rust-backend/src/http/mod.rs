@@ -19,6 +19,7 @@ mod locale;
 mod rate_limit;
 mod saved_snippets;
 mod session;
+mod tornado_routing;
 mod unicode_lowercase;
 mod user_agent;
 mod user_reads;
@@ -58,6 +59,7 @@ pub struct RateLimitConfig<'a> {
 pub struct ActivityConfig<'a> {
     pub url: &'a str,
     pub shards: u32,
+    pub tornado_routing_file: Option<&'a Path>,
 }
 
 pub async fn router_with_user_reads(

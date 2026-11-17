@@ -286,9 +286,9 @@ impl UserReads {
             .activity
             .as_ref()
             .expect("alert-word writes require RabbitMQ");
-        if !activity.connected() {
-            return Err(ApiError::NotificationUnavailable);
-        }
+        let queue = activity
+            .notification_queue(realm_id, user_id)
+            .ok_or(ApiError::NotificationUnavailable)?;
 
         let remaining = {
             let mut writer = self
@@ -312,6 +312,7 @@ impl UserReads {
         };
         activity
             .notify_user(
+                queue,
                 user_id,
                 serde_json::json!({
                     "type": "alert_words",
@@ -738,11 +739,12 @@ async fn respond(
                 .activity
                 .as_ref()
                 .expect("saved snippet writes require RabbitMQ");
+            let queue = activity.notification_queue(realm_id, user_id);
             let mut result_fields = String::new();
             let change = match write {
                 WriteOperation::CreateSnippet => {
                     let (title, content) = form.create_values(max).map_err(ApiError::Form)?;
-                    if !activity.connected() {
+                    if queue.is_none() {
                         return Err(ApiError::NotificationUnavailable);
                     }
                     let snippet =
@@ -757,7 +759,7 @@ async fn respond(
                         None
                     } else {
                         let id = id.ok_or(ApiError::SnippetNotFound)?;
-                        if !activity.connected() {
+                        if queue.is_none() {
                             return Err(ApiError::NotificationUnavailable);
                         }
                         let snippet = saved_snippets::edit(&database, user_id, id, title, content)
@@ -768,7 +770,7 @@ async fn respond(
                 }
                 WriteOperation::DeleteSnippet(id) => {
                     let id = id.ok_or(ApiError::SnippetNotFound)?;
-                    if !activity.connected() {
+                    if queue.is_none() {
                         return Err(ApiError::NotificationUnavailable);
                     }
                     if !saved_snippets::delete(&database, user_id, id).await? {
@@ -782,7 +784,11 @@ async fn respond(
             };
             if let Some(event) = change {
                 activity
-                    .notify_user(user_id, event.payload())
+                    .notify_user(
+                        queue.expect("mutation requires a notification queue"),
+                        user_id,
+                        event.payload(),
+                    )
                     .await
                     .map_err(|error| {
                         eprintln!(

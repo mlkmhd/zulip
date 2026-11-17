@@ -301,8 +301,9 @@ With the [alert-word read settings](#run-the-alert-word-read-api-over-http),
 including `ZULIP_RUST_AMQP_URL`, start `zulip-http` to serve
 `DELETE /api/v1/users/me/alert_words` with Basic Auth. The database role also
 needs `DELETE` on `zulip.zerver_alertword`. The handler targets the default
-`notify_tornado` queue used by a single Tornado process. The cache requires one
-unauthenticated loopback Memcached server using the text protocol.
+`notify_tornado` queue unless [Tornado routing is configured](#route-write-events-to-multiple-tornado-processes).
+The cache requires one unauthenticated loopback Memcached server using the
+text protocol.
 
 For `DELETE /json/users/me/alert_words`, also configure
 [Django session authentication](#read-alert-words-with-a-django-session) and
@@ -359,6 +360,28 @@ and [nginx staging](#stage-alert-word-post-in-nginx).
 
 Use the same fixtures as the DELETE comparison and run
 `zerver.tests.test_alert_words.AlertWordWriteHTTPTest.test_post_http_cache_and_event_parity`.
+
+## Route write events to multiple Tornado processes
+
+Export the routing file with the deployment's Django settings after updating
+its [Tornado sharding configuration](https://zulip.readthedocs.io/en/latest/production/system-configuration.html#tornado_sharding).
+Django resolves its exact and regex hostname rules to an ordered list of
+notification queues per organization.
+
+```sh
+./manage.py export_rust_tornado_routing "$PWD/var/rust-tornado-routing.json"
+export ZULIP_RUST_TORNADO_ROUTING_FILE="$PWD/var/rust-tornado-routing.json"
+```
+
+Start or restart Rust with the file and the deployment's `ZULIP_RUST_AMQP_URL`.
+Rust chooses the recipient's queue using the same user ID modulo rule as
+Django. This applies to alert-word and saved-snippet changes. A missing
+organization in the file causes a write to return `503` before modifying data.
+Re-export and restart Rust when organizations or shard assignments change.
+For a single Tornado process, the default queue is `notify_tornado`.
+
+The [HTTP comparison](#delete-alert-words-through-rust) fixtures also support
+`zerver.tests.test_alert_words.AlertWordWriteHTTPTest.test_delete_tornado_shard_parity`.
 
 ## Route alert-word reads through the development proxy
 
@@ -486,8 +509,9 @@ the selected upstream to avoid duplicating quota and activity side effects.
 ### Enable saved-snippet creation
 
 Set `ZULIP_RUST_SAVED_SNIPPET_WRITES=1` on `zulip-http` with the staging
-`ZULIP_RUST_AMQP_URL`. This slice targets a single Tornado process that
-consumes `notify_tornado`. Use `ZULIP_RUST_MAX_MESSAGE_LENGTH` if Django's
+`ZULIP_RUST_AMQP_URL`. For multiple processes, configure
+[Tornado routing](#route-write-events-to-multiple-tornado-processes).
+Use `ZULIP_RUST_MAX_MESSAGE_LENGTH` if Django's
 `MAX_MESSAGE_LENGTH` differs from `10000`. The PostgreSQL role also needs
 `INSERT` on `zulip.zerver_savedsnippet` and `zulip.zerver_realmauditlog`,
 `SELECT` on the returned columns, and `USAGE` on both ID sequences.

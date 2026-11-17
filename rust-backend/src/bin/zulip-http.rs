@@ -92,6 +92,10 @@ async fn user_read_router(
         Some(_) => return Err("ZULIP_RUST_DEBUG_RATE_LIMITING must be 0 or 1".into()),
     };
     let amqp_url = optional_env("ZULIP_RUST_AMQP_URL")?;
+    let tornado_routing_file = env::var_os("ZULIP_RUST_TORNADO_ROUTING_FILE").map(PathBuf::from);
+    if tornado_routing_file.is_some() && amqp_url.is_none() {
+        return Err("Tornado routing requires ZULIP_RUST_AMQP_URL".into());
+    }
     let saved_snippet_max_content_length =
         match optional_env("ZULIP_RUST_SAVED_SNIPPET_WRITES")?.as_deref() {
             None | Some("0") => None,
@@ -134,9 +138,11 @@ async fn user_read_router(
                 client_ip_source,
                 debug_rate_limiting,
             }),
-            activity: amqp_url
-                .as_deref()
-                .map(|url| ActivityConfig { url, shards }),
+            activity: amqp_url.as_deref().map(|url| ActivityConfig {
+                url,
+                shards,
+                tornado_routing_file: tornado_routing_file.as_deref(),
+            }),
             session: secret_file.as_deref().map(|secret_file| SessionConfig {
                 secret_file,
                 backends: &backends,

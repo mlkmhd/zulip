@@ -30,6 +30,7 @@ def rust_http_service(
     env = os.environ.copy()
     env.pop("ZULIP_RUST_REDIS_URL", None)
     env.pop("ZULIP_RUST_AMQP_URL", None)
+    env.pop("ZULIP_RUST_TORNADO_ROUTING_FILE", None)
     env.pop("ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST", None)
     env.pop("ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE", None)
     env.pop("ZULIP_RUST_ALERT_WORD_POSTS", None)

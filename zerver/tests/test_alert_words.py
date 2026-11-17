@@ -452,7 +452,12 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
     def test_post_http_cache_and_event_parity(self) -> None:
         self.check_write_http_cache_and_event_parity("POST")
 
-    def check_write_http_cache_and_event_parity(self, method: Literal["POST", "DELETE"]) -> None:
+    def test_delete_tornado_shard_parity(self) -> None:
+        self.check_write_http_cache_and_event_parity("DELETE", sharded=True)
+
+    def check_write_http_cache_and_event_parity(
+        self, method: Literal["POST", "DELETE"], *, sharded: bool = False
+    ) -> None:
         adding = method == "POST"
         vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
         assert vhost.startswith("zulip-rust-test-")
@@ -477,6 +482,13 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         assert django_port is not None
         user = self.example_user("hamlet")
         other = self.example_user("othello")
+        ports = [9983, 9984] if sharded else [9983]
+        # Arrange for this user to use the second process, unlike an unmapped realm.
+        realm_ports = ports if user.id % 2 else ports[::-1]
+        realm_shards = {user.realm.host: realm_ports} if sharded else {}
+        notify_queue = "notify_tornado_port_9984" if sharded else "notify_tornado"
+        other_queues = ("notify_tornado", "notify_tornado_port_9983") if sharded else ()
+        queues = (notify_queue, "user_activity", *other_queues)
         words = AlertWord.objects.filter(user_profile=user)
         original_words = list(words)
         modern_upper = "\u1c89"
@@ -531,15 +543,17 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 PRODUCTION=True,
                 USING_RABBITMQ=True,
                 RABBITMQ_VHOST=vhost,
-                TORNADO_PROCESSES=1,
+                TORNADO_PORTS=ports,
+                TORNADO_PROCESSES=len(ports),
                 SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
             ),
             pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
             TemporaryDirectory() as directory,
             patch("zerver.lib.cache.DEPLOYMENTS_DIR", directory),
+            patch.dict("zerver.tornado.sharding.shard_map", realm_shards),
         ):
             channel = broker.channel()
-            for queue in ("notify_tornado", "user_activity"):
+            for queue in queues:
                 channel.queue_declare(queue, durable=True)
                 channel.queue_purge(queue)
             prefixes = [zulip_cache.KEY_PREFIX, f"{zulip_cache.KEY_PREFIX}previous:"]
@@ -574,6 +588,15 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 "ZULIP_RUST_SESSION_COOKIE_NAME": settings.SESSION_COOKIE_NAME,
                 "ZULIP_RUST_CSRF_COOKIE_NAME": settings.CSRF_COOKIE_NAME,
             }
+            if sharded and use_rust:
+                routing = Path(directory) / "tornado-routing.json"
+                call_command("export_rust_tornado_routing", routing)
+                resolved = orjson.loads(routing.read_bytes())["realm_queues"]
+                self.assertEqual(
+                    resolved[str(user.realm_id)],
+                    [f"notify_tornado_port_{port}" for port in realm_ports],
+                )
+                environment["ZULIP_RUST_TORNADO_ROUTING_FILE"] = str(routing)
 
             def check_request(
                 port: int,
@@ -605,7 +628,9 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 self.assertEqual(cache.get(unrelated), "cached")
                 for key in keys:
                     self.assertEqual(cache.get(key), "cached" if remaining is None else None)
-                _, _, event = channel.basic_get("notify_tornado", auto_ack=True)
+                _, _, event = channel.basic_get(notify_queue, auto_ack=True)
+                for queue in other_queues:
+                    self.assertIsNone(channel.basic_get(queue, auto_ack=True)[2])
                 _, _, activity = channel.basic_get("user_activity", auto_ack=True)
                 if status in (401, 403, 405):
                     self.assertIsNone(activity)
@@ -635,7 +660,7 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     self.assertEqual(payload["users"], [user.id])
                     self.assertEqual(payload["event"]["type"], "alert_words")
                     self.assertCountEqual(payload["event"]["alert_words"], remaining)
-                    self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                    self.assertIsNone(channel.basic_get(notify_queue, auto_ack=True)[2])
                 response_body = response[1]
                 if status == 200:
                     # Neither query specifies an order for the alert-word list.
@@ -792,6 +817,8 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                 ),
                             ]
                         )
+                    if sharded:
+                        cases = [case for case in cases if case[0] in {"API valid", "web valid"}]
                     service = (
                         rust_http_service({**environment, "ZULIP_RUST_WEB_POST_SCHEME": scheme})
                         if use_rust
@@ -824,12 +851,19 @@ class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                             check_request(
                                 rust_port, api, {**media, **basic}, payload, 200, remaining_words
                             )
+                if sharded and use_rust:
+                    stale = Path(directory) / "stale-routing.json"
+                    stale.write_bytes(orjson.dumps({"realm_queues": {}}))
+                    with rust_http_service(
+                        {**environment, "ZULIP_RUST_TORNADO_ROUTING_FILE": str(stale)}
+                    ) as rust_port:
+                        check_request(rust_port, api, {**media, **basic}, payload, 503, None)
             finally:
                 words.delete()
                 AlertWord.objects.bulk_create(original_words)
                 shared_word.delete()
                 cache.delete_many([*keys, unrelated, "cache_key_prefixes"])
-                for queue in ("notify_tornado", "user_activity"):
+                for queue in queues:
                     channel.queue_purge(queue)
 
 
