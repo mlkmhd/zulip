@@ -15,6 +15,7 @@ from urllib.parse import quote
 import orjson
 import pika
 from django.conf import settings
+from typing_extensions import override
 
 from zerver.lib.test_classes import ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
@@ -47,6 +48,7 @@ class BrokerRelayHandler(socketserver.BaseRequestHandler):
     server: BrokerRelay
     request: socket.socket
 
+    @override
     def handle(self) -> None:
         with (
             suppress(OSError),
