@@ -43,6 +43,11 @@
 | `POST /api/v1/drafts` و `PATCH /api/v1/drafts/{draft_id}` و aliasهای وب                 | عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT`                        | Django با افزونهٔ اختیاری Rust                                  | Django               |
 | `GET /api/v1/realm/linkifiers` و alias وب با `HEAD` متناظر                              | خواندن لینک‌سازهای سازمان با ترتیب اولویت از PostgreSQL              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/domains` و alias وب با `HEAD` متناظر                                 | خواندن دامنه‌های مجاز ایمیل سازمان از PostgreSQL                     | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
+| `GET /api/v1/realm/profile_fields` و alias وب با `HEAD` متناظر | تعاریف مرتب‌شدهٔ فیلدهای پروفایل سازمان از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `GET /api/v1/navigation_views` و alias وب با `HEAD` متناظر | تنظیمات شخصی نماهای ناوبری از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `GET /api/v1/channel_folders` و alias وب با `HEAD` متناظر | پوشه‌های سازمان با فیلتر بایگانی و ترتیب نمایش از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `GET /api/v1/scheduled_messages` و alias وب با `HEAD` متناظر | پیام‌های زمان‌بندی‌شدهٔ ارسال‌نشدهٔ کاربر از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `GET /api/v1/reminders` و alias وب با `HEAD` متناظر | یادآوری‌های تحویل‌نشدهٔ کاربر از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -152,6 +157,60 @@
 عملیات نوشتن در Django انجام می‌شوند.
 [پیاده‌سازی](src/http/realm_domains.rs)، [تست مقایسه](../zerver/tests/test_realm_domains.py)
 
+## قرارداد فیلدهای سفارشی پروفایل سازمان
+
+`GET /api/v1/realm/profile_fields` و `GET /json/realm/profile_fields`
+تعاریف سازمان حساب احرازشده را بر اساس `order` از
+`zerver_customprofilefield` برمی‌گردانند. `field_data` رشتهٔ ذخیره‌شده
+است و دو کلید `display_in_profile_summary` و `use_for_user_matching`
+فقط در حالت true می‌آیند. مقادیر شخصی در جدول جداگانه نگه‌داری می‌شوند.
+[پیاده‌سازی](src/http/custom_profile_fields.rs)،
+[تست مقایسه](../zerver/tests/test_custom_profile_data.py)
+
+## قرارداد نماهای ناوبری
+
+`GET /api/v1/navigation_views` و `GET /json/navigation_views` بر اساس
+شناسهٔ کاربر احرازشده از `zerver_navigationview` می‌خوانند. هر نما
+`fragment`، `is_pinned` و `name` دارد. نام نمای داخلی می‌تواند
+`null` باشد. ترتیب صریحی در قرارداد Django تعریف نشده است.
+[پیاده‌سازی](src/http/navigation_views.rs)،
+[تست مقایسه](../zerver/tests/test_navigation_views.py)
+
+ایجاد نما در `POST /api/v1/navigation_views` و مسیر وب در Django ثبت
+می‌شود. `fragment` و نام کوتاه‌شده از فاصله‌های ابتدا و انتها پس از
+اعتبارسنجی ذخیره می‌شوند. نمای داخلی نام سفارشی ندارد. ثبت نما و audit
+با نوع `NAVIGATION_VIEW_CREATED` و دادهٔ `fragment` در یک تراکنش انجام
+می‌شوند. پس از commit رویداد `navigation_view/add` فقط به مالک می‌رسد.
+قید پایگاه داده تکرار `(user, fragment)` را محدود می‌کند. نام تکراری
+با query در view بررسی می‌شود. در برش نوشتن، هم‌زمانی ایجاد با ایجاد
+و با تغییر نام در Django را جداگانه مقایسه کنید.
+[view](../zerver/views/navigation_views.py)،
+[تراکنش و رویداد](../zerver/actions/navigation_views.py)
+
+## قرارداد پوشه‌های کانال
+
+`GET /api/v1/channel_folders` و `GET /json/channel_folders` پوشه‌های
+سازمان حساب احرازشده را از `zerver_channelfolder` بر اساس `order`
+برمی‌گردانند. `include_archived` به‌طور پیش‌فرض false است و فقط یک
+مقدار بولی JSON می‌پذیرد. آخرین مقدار پارامتر تکراری اعمال می‌شود.
+`ignored_parameters_unsupported` و خطاهای نوع و نحو JSON با Django
+مقایسه شده‌اند. پاسخ HTML ذخیره‌شدهٔ توضیح، شناسهٔ اختیاری سازنده و
+ثانیهٔ زمان ایجاد را حفظ می‌کند.
+[پیاده‌سازی](src/http/channel_folders.rs)،
+[تست مقایسه](../zerver/tests/test_channel_folders.py)
+
+## قرارداد پیام‌های زمان‌بندی‌شده و یادآوری‌ها
+
+`GET /api/v1/scheduled_messages` و `GET /api/v1/reminders` و مسیرهای
+متناظر وب فقط رکوردهای تحویل‌نشدهٔ نوع درخواست‌شده را برای کاربر و
+سازمان احرازشده از `zerver_scheduledmessage` بر اساس زمان ارسال
+برمی‌گردانند. موارد ناموفق در فهرست می‌مانند. پیام کانال شناسهٔ کانال
+و عنوان دارد. پیام مستقیم فهرست گیرنده‌ها را از جدول عضویت می‌سازد و
+در پیام به خود، شناسهٔ مالک را نگه می‌دارد. یادآوری شناسهٔ پیام مرجع
+را برمی‌گرداند. نوشتن و تحویل زمان‌بندی‌شده در Django انجام می‌شوند.
+[پیاده‌سازی](src/http/scheduled_messages.rs)،
+[تست مقایسه](../zerver/tests/test_scheduled_messages.py)
+
 ## قرارداد متن‌های ذخیره‌شده
 
 `GET /api/v1/saved_snippets` با Basic Auth فقط متن‌های کاربر احرازشده
@@ -226,7 +285,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 
 «مستندات» در ستون مسیریابی به مدخل‌های نمونه اشاره می‌کند. «توسعه» یعنی مسیر
 فقط در تنظیمات توسعه ثبت می‌شود. «push» یعنی مسیر با URLconf سرویس اعلان
-ثبت می‌شود.
+ثبت می‌شود. «Rust اختیاری» یعنی آن عملیات با تنظیم پروکسی توسعه یا nginx آزمایشی به Rust می‌رود.
 
 | روش      | مسیر                                                    | operationId                            | handler                                                                        | مسیریابی       |
 | -------- | ------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ | -------------- |
@@ -242,7 +301,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `POST`   | `/api/v1/calls/google_meet/create`                      | `create-google-meet-video-call`        | `zerver.views.video_calls.make_google_meet_video_call`                         | Django         |
 | `POST`   | `/api/v1/calls/nextcloud_talk/create`                   | `create-nextcloud-talk-video-call`     | `zerver.views.video_calls.create_nextcloud_talk_url`                           | Django         |
 | `POST`   | `/api/v1/calls/webex/create`                            | `create-webex-video-call`              | `zerver.views.video_calls.make_webex_video_call`                               | Django         |
-| `GET`    | `/api/v1/channel_folders`                               | `get-channel-folders`                  | `zerver.views.channel_folders.get_channel_folders`                             | Django         |
+| `GET`    | `/api/v1/channel_folders`                               | `get-channel-folders`                  | `zerver.views.channel_folders.get_channel_folders`                             | Rust اختیاری |
 | `PATCH`  | `/api/v1/channel_folders`                               | `patch-channel-folders`                | `zerver.views.channel_folders.reorder_realm_channel_folders`                   | Django         |
 | `POST`   | `/api/v1/channel_folders/create`                        | `create-channel-folder`                | `zerver.views.channel_folders.create_channel_folder`                           | Django         |
 | `PATCH`  | `/api/v1/channel_folders/{channel_folder_id}`           | `update-channel-folder`                | `zerver.views.channel_folders.update_channel_folder`                           | Django         |
@@ -251,9 +310,9 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `POST`   | `/api/v1/default_streams`                               | `add-default-stream`                   | `zerver.views.streams.add_default_stream`                                      | Django         |
 | `POST`   | `/api/v1/dev_fetch_api_key`                             | `dev-fetch-api-key`                    | `zerver.views.development.dev_login.api_dev_fetch_api_key`                     | Django (توسعه) |
 | `GET`    | `/api/v1/dev_list_users`                                | `dev-list-users`                       | `zerver.views.development.dev_login.api_dev_list_users`                        | Django (توسعه) |
-| `GET`    | `/api/v1/drafts`                                        | `get-drafts`                           | `zerver.views.drafts.fetch_drafts`                                             | Django         |
+| `GET`    | `/api/v1/drafts`                                        | `get-drafts`                           | `zerver.views.drafts.fetch_drafts`                                             | Rust اختیاری |
 | `POST`   | `/api/v1/drafts`                                        | `create-drafts`                        | `zerver.views.drafts.create_drafts`                                            | Django         |
-| `DELETE` | `/api/v1/drafts/{draft_id}`                             | `delete-draft`                         | `zerver.views.drafts.delete_draft`                                             | Django         |
+| `DELETE` | `/api/v1/drafts/{draft_id}`                             | `delete-draft`                         | `zerver.views.drafts.delete_draft`                                             | Rust اختیاری |
 | `PATCH`  | `/api/v1/drafts/{draft_id}`                             | `edit-draft`                           | `zerver.views.drafts.edit_draft`                                               | Django         |
 | `DELETE` | `/api/v1/events`                                        | `delete-queue`                         | `zerver.tornado.views.cleanup_event_queue`                                     | Tornado        |
 | `GET`    | `/api/v1/events`                                        | `get-events`                           | `zerver.tornado.views.get_events`                                              | Tornado        |
@@ -291,13 +350,13 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `POST`   | `/api/v1/mobile_push/e2ee/test_notification`            | `e2ee-test-notify`                     | `zerver.views.push_notifications.send_e2ee_test_push_notification_api`         | Django         |
 | `POST`   | `/api/v1/mobile_push/register`                          | `register-push-device`                 | `zerver.views.push_notifications.register_push_device`                         | Django         |
 | `POST`   | `/api/v1/mobile_push/test_notification`                 | `test-notify`                          | `zerver.views.push_notifications.send_test_push_notification_api`              | Django         |
-| `GET`    | `/api/v1/navigation_views`                              | `get-navigation-views`                 | `zerver.views.navigation_views.get_navigation_views`                           | Django         |
+| `GET`    | `/api/v1/navigation_views`                              | `get-navigation-views`                 | `zerver.views.navigation_views.get_navigation_views`                           | Rust اختیاری |
 | `POST`   | `/api/v1/navigation_views`                              | `add-navigation-view`                  | `zerver.views.navigation_views.add_navigation_view`                            | Django         |
 | `DELETE` | `/api/v1/navigation_views/{fragment}`                   | `remove-navigation-view`               | `zerver.views.navigation_views.remove_navigation_view`                         | Django         |
 | `PATCH`  | `/api/v1/navigation_views/{fragment}`                   | `edit-navigation-view`                 | `zerver.views.navigation_views.update_navigation_view`                         | Django         |
 | `POST`   | `/real-time`                                            | —                                      | —                                                                              | مستندات        |
 | `POST`   | `/api/v1/realm/deactivate`                              | `deactivate-realm`                     | `zerver.views.realm.deactivate_realm`                                          | Django         |
-| `GET`    | `/api/v1/realm/domains`                                 | `get-realm-domains`                    | `zerver.views.realm_domains.list_realm_domains`                                | Django         |
+| `GET`    | `/api/v1/realm/domains`                                 | `get-realm-domains`                    | `zerver.views.realm_domains.list_realm_domains`                                | Rust اختیاری |
 | `POST`   | `/api/v1/realm/domains`                                 | `add-realm-domain`                     | `zerver.views.realm_domains.create_realm_domain`                               | Django         |
 | `DELETE` | `/api/v1/realm/domains/{domain}`                        | `delete-realm-domain`                  | `zerver.views.realm_domains.delete_realm_domain`                               | Django         |
 | `PATCH`  | `/api/v1/realm/domains/{domain}`                        | `patch-realm-domain`                   | `zerver.views.realm_domains.patch_realm_domain`                                | Django         |
@@ -307,12 +366,12 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `POST`   | `/api/v1/realm/filters`                                 | `add-linkifier`                        | `zerver.views.realm_linkifiers.create_linkifier`                               | Django         |
 | `DELETE` | `/api/v1/realm/filters/{filter_id}`                     | `remove-linkifier`                     | `zerver.views.realm_linkifiers.delete_linkifier`                               | Django         |
 | `PATCH`  | `/api/v1/realm/filters/{filter_id}`                     | `update-linkifier`                     | `zerver.views.realm_linkifiers.update_linkifier`                               | Django         |
-| `GET`    | `/api/v1/realm/linkifiers`                              | `get-linkifiers`                       | `zerver.views.realm_linkifiers.list_linkifiers`                                | Django         |
+| `GET`    | `/api/v1/realm/linkifiers`                              | `get-linkifiers`                       | `zerver.views.realm_linkifiers.list_linkifiers`                                | Rust اختیاری |
 | `PATCH`  | `/api/v1/realm/linkifiers`                              | `reorder-linkifiers`                   | `zerver.views.realm_linkifiers.reorder_linkifiers`                             | Django         |
 | `POST`   | `/api/v1/realm/playgrounds`                             | `add-code-playground`                  | `zerver.views.realm_playgrounds.add_realm_playground`                          | Django         |
 | `DELETE` | `/api/v1/realm/playgrounds/{playground_id}`             | `remove-code-playground`               | `zerver.views.realm_playgrounds.delete_realm_playground`                       | Django         |
 | `GET`    | `/api/v1/realm/presence`                                | `get-presence`                         | `zerver.views.presence.get_statuses_for_realm`                                 | Django         |
-| `GET`    | `/api/v1/realm/profile_fields`                          | `get-custom-profile-fields`            | `zerver.views.custom_profile_fields.list_realm_custom_profile_fields`          | Django         |
+| `GET`    | `/api/v1/realm/profile_fields`                          | `get-custom-profile-fields`            | `zerver.views.custom_profile_fields.list_realm_custom_profile_fields`          | Rust اختیاری |
 | `PATCH`  | `/api/v1/realm/profile_fields`                          | `reorder-custom-profile-fields`        | `zerver.views.custom_profile_fields.reorder_realm_custom_profile_fields`       | Django         |
 | `POST`   | `/api/v1/realm/profile_fields`                          | `create-custom-profile-field`          | `zerver.views.custom_profile_fields.create_realm_custom_profile_field`         | Django         |
 | `DELETE` | `/api/v1/realm/profile_fields/{field_id}`               | `delete-custom-profile-field`          | `zerver.views.custom_profile_fields.delete_realm_custom_profile_field`         | Django         |
@@ -321,17 +380,17 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `PATCH`  | `/api/v1/realm/user_settings_defaults`                  | `update-realm-user-settings-defaults`  | `zerver.views.realm.update_realm_user_settings_defaults`                       | Django         |
 | `POST`   | `/api/v1/register`                                      | `register-queue`                       | `zerver.views.events_register.events_register_backend`                         | Django         |
 | `POST`   | `/api/v1/register_client_device`                        | `register-client-device`               | `zerver.views.devices.register_device`                                         | Django         |
-| `GET`    | `/api/v1/reminders`                                     | `get-reminders`                        | `zerver.views.scheduled_messages.fetch_reminders`                              | Django         |
+| `GET`    | `/api/v1/reminders`                                     | `get-reminders`                        | `zerver.views.scheduled_messages.fetch_reminders`                              | Rust اختیاری |
 | `POST`   | `/api/v1/reminders`                                     | `create-message-reminder`              | `zerver.views.reminders.create_reminders_message_backend`                      | Django         |
 | `DELETE` | `/api/v1/reminders/{reminder_id}`                       | `delete-reminder`                      | `zerver.views.reminders.delete_reminder`                                       | Django         |
 | `POST`   | `/api/v1/remotes/push/e2ee/register`                    | `register-remote-push-device`          | `zilencer.views.register_remote_push_device_for_e2ee_push_notification`        | Django (push)  |
 | `POST`   | `/api/v1/remove_client_device`                          | `remove-client-device`                 | `zerver.views.devices.remove_device`                                           | Django         |
 | `POST`   | `/rest-error-handling`                                  | `rest-error-handling`                  | —                                                                              | مستندات        |
-| `GET`    | `/api/v1/saved_snippets`                                | `get-saved-snippets`                   | `zerver.views.saved_snippets.get_saved_snippets`                               | Django         |
-| `POST`   | `/api/v1/saved_snippets`                                | `create-saved-snippet`                 | `zerver.views.saved_snippets.create_saved_snippet`                             | Django         |
-| `DELETE` | `/api/v1/saved_snippets/{saved_snippet_id}`             | `delete-saved-snippet`                 | `zerver.views.saved_snippets.delete_saved_snippet`                             | Django         |
-| `PATCH`  | `/api/v1/saved_snippets/{saved_snippet_id}`             | `edit-saved-snippet`                   | `zerver.views.saved_snippets.edit_saved_snippet`                               | Django         |
-| `GET`    | `/api/v1/scheduled_messages`                            | `get-scheduled-messages`               | `zerver.views.scheduled_messages.fetch_scheduled_messages`                     | Django         |
+| `GET`    | `/api/v1/saved_snippets`                                | `get-saved-snippets`                   | `zerver.views.saved_snippets.get_saved_snippets`                               | Rust اختیاری |
+| `POST`   | `/api/v1/saved_snippets`                                | `create-saved-snippet`                 | `zerver.views.saved_snippets.create_saved_snippet`                             | Rust اختیاری |
+| `DELETE` | `/api/v1/saved_snippets/{saved_snippet_id}`             | `delete-saved-snippet`                 | `zerver.views.saved_snippets.delete_saved_snippet`                             | Rust اختیاری |
+| `PATCH`  | `/api/v1/saved_snippets/{saved_snippet_id}`             | `edit-saved-snippet`                   | `zerver.views.saved_snippets.edit_saved_snippet`                               | Rust اختیاری |
+| `GET`    | `/api/v1/scheduled_messages`                            | `get-scheduled-messages`               | `zerver.views.scheduled_messages.fetch_scheduled_messages`                     | Rust اختیاری |
 | `POST`   | `/api/v1/scheduled_messages`                            | `create-scheduled-message`             | `zerver.views.scheduled_messages.create_scheduled_message_backend`             | Django         |
 | `DELETE` | `/api/v1/scheduled_messages/{scheduled_message_id}`     | `delete-scheduled-message`             | `zerver.views.scheduled_messages.delete_scheduled_messages`                    | Django         |
 | `PATCH`  | `/api/v1/scheduled_messages/{scheduled_message_id}`     | `update-scheduled-message`             | `zerver.views.scheduled_messages.update_scheduled_message_backend`             | Django         |
@@ -365,9 +424,9 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `POST`   | `/api/v1/users`                                         | `create-user`                          | `zerver.views.users.create_user_backend`                                       | Django         |
 | `DELETE` | `/api/v1/users/me`                                      | `deactivate-own-user`                  | `zerver.views.users.deactivate_user_own_backend`                               | Django         |
 | `GET`    | `/api/v1/users/me`                                      | `get-own-user`                         | `zerver.views.users.get_profile_backend`                                       | Django         |
-| `DELETE` | `/api/v1/users/me/alert_words`                          | `remove-alert-words`                   | `zerver.views.alert_words.remove_alert_words`                                  | Django         |
-| `GET`    | `/api/v1/users/me/alert_words`                          | `get-alert-words`                      | `zerver.views.alert_words.list_alert_words`                                    | Django         |
-| `POST`   | `/api/v1/users/me/alert_words`                          | `add-alert-words`                      | `zerver.views.alert_words.add_alert_words`                                     | Django         |
+| `DELETE` | `/api/v1/users/me/alert_words`                          | `remove-alert-words`                   | `zerver.views.alert_words.remove_alert_words`                                  | Rust اختیاری |
+| `GET`    | `/api/v1/users/me/alert_words`                          | `get-alert-words`                      | `zerver.views.alert_words.list_alert_words`                                    | Rust اختیاری |
+| `POST`   | `/api/v1/users/me/alert_words`                          | `add-alert-words`                      | `zerver.views.alert_words.add_alert_words`                                     | Rust اختیاری |
 | `DELETE` | `/api/v1/users/me/android_gcm_reg_id`                   | `remove-fcm-token`                     | `zerver.views.push_notifications.remove_android_reg_id`                        | Django         |
 | `POST`   | `/api/v1/users/me/android_gcm_reg_id`                   | `add-fcm-token`                        | `zerver.views.push_notifications.add_android_reg_id`                           | Django         |
 | `POST`   | `/api/v1/users/me/api_key/regenerate`                   | `regenerate-api-key`                   | `zerver.views.user_settings.regenerate_api_key`                                | Django         |
@@ -468,7 +527,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/calls/nextcloud_talk/create`                   | `POST`                   | Django            |
 | `/json/calls/webex/create`                            | `POST`                   | Django            |
 | `/json/calls/zoom/create`                             | `POST`                   | Django            |
-| `/json/channel_folders`                               | `GET`, `PATCH`           | Django            |
+| `/json/channel_folders`                               | `GET`, `PATCH`           | `GET` در Rust اختیاری، نوشتن در Django |
 | `/json/channel_folders/create`                        | `POST`                   | Django            |
 | `/json/channel_folders/{channel_folder_id}`           | `PATCH`                  | Django            |
 | `/json/channels/create`                               | `POST`                   | Django            |
@@ -476,8 +535,8 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/default_stream_groups/{group_id}`              | `DELETE`, `PATCH`        | Django            |
 | `/json/default_stream_groups/{group_id}/streams`      | `PATCH`                  | Django            |
 | `/json/default_streams`                               | `DELETE`, `POST`         | Django            |
-| `/json/drafts`                                        | `GET`, `POST`            | Django            |
-| `/json/drafts/{draft_id}`                             | `DELETE`, `PATCH`        | Django            |
+| `/json/drafts`                                        | `GET`, `POST`            | `GET` در Rust اختیاری، `POST` در Django |
+| `/json/drafts/{draft_id}`                             | `DELETE`, `PATCH`        | `DELETE` در Rust اختیاری، `PATCH` در Django |
 | `/json/events`                                        | `DELETE`, `GET`          | Tornado           |
 | `/json/export/realm`                                  | `GET`, `POST`            | Django            |
 | `/json/export/realm/consents`                         | `GET`                    | Django            |
@@ -507,11 +566,11 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/mobile_push/e2ee/test_notification`            | `POST`                   | Django            |
 | `/json/mobile_push/register`                          | `POST`                   | Django            |
 | `/json/mobile_push/test_notification`                 | `POST`                   | Django            |
-| `/json/navigation_views`                              | `GET`, `POST`            | Django            |
+| `/json/navigation_views`                              | `GET`, `POST`            | `GET` در Rust اختیاری، نوشتن در Django |
 | `/json/navigation_views/{fragment}`                   | `DELETE`, `PATCH`        | Django            |
 | `/json/realm`                                         | `PATCH`                  | Django            |
 | `/json/realm/deactivate`                              | `POST`                   | Django            |
-| `/json/realm/domains`                                 | `GET`, `POST`            | Django            |
+| `/json/realm/domains`                                 | `GET`, `POST`            | `GET` در Rust اختیاری، `POST` در Django |
 | `/json/realm/domains/{domain}`                        | `DELETE`, `PATCH`        | Django            |
 | `/json/realm/emoji`                                   | `GET`                    | Django            |
 | `/json/realm/emoji/{emoji_name}`                      | `DELETE`, `POST`         | Django            |
@@ -519,24 +578,24 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/realm/filters/{filter_id}`                     | `DELETE`, `PATCH`        | Django            |
 | `/json/realm/icon`                                    | `DELETE`, `GET`, `POST`  | Django            |
 | `/json/realm/import/status/{confirmation_key}`        | `GET`                    | Django (مخصوص وب) |
-| `/json/realm/linkifiers`                              | `GET`, `PATCH`           | Django            |
+| `/json/realm/linkifiers`                              | `GET`, `PATCH`           | `GET` در Rust اختیاری، `PATCH` در Django |
 | `/json/realm/logo`                                    | `DELETE`, `GET`, `POST`  | Django            |
 | `/json/realm/playgrounds`                             | `POST`                   | Django            |
 | `/json/realm/playgrounds/{playground_id}`             | `DELETE`                 | Django            |
 | `/json/realm/presence`                                | `GET`                    | Django            |
-| `/json/realm/profile_fields`                          | `GET`, `PATCH`, `POST`   | Django            |
+| `/json/realm/profile_fields`                          | `GET`, `PATCH`, `POST`   | `GET` در Rust اختیاری، نوشتن در Django |
 | `/json/realm/profile_fields/{field_id}`               | `DELETE`, `PATCH`        | Django            |
 | `/json/realm/subdomain/{subdomain}`                   | `GET`                    | Django            |
 | `/json/realm/test_welcome_bot_custom_message`         | `POST`                   | Django            |
 | `/json/realm/user_settings_defaults`                  | `PATCH`                  | Django            |
 | `/json/register`                                      | `POST`                   | Django            |
 | `/json/register_client_device`                        | `POST`                   | Django            |
-| `/json/reminders`                                     | `GET`, `POST`            | Django            |
+| `/json/reminders`                                     | `GET`, `POST`            | `GET` در Rust اختیاری، نوشتن در Django |
 | `/json/reminders/{reminder_id}`                       | `DELETE`                 | Django            |
 | `/json/remove_client_device`                          | `POST`                   | Django            |
-| `/json/saved_snippets`                                | `GET`, `POST`            | Django            |
-| `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Django، Rust اختیاری |
-| `/json/scheduled_messages`                            | `GET`, `POST`            | Django            |
+| `/json/saved_snippets`                                | `GET`, `POST`            | Rust اختیاری |
+| `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Rust اختیاری |
+| `/json/scheduled_messages`                            | `GET`, `POST`            | `GET` در Rust اختیاری، نوشتن در Django |
 | `/json/scheduled_messages/{scheduled_message_id}`     | `DELETE`, `PATCH`        | Django            |
 | `/json/self-hosted-billing`                           | `GET`                    | Django (مخصوص وب) |
 | `/json/settings`                                      | `PATCH`                  | Django            |
@@ -565,7 +624,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/user_uploads/{realm_id_str}/{filename}`        | `GET`                    | Django            |
 | `/json/users`                                         | `GET`, `POST`            | Django            |
 | `/json/users/me`                                      | `DELETE`, `GET`          | Django            |
-| `/json/users/me/alert_words`                          | `DELETE`, `GET`, `POST`  | Django            |
+| `/json/users/me/alert_words`                          | `DELETE`, `GET`, `POST`  | Rust اختیاری |
 | `/json/users/me/android_gcm_reg_id`                   | `DELETE`, `POST`         | Django            |
 | `/json/users/me/apns_device_token`                    | `DELETE`, `POST`         | Django            |
 | `/json/users/me/avatar`                               | `DELETE`, `POST`         | Django            |
