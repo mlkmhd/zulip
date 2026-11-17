@@ -1,46 +1,12 @@
-use serde::Serialize;
-use tokio_postgres::{Client, Error, Row};
+use tokio_postgres::{Client, Error};
+
+use crate::draft_fields::{DraftFields, Recipients};
 
 pub(super) const PATH: &str = "/api/v1/drafts";
 pub(super) const SESSION_PATH: &str = "/json/drafts";
 pub(super) const DETAIL_PATH: &str = "/api/v1/drafts/{id}";
 pub(super) const SESSION_DETAIL_PATH: &str = "/json/drafts/{id}";
 const STREAM: i16 = 2;
-
-#[derive(Serialize)]
-pub(super) struct Draft {
-    id: i64,
-    #[serde(rename = "type")]
-    recipient_type: &'static str,
-    to: Vec<i32>,
-    topic: String,
-    content: String,
-    timestamp: i64,
-}
-
-impl Draft {
-    fn from_row(row: &Row, user_id: i32) -> Result<Self, Error> {
-        let (recipient_type, to) = match row.try_get::<_, Option<i16>>("recipient_type")? {
-            None => ("", Vec::new()),
-            Some(STREAM) => ("stream", vec![row.try_get("recipient_type_id")?]),
-            Some(_) => {
-                let mut users: Vec<i32> = row.try_get("recipient_users")?;
-                if users.len() > 1 {
-                    users.retain(|&id| id != user_id);
-                }
-                ("private", users)
-            }
-        };
-        Ok(Self {
-            id: row.try_get("id")?,
-            recipient_type,
-            to,
-            topic: row.try_get("topic")?,
-            content: row.try_get("content")?,
-            timestamp: row.try_get("timestamp")?,
-        })
-    }
-}
 
 pub(super) async fn synchronization_enabled(
     database: &Client,
@@ -55,7 +21,7 @@ pub(super) async fn synchronization_enabled(
         .try_get(0)
 }
 
-pub(super) async fn list(database: &Client, user_id: i32) -> Result<Vec<Draft>, Error> {
+pub(super) async fn list(database: &Client, user_id: i32) -> Result<Vec<DraftFields>, Error> {
     database
         .query(
             "SELECT d.id, d.topic, d.content, r.type AS recipient_type, r.type_id AS recipient_type_id,
@@ -72,7 +38,21 @@ pub(super) async fn list(database: &Client, user_id: i32) -> Result<Vec<Draft>, 
         )
         .await?
         .iter()
-        .map(|row| Draft::from_row(row, user_id))
+        .map(|row| {
+            let recipients = match row.try_get::<_, Option<i16>>("recipient_type")? {
+                None => Recipients::Unset,
+                Some(STREAM) => Recipients::Channel(row.try_get("recipient_type_id")?),
+                Some(_) => Recipients::Direct(row.try_get("recipient_users")?),
+            };
+            Ok(DraftFields::new(
+                row.try_get("id")?,
+                user_id,
+                recipients,
+                row.try_get("topic")?,
+                row.try_get("content")?,
+                row.try_get("timestamp")?,
+            ))
+        })
         .collect()
 }
 
