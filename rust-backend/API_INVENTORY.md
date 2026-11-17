@@ -37,7 +37,7 @@
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
-| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | پل `ZULIP_RUST_ALERT_WORDS` در Django. تراکنش مستقل Rust در آزمون یکپارچه تأیید شده است. | Django                                                          | Django               |
+| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم با فایل قواعد Unicode و تنظیم صریح نشست برای وب     | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -86,21 +86,23 @@
 فرمان `export_rust_alert_word_cache` از تنظیمات Django پیشوندهای فیزیکی
 و آدرس Memcached را در یک فایل منتشر می‌کند. در صورت تنظیم
 `ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST`، بررسی آمادگی Rust فایل جاری و
-اتصال Memcached را اعتبارسنجی می‌کند. Django مسیرهای نوشتن را سرو می‌کند.
+اتصال Memcached را اعتبارسنجی می‌کند.
 [راهنمای انتشار فایل](README.md#share-djangos-alert-word-cache-namespace-with-zulip-http)
 
-تراکنش مستقل Rust ورودیِ کوچک‌شده طبق قواعد Python را می‌گیرد، حذف را به همان
-کاربر محدود می‌کند و دو کش سازمان را با پیشوندهای فایل جاری پاک می‌کند. خطای
-کش به rollback می‌انجامد. فهرست باقی‌مانده داخل تراکنش خوانده می‌شود و پس از
-commit برمی‌گردد. اتصال این عملیات به handler و انتشار رویداد Rust باقی است.
-[تست با PostgreSQL و Memcached](README.md#test-the-rust-alert-word-removal-transaction)
+با `ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE`، سرویس مستقیم Rust آرایهٔ JSON رشته‌ها
+را از فرم یا query می‌گیرد و با قواعد صادرشده از Python همان استقرار کوچک
+می‌کند. حذف و پاک‌سازی کش در تراکنش اختصاصی انجام می‌شوند و پس از commit
+رویداد `alert_words` فقط برای همان کاربر به صف `notify_tornado` می‌رود.
+نسخهٔ وب از نشست و هدر `X-CSRFToken` استفاده می‌کند. پیکربندی‌های فعلی پروکسی
+و استقرار این درخواست‌ها را به Django می‌فرستند.
+[تنظیم و تست مسیر مستقیم](README.md#delete-alert-words-through-rust)
 
 تست HTTP با دادهٔ commit‌شده در Django و Rust، رفتار فهرست خالی، واژهٔ Unicode،
 کلید نامعتبر، سازمان نادرست، حساب غیرفعال و ربات webhook را برای مسیر API
 بررسی کرد. در حالت بدون اعتبارنامه،
 `Accept` بر انتخاب پاسخ JSON یا هدایت به صفحهٔ ورود اثر دارد و هدر
 `WWW-Authenticate` پاسخ JSON با پیشوند مسیر عوض می‌شود. تستِ سهمیه در Redis مشترک و ثبت فعالیت در RabbitMQ برای مسیر API پاس شد.
-تست نشست وب، اعتبار امضا و هش نشست، هدرهای کوکی و رفتار CSRF برای `GET` و `HEAD` پاس شد. `OPTIONS` و عملیات نوشتن در Django هستند.
+تست نشست وب، اعتبار امضا و هش نشست، هدرهای کوکی و رفتار CSRF برای `GET` و `HEAD` پاس شد. `OPTIONS` و `POST` در Django هستند.
 [نتیجهٔ مقایسهٔ HTTP](MIGRATION_HANDOFF.md#برشهای-قبلی-http)
 [خطاهای API](../api_docs/rest-error-handling.md)، [middleware](../zerver/middleware.py)
 
