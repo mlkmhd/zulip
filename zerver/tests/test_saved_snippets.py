@@ -1,22 +1,27 @@
 import os
+import re
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from tempfile import NamedTemporaryFile
 from unittest import skipUnless
 from urllib.parse import quote, urlencode, urlsplit
 
 import orjson
 import pika
 from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.contrib.sessions.models import Session
 from django.db import connection
 from django.test import LiveServerTestCase
+from django.utils.timezone import now as timezone_now
 
 from zerver.actions.saved_snippets import do_create_saved_snippet
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
-from zerver.models import RealmAuditLog, SavedSnippet, UserProfile
+from zerver.models import Realm, RealmAuditLog, SavedSnippet, UserProfile
 from zerver.models.realm_audit_logs import AuditLogEventType
 
 
@@ -129,6 +134,157 @@ class SavedSnippetTests(ZulipTestCase):
 
 
 class SavedSnippetReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_saved_snippet_session_read_contract(self) -> None:
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        empty = self.example_user("iago")
+        own, foreign = SavedSnippet.objects.bulk_create(
+            [
+                SavedSnippet(
+                    user_profile=user, realm=user.realm, title="سلام ☃", content="**Mine**"
+                ),
+                SavedSnippet(
+                    user_profile=other, realm=other.realm, title="Private", content="**Other**"
+                ),
+            ]
+        )
+        keys: list[str] = []
+
+        def cookie(profile: UserProfile, **overrides: str) -> dict[str, str]:
+            store = SessionStore()
+            store.update(
+                {
+                    "_auth_user_id": str(profile.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": profile.get_session_auth_hash(),
+                    **overrides,
+                }
+            )
+            store.create()
+            assert store.session_key is not None
+            keys.append(store.session_key)
+            return {"Cookie": f"{settings.SESSION_COOKIE_NAME}={store.session_key}"}
+
+        try:
+            valid = cookie(user)
+            expired = cookie(user)
+            Session.objects.filter(session_key=keys[-1]).update(expire_date=timezone_now())
+            tampered = cookie(user)
+            session = Session.objects.get(session_key=keys[-1])
+            session.session_data += "x"
+            session.save(update_fields=["session_data"])
+            authorization = (
+                "Basic " + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+            )
+            host = user.realm.host
+            cases = [
+                ("own", "GET", host, valid, 200, [own.to_api_dict()]),
+                ("other user", "GET", host, cookie(other), 200, [foreign.to_api_dict()]),
+                ("empty", "GET", host, cookie(empty), 200, []),
+                ("head", "HEAD", host, valid, 200, None),
+                ("missing", "GET", host, {}, 401, None),
+                ("Basic only", "GET", host, {"Authorization": authorization}, 401, None),
+                ("login redirect", "GET", host, {"Accept": "text/html"}, 302, None),
+                ("expired", "GET", host, expired, 401, None),
+                ("tampered", "GET", host, tampered, 401, None),
+                (
+                    "wrong session hash",
+                    "GET",
+                    host,
+                    cookie(user, _auth_user_hash="0" * 64),
+                    401,
+                    None,
+                ),
+                (
+                    "wrong realm",
+                    "GET",
+                    Realm.objects.get(string_id="zephyr").host,
+                    valid,
+                    400,
+                    None,
+                ),
+                (
+                    "safe cross-origin",
+                    "GET",
+                    host,
+                    {**valid, "Origin": "https://other.testserver", "X-CSRFToken": "bad"},
+                    200,
+                    [own.to_api_dict()],
+                ),
+            ]
+            with NamedTemporaryFile(mode="w", encoding="utf-8") as secret:
+                secret.write(settings.SECRET_KEY)
+                secret.flush()
+                environment = {
+                    "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": secret.name,
+                    "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                        settings.AUTHENTICATION_BACKENDS
+                    ).decode(),
+                    "ZULIP_RUST_SESSION_COOKIE_NAME": settings.SESSION_COOKIE_NAME,
+                    "ZULIP_RUST_CSRF_COOKIE_NAME": settings.CSRF_COOKIE_NAME,
+                }
+                service = (
+                    rust_http_service(environment)
+                    if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                    else nullcontext(None)
+                )
+                with service as rust_port:
+                    django_port = urlsplit(self.live_server_url).port
+                    assert django_port is not None
+                    path = "/json/saved_snippets"
+                    for label, method, realm_host, headers, status, snippets in cases:
+                        with self.subTest(label=label):
+                            rust = (
+                                request_test_http(rust_port, method, realm_host, headers, path)
+                                if rust_port is not None
+                                else None
+                            )
+                            django = request_test_http(
+                                django_port, method, realm_host, headers, path
+                            )
+                            self.assertEqual(django[0], status)
+                            if snippets is not None:
+                                self.assertEqual(
+                                    orjson.loads(django[1])["saved_snippets"], snippets
+                                )
+                            if method == "HEAD":
+                                self.assertEqual(django[1], b"")
+                            if rust is not None:
+                                self.assertEqual(rust[:3], django[:3])
+                                if django[3] is None:
+                                    self.assertIsNone(rust[3])
+                                else:
+                                    assert rust[3] is not None
+                                    drift = parsedate_to_datetime(rust[3]) - parsedate_to_datetime(
+                                        django[3]
+                                    )
+                                    self.assertLessEqual(abs(drift.total_seconds()), 5)
+
+                    malformed = {"Cookie": valid["Cookie"] + f"; {settings.CSRF_COOKIE_NAME}=bad"}
+                    attributes = []
+                    for port in (django_port, rust_port):
+                        if port is None:
+                            continue
+                        status, body, response_headers, _ = request_test_http(
+                            port, "GET", host, malformed, path
+                        )
+                        self.assertEqual(status, 200)
+                        self.assertEqual(orjson.loads(body)["saved_snippets"], [own.to_api_dict()])
+                        replacement = response_headers["Set-Cookie"]
+                        assert replacement is not None
+                        value, *flags = replacement.split("; ")
+                        self.assertRegex(
+                            value, rf"^{re.escape(settings.CSRF_COOKIE_NAME)}=[A-Za-z0-9]{{32}}$"
+                        )
+                        attributes.append(
+                            [flag for flag in flags if not flag.startswith("expires=")]
+                        )
+                    if rust_port is not None:
+                        self.assertEqual(attributes[0], attributes[1])
+        finally:
+            Session.objects.filter(session_key__in=keys).delete()
+            SavedSnippet.objects.filter(id__in=[own.id, foreign.id]).delete()
+
     def test_saved_snippet_read_contract(self) -> None:
         user = self.example_user("hamlet")
         other = self.example_user("othello")

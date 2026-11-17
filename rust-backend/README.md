@@ -262,9 +262,9 @@ To use this API through the development proxy, start it with:
 ```
 
 The proxy sends `GET` and `HEAD` to Rust for hostnames that select the same
-realm in Django and Rust. Django serves `/json/saved_snippets`, `OPTIONS`,
-writes and `POST` with a `method=GET` override. Restart the proxy without
-`--rust-saved-snippets` to return API reads to Django.
+realm in Django and Rust. The web route and write methods have separate
+switches. Restart the proxy without `--rust-saved-snippets` to return API
+reads to Django.
 
 With the same test binary and database setup as above, run the HTTP comparison:
 
@@ -373,6 +373,27 @@ For the development proxy, use `--rust-http-port 9997 --rust-saved-snippet-delet
 
 The HTTP comparison above also checks the deleted row, event payload,
 and response for repeated or competing delete requests.
+
+### Enable saved-snippet web reads
+
+Configure the Django secret, authentication backends, and cookie names as
+described in [Read alert words with a Django session](#read-alert-words-with-a-django-session).
+The PostgreSQL role needs `SELECT` on `zulip.django_session` and
+`zulip.zerver_savedsnippet`. Rust reads the signed session from PostgreSQL
+and returns the authenticated user's snippets. GET and HEAD use the usual
+Django behavior for safe methods, including replacement of a malformed
+CSRF cookie. Django handles the write methods and `OPTIONS`.
+
+For nginx staging, include `saved-snippets-web-map.conf` in the HTTP
+context and add `saved-snippets-web-routes.conf` to `zulip-include/app.d/`.
+Use the verified realm hostname and port in the map, run `nginx -t`, and
+reload. The map selects `GET` and `HEAD` on `/json/saved_snippets`. Remove
+the web routes include and reload to return reads to Django independently
+of the API routes.
+
+For the development proxy, pass `--rust-http-port 9997 --rust-saved-snippets-web`.
+The HTTP comparison in `zerver.tests.test_saved_snippets` also checks
+session authentication, requester isolation, and CSRF cookie behavior.
 
 ## Stage alert-word reads in nginx
 

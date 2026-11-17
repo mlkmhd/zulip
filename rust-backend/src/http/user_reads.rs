@@ -26,7 +26,7 @@ use super::{
 };
 
 pub(super) const ALERT_WORDS_PATH: &str = "/api/v1/users/me/alert_words";
-pub(super) const SESSION_PATH: &str = "/json/users/me/alert_words";
+pub(super) const ALERT_WORDS_SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
 
 #[derive(Clone, Copy)]
@@ -475,12 +475,18 @@ async fn respond(
     )>,
 ) -> Response {
     let language = Locales::for_request(&headers);
-    let endpoint = if uri.path() == saved_snippets::PATH {
+    let endpoint = if matches!(
+        uri.path(),
+        saved_snippets::PATH | saved_snippets::SESSION_PATH
+    ) {
         Endpoint::SavedSnippets
     } else {
         Endpoint::AlertWords
     };
-    let browser_session = if uri.path() == SESSION_PATH {
+    let browser_session = if matches!(
+        uri.path(),
+        ALERT_WORDS_SESSION_PATH | saved_snippets::SESSION_PATH
+    ) {
         state.sessions.as_deref()
     } else {
         None

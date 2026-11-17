@@ -77,7 +77,9 @@ pub async fn router_with_user_reads(
         );
     }
     if browser_enabled {
-        routes = routes.route(user_reads::SESSION_PATH, get(user_reads::get));
+        routes = routes
+            .route(user_reads::ALERT_WORDS_SESSION_PATH, get(user_reads::get))
+            .route(saved_snippets::SESSION_PATH, get(user_reads::get));
     }
     Ok(compatibility_router(locales).merge(routes.with_state(user_reads)))
 }
