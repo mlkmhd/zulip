@@ -571,6 +571,33 @@ replace `drafts-delete-map.conf` with `drafts-map.conf` and reload nginx.
 To roll back all draft routing, also remove `--rust-draft-reads` or remove
 `drafts-routes.conf` and reload after validation.
 
+## Read organization linkifiers through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/realm/linkifiers` with Basic
+Auth and on `/json/realm/linkifiers` with the [Django session settings](#read-alert-words-with-a-django-session).
+The Rust database role needs `SELECT` on `zulip.zerver_realmfilter`. The
+query reads the authenticated account's organization from PostgreSQL in
+linkifier precedence order. It reads the saved templates without Django's
+linkifier cache. The existing Redis quota and RabbitMQ activity settings
+also apply to linkifier requests.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_realm_linkifiers
+```
+
+### Route linkifier reads through proxies
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-linkifier-reads
+```
+
+For nginx staging, include `linkifiers-map.conf` in the HTTP context and
+`linkifiers-routes.conf` in `app.d/`. Confirm that both services resolve the
+allowlisted host and port to the same organization before enabling the routes.
+`PATCH` and `OPTIONS` use Django. Remove the development option or the
+`linkifiers-routes.conf` include and reload nginx after validation to roll back.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,
