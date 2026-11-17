@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from importlib import import_module
-from typing import Annotated, Concatenate, Literal, cast
+from typing import Annotated, Concatenate, Literal, TypedDict, cast
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import gettext as _
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Json, ValidatorFunctionWrapHandler, WrapValidator
 from typing_extensions import ParamSpec
 
 from zerver.lib.addressee import get_user_profiles_by_ids
@@ -38,6 +38,9 @@ _rust_draft_text = (
 )
 _rust_draft_timestamp = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_TIMESTAMP") == "1" else None
+)
+_rust_draft_input = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_INPUT") == "1" else None
 )
 _rust_draft_creation = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_CREATION") == "1" else None
@@ -107,14 +110,48 @@ class ValidatedDraftData:
     last_edit_time: datetime
 
 
+DraftType = Literal["private", "stream", ""]
+
+
 class DraftData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["private", "stream", ""]
+    type: DraftType
     to: list[int]
     topic: str
     content: Annotated[str, RequiredStringConstraint()]
     timestamp: int | float | None = None
+
+
+class RustDraftInput(TypedDict):
+    type: DraftType
+    to: list[int]
+    topic: str
+    content: str
+    timestamp: int | float | None
+
+
+def parse_draft_input(value: object, handler: ValidatorFunctionWrapHandler) -> DraftData:
+    if _rust_draft_input is not None and isinstance(value, str):
+        draft = cast(RustDraftInput | None, _rust_draft_input.parse_draft(value))
+        if draft is not None:
+            return DraftData.model_construct(**draft)
+    # Pydantic still supplies the first validation error and its field path.
+    return cast(DraftData, handler(value))
+
+
+def parse_draft_batch_input(
+    value: object, handler: ValidatorFunctionWrapHandler
+) -> list[DraftData]:
+    if _rust_draft_input is not None and isinstance(value, str):
+        drafts = cast(list[RustDraftInput] | None, _rust_draft_input.parse_draft_batch(value))
+        if drafts is not None:
+            return [DraftData.model_construct(**draft) for draft in drafts]
+    return cast(list[DraftData], handler(value))
+
+
+DraftInput = Annotated[Json[DraftData], WrapValidator(parse_draft_input)]
+DraftBatchInput = Annotated[Json[list[DraftData]], WrapValidator(parse_draft_batch_input)]
 
 
 def further_validated_draft_dict(

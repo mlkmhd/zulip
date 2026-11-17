@@ -1,8 +1,8 @@
 from django.http import HttpRequest, HttpResponse
-from pydantic import Json
 
 from zerver.lib.drafts import (
-    DraftData,
+    DraftBatchInput,
+    DraftInput,
     do_create_drafts,
     do_delete_draft,
     do_edit_draft,
@@ -26,7 +26,7 @@ def create_drafts(
     request: HttpRequest,
     user_profile: UserProfile,
     *,
-    drafts: Json[list[DraftData]],
+    drafts: DraftBatchInput,
 ) -> HttpResponse:
     created_draft_objects = do_create_drafts(drafts, user_profile)
     draft_ids = [draft_object.id for draft_object in created_draft_objects]
@@ -39,7 +39,7 @@ def edit_draft(
     request: HttpRequest,
     user_profile: UserProfile,
     *,
-    draft: Json[DraftData],
+    draft: DraftInput,
     draft_id: PathOnly[int],
 ) -> HttpResponse:
     do_edit_draft(draft_id, draft, user_profile)

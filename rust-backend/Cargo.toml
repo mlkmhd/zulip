@@ -11,7 +11,7 @@ name = "_zulip_backend"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-python = ["dep:pyo3"]
+python = ["dep:jiter", "dep:pyo3"]
 http = [
     "dep:axum", "dep:base64", "dep:ctutils", "dep:flate2", "dep:form_urlencoded", "dep:gettext", "dep:hmac",
     "dep:httpdate", "dep:jiter", "dep:lapin", "dep:rand", "dep:redis", "dep:regex", "dep:serde", "dep:serde_json",

@@ -260,6 +260,14 @@ class DraftCreationTests(ZulipTestCase):
         self.assertIsNone(get_direct_message_group(members))
         self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
 
+    def test_create_draft_with_duplicate_json_key(self) -> None:
+        owner = self.example_user("hamlet")
+        body = '[{"type":"","to":[],"topic":"","content":"first","content":"last","timestamp":42}]'
+        with self.capture_send_event_calls(expected_num_events=1):
+            response = self.api_post(owner, "/api/v1/drafts", {"drafts": body})
+            self.assert_json_success(response)
+        self.assertEqual(Draft.objects.get(user_profile=owner).content, "last")
+
     def test_create_draft_rolls_back_incomplete_direct_message_group(self) -> None:
         owner = self.example_user("hamlet")
         recipient = self.example_user("othello")

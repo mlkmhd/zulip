@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::draft_fields::{DraftFields, Recipients};
+use crate::draft_input::{self, DraftInput};
 use crate::{
     alert_words, bot_storage, direct_message_group, draft_text, draft_timestamp, memcached,
     stream_color, user_status,
@@ -14,6 +15,16 @@ use crate::{
 #[pymodule]
 mod _zulip_backend {
     use super::*;
+
+    #[pyfunction]
+    fn parse_draft(value: &Bound<'_, PyString>) -> Option<DraftInput> {
+        draft_input::parse_draft(value.to_str().ok()?)
+    }
+
+    #[pyfunction]
+    fn parse_draft_batch(value: &Bound<'_, PyString>) -> Option<Vec<DraftInput>> {
+        draft_input::parse_draft_batch(value.to_str().ok()?)
+    }
 
     #[pyfunction]
     fn storage_size_difference(entries: Vec<(String, String, u64)>) -> i128 {
