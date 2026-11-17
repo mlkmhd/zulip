@@ -37,7 +37,7 @@
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
-| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم با فایل قواعد Unicode و تنظیم صریح نشست برای وب     | Django               |
+| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -93,8 +93,9 @@
 را از فرم یا query می‌گیرد و با قواعد صادرشده از Python همان استقرار کوچک
 می‌کند. حذف و پاک‌سازی کش در تراکنش اختصاصی انجام می‌شوند و پس از commit
 رویداد `alert_words` فقط برای همان کاربر به صف `notify_tornado` می‌رود.
-نسخهٔ وب از نشست و هدر `X-CSRFToken` استفاده می‌کند. پیکربندی‌های فعلی پروکسی
-و استقرار این درخواست‌ها را به Django می‌فرستند.
+نسخهٔ وب از نشست و هدر `X-CSRFToken` استفاده می‌کند. هدایت اختیاری و بازگشت
+مستقل حذف در پروکسی توسعه و nginx آزمایشی تأیید شدند. Tornado در آزمون
+ایزوله رویداد را فقط به صاحب واژه تحویل داد.
 [تنظیم و تست مسیر مستقیم](README.md#delete-alert-words-through-rust)
 
 تست HTTP با دادهٔ commit‌شده در Django و Rust، رفتار فهرست خالی، واژهٔ Unicode،
