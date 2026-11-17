@@ -42,6 +42,7 @@
 | `DELETE /api/v1/drafts/{draft_id}` و alias وب                                          | حذف محدود به مالک و رویداد بعد از commit                              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `POST /api/v1/drafts` و `PATCH /api/v1/drafts/{draft_id}` و aliasهای وب                 | عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT`                        | Django با افزونهٔ اختیاری Rust                                  | Django               |
 | `GET /api/v1/realm/linkifiers` و alias وب با `HEAD` متناظر                              | خواندن لینک‌سازهای سازمان با ترتیب اولویت از PostgreSQL              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
+| `GET /api/v1/realm/domains` و alias وب با `HEAD` متناظر                                 | خواندن دامنه‌های مجاز ایمیل سازمان از PostgreSQL                     | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -141,6 +142,15 @@
 اختیاری را حفظ می‌کند. سهمیه و فعالیت از پیکربندی مشترک استفاده می‌کنند.
 ایجاد، ویرایش، تغییر ترتیب و حذف لینک‌ساز در Django انجام می‌شوند.
 [پیاده‌سازی](src/http/linkifiers.rs)، [تست مقایسه](../zerver/tests/test_realm_linkifiers.py)
+
+## قرارداد دامنه‌های مجاز سازمان
+
+`GET /api/v1/realm/domains` و `GET /json/realm/domains` مقدارهای `domain`
+و `allow_subdomains` را برای سازمان حساب احرازشده برمی‌گردانند. Rust
+`zerver_realmdomain` را از PostgreSQL می‌خواند. مانند کوئری Django، ترتیب
+صریحی تعریف نشده است. سهمیه و فعالیت از پیکربندی مشترک استفاده می‌کنند.
+عملیات نوشتن در Django انجام می‌شوند.
+[پیاده‌سازی](src/http/realm_domains.rs)، [تست مقایسه](../zerver/tests/test_realm_domains.py)
 
 ## قرارداد متن‌های ذخیره‌شده
 

@@ -598,6 +598,28 @@ allowlisted host and port to the same organization before enabling the routes.
 `PATCH` and `OPTIONS` use Django. Remove the development option or the
 `linkifiers-routes.conf` include and reload nginx after validation to roll back.
 
+## Read allowed organization email domains through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/realm/domains` with Basic
+Auth and on `/json/realm/domains` with the [Django session settings](#read-alert-words-with-a-django-session).
+The Rust database role needs `SELECT` on `zulip.zerver_realmdomain`. The
+response contains the authenticated organization's domains and their
+`allow_subdomains` values. The existing Redis quota and RabbitMQ activity
+settings apply to these reads.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_realm_domains
+./tools/run-dev --rust-http-port 9997 --rust-realm-domain-reads
+```
+
+For nginx staging, include `realm-domains-map.conf` and
+`realm-domains-routes.conf` in the same contexts as the linkifier files
+above. Confirm that the allowlisted host and port resolve to the same
+organization in both services. Domain creation, editing, and deletion
+use Django. To roll back reads, remove the development option or the
+`realm-domains-routes.conf` include and reload nginx after validation.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,
