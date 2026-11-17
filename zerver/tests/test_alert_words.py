@@ -20,7 +20,7 @@ from django.utils.timezone import now as timezone_now
 
 from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
 from zerver.lib import redis_utils
-from zerver.lib.alert_words import alert_words_in_realm, user_alert_words
+from zerver.lib.alert_words import alert_words_in_realm, get_alert_word_automaton, user_alert_words
 from zerver.lib.rate_limiter import RateLimitedUser, RedisRateLimiterBackend
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_helpers import most_recent_message, most_recent_usermessage
@@ -119,6 +119,59 @@ class AlertWordTests(ZulipTestCase):
         do_remove_alert_words(user, ["HELLO", "World"])
         remaining = user_alert_words(user)
         self.assertEqual(set(remaining), {"python"})
+
+    def test_api_remove_alert_words_refreshes_realm_caches_and_event(self) -> None:
+        user = self.get_user()
+        other = self.example_user("othello")
+        do_add_alert_words(user, ["ος", "hello", "keep"])
+        do_add_alert_words(other, ["ος"])
+
+        self.assertCountEqual(alert_words_in_realm(user.realm)[user.id], ["ος", "hello", "keep"])
+        automaton = get_alert_word_automaton(user.realm)
+        self.assertEqual(automaton.get("ος"), ("ος", {user.id, other.id}))
+        self.assertEqual(automaton.get("hello"), ("hello", {user.id}))
+
+        with self.capture_send_event_calls(expected_num_events=1) as events:
+            result = self.api_delete(
+                user,
+                "/api/v1/users/me/alert_words",
+                {"alert_words": orjson.dumps(["ΟΣ", "HELLO", "hello", "absent"]).decode()},
+            )
+            self.assertEqual(self.assert_json_success(result)["alert_words"], ["keep"])
+            self.assertEqual(events, [])
+
+        self.assertEqual(
+            events,
+            [{"event": {"type": "alert_words", "alert_words": ["keep"]}, "users": [user.id]}],
+        )
+        self.assertEqual(user_alert_words(user), ["keep"])
+        self.assertIn("ος", user_alert_words(other))
+        self.assertEqual(alert_words_in_realm(user.realm)[user.id], ["keep"])
+        automaton = get_alert_word_automaton(user.realm)
+        self.assertEqual(automaton.get("ος"), ("ος", {other.id}))
+        self.assertNotIn("hello", automaton)
+
+        with self.capture_send_event_calls(expected_num_events=1) as no_op_events:
+            result = self.api_delete(user, "/api/v1/users/me/alert_words", {"alert_words": "[]"})
+            self.assertEqual(self.assert_json_success(result)["alert_words"], ["keep"])
+        self.assertEqual(no_op_events, events)
+
+    def test_remove_alert_words_rolls_back_with_transaction(self) -> None:
+        user = self.get_user()
+        do_add_alert_words(user, ["rollback"])
+
+        def fail_cache_invalidation(realm_id: int) -> None:
+            self.assertEqual(user_alert_words(user), [])
+            raise RuntimeError("abort alert word deletion")
+
+        with (
+            self.capture_send_event_calls(expected_num_events=0),
+            self.assertRaisesMessage(RuntimeError, "abort alert word deletion"),
+            patch("zerver.lib.alert_words.flush_realm_alert_words", fail_cache_invalidation),
+        ):
+            do_remove_alert_words(user, ["ROLLBACK"])
+
+        self.assertEqual(user_alert_words(user), ["rollback"])
 
     def test_realm_words(self) -> None:
         """

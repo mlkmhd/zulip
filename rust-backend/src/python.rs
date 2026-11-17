@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyString};
+use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::{alert_words, bot_storage, stream_color, user_status};
 
@@ -97,6 +97,23 @@ mod _zulip_backend {
             })
             .collect::<PyResult<Vec<_>>>()?;
         Ok(alert_words::select_new_alert_words(&existing, words))
+    }
+
+    #[pyfunction]
+    fn delete_alert_words(
+        cursor: &Bound<'_, PyAny>,
+        user_id: i32,
+        lowercase_words: &Bound<'_, PyList>,
+    ) -> PyResult<()> {
+        cursor.call_method1(
+            "execute",
+            (
+                "DELETE FROM zulip.zerver_alertword
+                 WHERE user_profile_id = %s AND lower(word) = ANY(%s::text[])",
+                (user_id, lowercase_words),
+            ),
+        )?;
+        Ok(())
     }
 
     #[pyfunction]

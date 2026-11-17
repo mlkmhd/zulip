@@ -3,7 +3,7 @@ from collections.abc import Iterable
 from importlib import import_module
 
 import ahocorasick
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models.functions import Lower
 
 from zerver.lib.cache import (
@@ -88,9 +88,15 @@ def add_user_alert_words(user_profile: UserProfile, new_words: Iterable[str]) ->
 @transaction.atomic(savepoint=False)
 def remove_user_alert_words(user_profile: UserProfile, delete_words: Iterable[str]) -> list[str]:
     delete_words_lower = [word.lower() for word in delete_words]
-    AlertWord.objects.annotate(word_lower=Lower("word")).filter(
-        user_profile=user_profile,
-        word_lower__in=delete_words_lower,
-    ).delete()
+    if _rust_alert_words is None:
+        AlertWord.objects.annotate(word_lower=Lower("word")).filter(
+            user_profile=user_profile,
+            word_lower__in=delete_words_lower,
+        ).delete()
+    elif delete_words_lower:
+        with connection.cursor() as cursor:
+            _rust_alert_words.delete_alert_words(cursor, user_profile.id, delete_words_lower)
+
+    # The SQL delete relies on the explicit realm flush in place of model signals.
     flush_realm_alert_words(user_profile.realm_id)
     return user_alert_words(user_profile)
