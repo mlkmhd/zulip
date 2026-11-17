@@ -41,7 +41,7 @@
 | `GET /api/v1/drafts` و alias وب با `HEAD` متناظر                                        | شرط همگام‌سازی حساب، خواندن PostgreSQL و ارائهٔ گیرنده                | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `DELETE /api/v1/drafts/{draft_id}` و alias وب                                          | حذف محدود به مالک و رویداد بعد از commit                              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `POST /api/v1/drafts` و alias وب | درج گروهی با `ZULIP_RUST_DRAFT_CREATION` و عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT` | Django با افزونهٔ اختیاری Rust | Django |
-| `PATCH /api/v1/drafts/{draft_id}` و alias وب | عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT` | Django با افزونهٔ اختیاری Rust | Django |
+| `PATCH /api/v1/drafts/{draft_id}` و alias وب | عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT` و ثبت ویرایش با `ZULIP_RUST_DRAFT_EDIT` | Django با افزونهٔ اختیاری Rust | Django |
 | `GET /api/v1/realm/linkifiers` و alias وب با `HEAD` متناظر                              | خواندن لینک‌سازهای سازمان با ترتیب اولویت از PostgreSQL              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/domains` و alias وب با `HEAD` متناظر                                 | خواندن دامنه‌های مجاز ایمیل سازمان از PostgreSQL                     | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/profile_fields` و alias وب با `HEAD` متناظر | تعاریف مرتب‌شدهٔ فیلدهای پروفایل سازمان از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
@@ -57,7 +57,7 @@
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `GET /api/v1/bot_storage` و alias وب با `HEAD` متناظر | خواندن همهٔ کلیدها یا کلیدهای درخواست‌شده برای ربات احرازشده | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `DELETE /api/v1/bot_storage` و alias وب | حذف اتمیک کلیدهای ربات احرازشده با `ZULIP_RUST_BOT_STORAGE_DELETES` | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
-| `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
+| `PUT /api/v1/bot_storage` و alias وب | درج یا به‌روزرسانی گروهی با سهمیهٔ اتمیک و پرچم `ZULIP_RUST_BOT_STORAGE_UPDATES` | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `POST /api/v1/users/me/subscriptions` و `POST /api/v1/channels/create` و aliasهای وب    | انتخاب رنگ هنگام ایجاد اشتراک با `ZULIP_RUST_STREAM_COLOR`             | Django                                                          | Django               |
 | `GET /compatibility` و `HEAD /compatibility`                                            | handler مستقل HTTP                                                     | Rust مستقیم یا از پروکسی با `--rust-http-port` برای میزبان اصلی | Django               |
 
@@ -77,12 +77,23 @@
 [test_drafts.py](../zerver/tests/test_drafts.py) و
 [DraftActionTest](../zerver/tests/test_events.py) هستند.
 
+## قرارداد ویرایش پیش‌نویس
+
+`PATCH` ابتدا همگام‌سازی، مالکیت پیش‌نویس و دسترسی به گیرندهٔ جدید را
+در Django بررسی می‌کند. با `ZULIP_RUST_DRAFT_EDIT=1`، به‌روزرسانی متن،
+عنوان، گیرنده و زمان در Rust با شرط شناسه و مالک انجام می‌شود. Django
+از cursor همان تراکنش استفاده می‌کند و `drafts/update` را فقط پس از
+commit به مالک می‌فرستد. اگر ساخت رویداد خطا بدهد، ویرایش لغو می‌شود.
+[تست ویرایش](../zerver/tests/test_drafts.py) و
+[فعال‌سازی](README.md#run-the-compatibility-checks)
+
 ## قرارداد فضای ذخیره‌سازی ربات
 
-`GET` و `DELETE` برای `/api/v1/bot_storage` و `/json/bot_storage` فقط برای
+`GET`، `DELETE` و `PUT` برای `/api/v1/bot_storage` و `/json/bot_storage` فقط برای
 ربات احرازشده اجرا می‌شوند. احراز هویت API با Basic Auth و احراز هویت وب
-با نشست Django است. حذف وب CSRF را بررسی می‌کند. هر دو عملیات سهمیهٔ
-`api_by_user` و ثبت فعالیت `get_storage` یا `remove_storage` را دارند.
+با نشست Django است. حذف و نوشتن وب CSRF را بررسی می‌کنند. هر سه عملیات
+سهمیهٔ `api_by_user` و ثبت فعالیت `get_storage`، `remove_storage` یا
+`update_storage` را دارند.
 
 - خواندن رکوردهای `zerver_botstoragedata` را به مالک محدود می‌کند.
   حذف پارامتر `keys` یا مقدار JSON `null` به معنی خواندن همهٔ کلیدهاست.
@@ -91,8 +102,12 @@
   فهرست صریح، Rust سطرهای منطبق را قفل و حذف می‌کند، به شرطی که همهٔ
   کلیدها موجود و متمایز باشند. فهرست خالی اثری روی داده ندارد. حذف
   کش یا رویداد همگام‌سازی ندارد.
-- نوشتن با `PUT` در Django انجام می‌شود و محاسبهٔ اختلاف سهمیه می‌تواند
-  از افزونهٔ Rust استفاده کند.
+- `PUT` دیکشنری `storage` با کلید و مقدار رشته‌ای را می‌گیرد. اندازهٔ
+  نهایی فضای ربات برحسب نویسه‌های Unicode بعد از جایگزینی محاسبه می‌شود.
+  بررسی سهمیه و upsert گروهی در یک تراکنش‌اند. Django و Rust برای نوشتن
+  و حذف از قفل تراکنشی PostgreSQL برای همان ربات استفاده می‌کنند. این
+  عملیات کش یا رویداد همگام‌سازی ندارد. تغییر مسیر پروکسی فقط روی `PUT`
+  مستقیم اعمال می‌شود.
 
 [تست مقایسه](../zerver/tests/test_embedded_bot_system.py)،
 [فعال‌سازی و بازگشت](README.md#read-bot-storage-through-rust)
@@ -363,7 +378,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `DELETE` | `/api/v1/attachments/{attachment_id}`                   | `remove-attachment`                    | `zerver.views.attachments.remove`                                              | Django         |
 | `DELETE` | `/api/v1/bot_storage`                                   | `remove-bot-storage`                   | `zerver.views.storage.remove_storage`                                          | Rust اختیاری |
 | `GET`    | `/api/v1/bot_storage`                                   | `get-bot-storage`                      | `zerver.views.storage.get_storage`                                             | Rust اختیاری |
-| `PUT`    | `/api/v1/bot_storage`                                   | `update-bot-storage`                   | `zerver.views.storage.update_storage`                                          | Django         |
+| `PUT`    | `/api/v1/bot_storage`                                   | `update-bot-storage`                   | `zerver.views.storage.update_storage`                                          | Rust اختیاری |
 | `GET`    | `/api/v1/bots/{bot_id}/api_key`                         | `get-bot-api-key`                      | `zerver.views.users.get_bot_api_key`                                           | Django         |
 | `POST`   | `/api/v1/bots/{bot_id}/api_key/regenerate`              | `regenerate-bot-api-key`               | `zerver.views.users.regenerate_bot_api_key`                                    | Django         |
 | `GET`    | `/api/v1/calls/bigbluebutton/create`                    | `create-big-blue-button-video-call`    | `zerver.views.video_calls.get_bigbluebutton_url`                               | Django         |
@@ -383,7 +398,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `GET`    | `/api/v1/drafts`                                        | `get-drafts`                           | `zerver.views.drafts.fetch_drafts`                                             | Rust اختیاری |
 | `POST`   | `/api/v1/drafts`                                        | `create-drafts`                        | `zerver.views.drafts.create_drafts`                                            | Django با درج اختیاری Rust |
 | `DELETE` | `/api/v1/drafts/{draft_id}`                             | `delete-draft`                         | `zerver.views.drafts.delete_draft`                                             | Rust اختیاری |
-| `PATCH`  | `/api/v1/drafts/{draft_id}`                             | `edit-draft`                           | `zerver.views.drafts.edit_draft`                                               | Django         |
+| `PATCH`  | `/api/v1/drafts/{draft_id}`                             | `edit-draft`                           | `zerver.views.drafts.edit_draft`                                               | Django با افزونهٔ اختیاری Rust |
 | `DELETE` | `/api/v1/events`                                        | `delete-queue`                         | `zerver.tornado.views.cleanup_event_queue`                                     | Tornado        |
 | `GET`    | `/api/v1/events`                                        | `get-events`                           | `zerver.tornado.views.get_events`                                              | Tornado        |
 | `GET`    | `/api/v1/export/realm`                                  | `get-realm-exports`                    | `zerver.views.realm_export.get_realm_exports`                                  | Django         |
@@ -586,7 +601,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/antispam_challenge`                            | `GET`                    | Django (مخصوص وب) |
 | `/json/attachments`                                   | `GET`                    | Rust اختیاری |
 | `/json/attachments/{attachment_id}`                   | `DELETE`                 | Django            |
-| `/json/bot_storage`                                   | `DELETE`, `GET`, `PUT`   | `GET` و `DELETE` در Rust اختیاری، `PUT` در Django |
+| `/json/bot_storage`                                   | `DELETE`, `GET`, `PUT`   | هر سه روش در Rust اختیاری |
 | `/json/bots`                                          | `GET`, `POST`            | Django            |
 | `/json/bots/{bot_id}`                                 | `DELETE`, `PATCH`        | Django            |
 | `/json/bots/{bot_id}/api_key`                         | `GET`                    | Django            |
@@ -606,7 +621,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/default_stream_groups/{group_id}/streams`      | `PATCH`                  | Django            |
 | `/json/default_streams`                               | `DELETE`, `POST`         | Django            |
 | `/json/drafts`                                        | `GET`, `POST`            | `GET` در Rust اختیاری، `POST` در Django با درج اختیاری Rust |
-| `/json/drafts/{draft_id}`                             | `DELETE`, `PATCH`        | `DELETE` در Rust اختیاری، `PATCH` در Django |
+| `/json/drafts/{draft_id}`                             | `DELETE`, `PATCH`        | `DELETE` در Rust اختیاری، `PATCH` در Django با افزونهٔ اختیاری Rust |
 | `/json/events`                                        | `DELETE`, `GET`          | Tornado           |
 | `/json/export/realm`                                  | `GET`, `POST`            | Django            |
 | `/json/export/realm/consents`                         | `GET`                    | Django            |

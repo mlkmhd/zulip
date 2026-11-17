@@ -104,6 +104,19 @@ for mode in 0 1; do
 done
 ```
 
+Reinstall the extension and set `ZULIP_RUST_DRAFT_EDIT=1` to execute the
+owner-scoped draft update through Rust. Django validates the recipient and
+uses its current transaction for the update and the `drafts/update` event.
+Unset the flag to return to the ORM update. The flag is independent of text
+normalization and draft creation.
+
+```sh
+for mode in 0 1; do
+    ZULIP_RUST_DRAFT_EDIT=$mode ./tools/test-backend \
+        zerver.tests.test_drafts zerver.tests.test_events.DraftActionTest
+done
+```
+
 ### Invalidate alert-word caches through Rust
 
 Reinstall the extension and set `ZULIP_RUST_ALERT_WORD_CACHE=1` in Django.
@@ -829,6 +842,35 @@ For nginx staging, use `bot-storage-with-deletes-map.conf` in place of
 `bot-storage-map.conf` with the same routes include. Restore the read-only
 map, or remove `--rust-bot-storage-deletes` from the development proxy, to
 return deletion to Django while keeping Rust reads active.
+
+### Update bot storage through Rust
+
+Set `ZULIP_RUST_BOT_STORAGE_UPDATES=1` and set
+`ZULIP_RUST_USER_STATE_SIZE_LIMIT` to the same character limit as Django's
+`USER_STATE_SIZE_LIMIT` (normally `10000000`). The development proxy and
+nginx forward physical `PUT` requests. Web updates require the session and
+public scheme settings used for web deletes. Grant `SELECT`, `INSERT`, and
+`UPDATE` on `zulip.zerver_botstoragedata` and `USAGE` on its ID sequence to
+the listener role.
+
+Deploy the updated Django storage helpers and Rust delete handler before
+routing `PUT` to Rust. Django, embedded bots, and Rust take the same
+transaction lock for each bot. The quota counts Unicode code points in the
+keys and values after replacement. A rejected batch leaves every entry
+unchanged.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend --parallel 1 --include-transaction-tests \
+    zerver.tests.test_embedded_bot_system
+./tools/run-dev --rust-http-port 9997 --rust-bot-storage-reads \
+    --rust-bot-storage-deletes --rust-bot-storage-updates
+```
+
+For nginx staging, use `bot-storage-with-updates-map.conf` with
+`bot-storage-routes.conf`. To roll back updates, restore
+`bot-storage-with-deletes-map.conf` and validate and reload nginx. For the
+development proxy, restart it without `--rust-bot-storage-updates`.
 
 ## Read channel folders through Rust
 
