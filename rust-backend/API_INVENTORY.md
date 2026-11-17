@@ -45,6 +45,7 @@
 | `GET /api/v1/realm/domains` و alias وب با `HEAD` متناظر                                 | خواندن دامنه‌های مجاز ایمیل سازمان از PostgreSQL                     | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/profile_fields` و alias وب با `HEAD` متناظر | تعاریف مرتب‌شدهٔ فیلدهای پروفایل سازمان از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `GET /api/v1/navigation_views` و alias وب با `HEAD` متناظر | تنظیمات شخصی نماهای ناوبری از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `POST /api/v1/navigation_views` و alias وب | ثبت نما و ممیزی در PostgreSQL و رویداد مالک | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `GET /api/v1/channel_folders` و alias وب با `HEAD` متناظر | پوشه‌های سازمان با فیلتر بایگانی و ترتیب نمایش از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `GET /api/v1/scheduled_messages` و alias وب با `HEAD` متناظر | پیام‌های زمان‌بندی‌شدهٔ ارسال‌نشدهٔ کاربر از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `GET /api/v1/reminders` و alias وب با `HEAD` متناظر | یادآوری‌های تحویل‌نشدهٔ کاربر از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
@@ -176,14 +177,14 @@
 [پیاده‌سازی](src/http/navigation_views.rs)،
 [تست مقایسه](../zerver/tests/test_navigation_views.py)
 
-ایجاد نما در `POST /api/v1/navigation_views` و مسیر وب در Django ثبت
-می‌شود. `fragment` و نام کوتاه‌شده از فاصله‌های ابتدا و انتها پس از
+ایجاد نما در `POST /api/v1/navigation_views` و مسیر وب به‌صورت اختیاری
+در Rust اجرا می‌شود. `fragment` و نام کوتاه‌شده از فاصله‌های ابتدا و انتها پس از
 اعتبارسنجی ذخیره می‌شوند. نمای داخلی نام سفارشی ندارد. ثبت نما و audit
 با نوع `NAVIGATION_VIEW_CREATED` و دادهٔ `fragment` در یک تراکنش انجام
 می‌شوند. پس از commit رویداد `navigation_view/add` فقط به مالک می‌رسد.
-قید پایگاه داده تکرار `(user, fragment)` را محدود می‌کند. نام تکراری
-با query در view بررسی می‌شود. در برش نوشتن، هم‌زمانی ایجاد با ایجاد
-و با تغییر نام در Django را جداگانه مقایسه کنید.
+قید پایگاه داده تکرار `(user, fragment)` را محدود می‌کند. Rust نوشتن هم‌زمان برای یک کاربر را پیش از بررسی نام تکراری قفل می‌کند.
+Django نام تکراری را در view بررسی می‌کند و رقابت بین دو پیاده‌سازی
+با محدودیت یکتایی نام در پایگاه داده پوشش داده نمی‌شود.
 [view](../zerver/views/navigation_views.py)،
 [تراکنش و رویداد](../zerver/actions/navigation_views.py)
 
