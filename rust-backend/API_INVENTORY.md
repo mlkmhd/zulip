@@ -38,6 +38,7 @@
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | اعتبارسنجی و پاک‌سازی، درج گروهی، پاک‌سازی کش و رویداد پس از commit    | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
+| `GET /api/v1/drafts` و alias وب با `HEAD` متناظر                                        | شرط همگام‌سازی حساب، خواندن PostgreSQL و ارائهٔ گیرنده                | Rust مستقیم                                                     | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -114,6 +115,18 @@
 تست نشست وب، اعتبار امضا و هش نشست، هدرهای کوکی و رفتار CSRF برای `GET` و `HEAD` پاس شد. `OPTIONS` در Django است.
 [نتیجهٔ مقایسهٔ HTTP](MIGRATION_HANDOFF.md#برشهای-قبلی-http)
 [خطاهای API](../api_docs/rest-error-handling.md)، [middleware](../zerver/middleware.py)
+
+## قرارداد پیش‌نویس‌ها
+
+`GET /api/v1/drafts` و `GET /json/drafts` فقط پیش‌نویس‌های کاربر احرازشده را
+از `zerver_draft` برمی‌گردانند. خاموش بودن همگام‌سازی پاسخ `400` دارد.
+`count` از تعداد پیش‌نویس‌های برگشتی تشکیل می‌شود. ترتیب SQL Django صعودی
+برحسب زمان آخرین ویرایش است. کانال با شناسهٔ کانال و پیام مستقیم با شناسهٔ
+عضوها برمی‌گردد. گیرندهٔ ناموجود به `type: ""` و `to: []` تبدیل می‌شود.
+`HEAD` هدرها را بدون بدنه برمی‌گرداند. خواندن، رویداد پیش‌نویس منتشر نمی‌کند.
+هدایت پروکسی و عملیات نوشتن هنوز در Django هستند.
+[view](../zerver/views/drafts.py)، [پیاده‌سازی Rust](src/http/drafts.rs)،
+[تست مقایسه](../zerver/tests/test_drafts.py)
 
 ## قرارداد متن‌های ذخیره‌شده
 
