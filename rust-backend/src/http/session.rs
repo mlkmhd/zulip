@@ -3,6 +3,7 @@ use std::{
     error::Error,
     fs,
     io::Read,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -15,7 +16,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio_postgres::Client;
 
-use super::SessionConfig;
+use super::{SessionConfig, database::Database};
 
 const SESSION_SALT: &[u8] = b"django.contrib.sessions.SessionStoresigner";
 const AUTH_SALT: &[u8] = b"django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash";
@@ -41,7 +42,7 @@ pub(super) struct SessionUser {
 }
 
 pub(super) enum SessionLookup {
-    User(SessionUser),
+    User(SessionUser, Arc<Client>),
     Anonymous { clear_cookie: bool },
 }
 
@@ -78,9 +79,9 @@ impl Sessions {
 
     pub(super) async fn lookup(
         &self,
-        db: &Client,
+        database: &Database,
         headers: &HeaderMap,
-    ) -> Result<SessionLookup, tokio_postgres::Error> {
+    ) -> Result<SessionLookup, Box<dyn Error + Send + Sync>> {
         let anonymous = SessionLookup::Anonymous {
             clear_cookie: false,
         };
@@ -91,6 +92,7 @@ impl Sessions {
         if !(8..=40).contains(&key.len()) || !key.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
             return Ok(expired);
         }
+        let db = database.client().await?;
         let Some(row) = db
             .query_opt(
                 "SELECT session_data FROM zulip.django_session
@@ -135,14 +137,17 @@ impl Sessions {
         }) {
             return Ok(expired);
         }
-        Ok(SessionLookup::User(SessionUser {
-            id,
-            rate_limits: row.try_get("rate_limits")?,
-            subdomain: row.try_get("string_id")?,
-            active: row.try_get("is_active")?,
-            realm_deactivated: row.try_get("deactivated")?,
-            bot_type: row.try_get("bot_type")?,
-        }))
+        Ok(SessionLookup::User(
+            SessionUser {
+                id,
+                rate_limits: row.try_get("rate_limits")?,
+                subdomain: row.try_get("string_id")?,
+                active: row.try_get("is_active")?,
+                realm_deactivated: row.try_get("deactivated")?,
+                bot_type: row.try_get("bot_type")?,
+            },
+            db,
+        ))
     }
 
     fn decode(&self, signed: &str) -> Option<Value> {

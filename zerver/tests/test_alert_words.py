@@ -327,6 +327,33 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             UserProfile.objects.filter(id=inactive.id).update(is_active=inactive.is_active)
             Realm.objects.filter(id=realm.id).update(deactivated=realm.deactivated)
 
+    def test_postgresql_connection_recovery(self) -> None:
+        user = self.example_user("hamlet")
+        authorization = (
+            "Basic " + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        )
+        headers = {"Authorization": authorization}
+        application_name = "zulip-rust-alert-words-recovery-test"
+        with self.rust_service({}, database_application_name=application_name) as rust_port:
+            before = self.request_words(rust_port, "GET", user.realm.host, headers)
+            self.assertEqual(before[0], 200)
+
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT pid FROM pg_stat_activity WHERE datname = current_database() "
+                    "AND application_name = %s",
+                    [application_name],
+                )
+                [(pid,)] = cursor.fetchall()
+                cursor.execute("SELECT pg_terminate_backend(%s, 5000)", [pid])
+                self.assertEqual(cursor.fetchone(), (True,))
+
+            # A request racing with detection of the disconnect can still see a 503.
+            after = self.request_words(rust_port, "GET", user.realm.host, headers)
+            if after[0] == 503:
+                after = self.request_words(rust_port, "GET", user.realm.host, headers)
+            self.assertEqual(after[:3], before[:3])
+
     def test_alert_words_session_and_csrf_parity(self) -> None:
         user = self.example_user("hamlet")
         inactive = self.example_user("iago")
@@ -467,7 +494,9 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             self.assertCountEqual(user_alert_words(user), words)
 
     @contextmanager
-    def rust_service(self, extra_env: dict[str, str]) -> Iterator[int]:
+    def rust_service(
+        self, extra_env: dict[str, str], *, database_application_name: str | None = None
+    ) -> Iterator[int]:
         db = connection.settings_dict
         database = make_dsn(
             dbname=db["NAME"],
@@ -475,6 +504,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             user=db["USER"],
             password=db["PASSWORD"],
             port=db["PORT"] or None,
+            application_name=database_application_name,
         )
         external_host = urlsplit("//" + settings.EXTERNAL_HOST).hostname
         assert external_host is not None

@@ -5,6 +5,7 @@ use axum::{Router, routing::get};
 mod activity;
 mod alert_words;
 mod compatibility;
+mod database;
 mod locale;
 mod rate_limit;
 mod session;

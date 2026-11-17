@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    net::IpAddr,
+    fmt::Display,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -11,11 +11,12 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use tokio_postgres::{Client, Config, NoTls, config::Host};
+use tokio_postgres::Client;
 
 use super::{
     AlertWordsConfig,
     activity::ActivityPublisher,
+    database::Database,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
     session::{SessionLookup, Sessions},
@@ -28,8 +29,10 @@ const INCOMING_WEBHOOK_BOT: i16 = 2;
 pub(super) async fn ready(State(state): State<AlertWords>) -> Response {
     let ready = state.sessions.is_some()
         && tokio::time::timeout(Duration::from_secs(2), async {
-            if state
-                .database
+            let Ok(database) = state.database.client().await else {
+                return false;
+            };
+            if database
                 .batch_execute(
                     "SELECT u.id, r.id, w.word, s.session_key
                  FROM zulip.zerver_userprofile u, zulip.zerver_realm r,
@@ -70,7 +73,7 @@ pub(super) async fn ready(State(state): State<AlertWords>) -> Response {
 
 #[derive(Clone)]
 pub(super) struct AlertWords {
-    database: Arc<Client>,
+    database: Arc<Database>,
     external_host: Arc<str>,
     locales: Locales,
     rate_limiter: Option<RateLimiter>,
@@ -91,41 +94,14 @@ impl AlertWords {
         if !settings.external_host.split('.').all(valid_label) {
             return Err("ZULIP_RUST_EXTERNAL_HOST must be a hostname without a port".into());
         }
-        let mut config: Config = settings.database.parse()?;
-        if config.get_hosts().is_empty()
-            || config.get_hosts().iter().any(|host| match host {
-                Host::Tcp(host) => {
-                    host != "localhost" && !host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
-                }
-                #[cfg(unix)]
-                Host::Unix(_) => false,
-            })
-            || config.get_hostaddrs().iter().any(|ip| !ip.is_loopback())
-        {
-            return Err("zulip-http requires an explicit local PostgreSQL host or socket".into());
-        }
-        config.connect_timeout(Duration::from_secs(5));
-        let (database, connection) = config.connect(NoTls).await?;
-        tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                eprintln!("Alert-word PostgreSQL connection failed: {error}");
-            }
-        });
-        database
-            .batch_execute("SET statement_timeout = '5s'")
-            .await?;
+        let database = Database::connect(settings.database, settings.activity.is_none()).await?;
         let rate_limiter = match settings.rate_limit {
             Some(config) => Some(RateLimiter::connect(config).await?),
             None => None,
         };
         let activity = match settings.activity {
             Some(config) => Some(ActivityPublisher::connect(config).await?),
-            None => {
-                database
-                    .batch_execute("SET default_transaction_read_only = on")
-                    .await?;
-                None
-            }
+            None => None,
         };
         Ok(Self {
             database: Arc::new(database),
@@ -137,11 +113,18 @@ impl AlertWords {
         })
     }
 
-    async fn authenticate(&self, headers: &HeaderMap) -> Result<AuthenticatedUser, ApiError> {
+    async fn authenticate(
+        &self,
+        headers: &HeaderMap,
+    ) -> Result<(Arc<Client>, AuthenticatedUser), ApiError> {
         let subdomain = subdomain(headers, &self.external_host).ok_or(ApiError::InvalidHost)?;
         let auth = credentials(headers)?;
-        let user = self
+        let database = self
             .database
+            .client()
+            .await
+            .map_err(ApiError::database_unavailable)?;
+        let user = database
             .query_opt(
                 "SELECT u.id, u.delivery_email, u.is_active, u.bot_type, u.rate_limits,
                         r.string_id, r.deactivated
@@ -175,14 +158,15 @@ impl AlertWords {
             ));
         }
 
-        Ok(AuthenticatedUser {
+        let user = AuthenticatedUser {
             id: user.try_get("id")?,
             rate_limits: user.try_get("rate_limits")?,
-        })
+        };
+        Ok((database, user))
     }
 
-    async fn words(&self, user_id: i32) -> Result<Vec<String>, ApiError> {
-        self.database
+    async fn words(database: &Client, user_id: i32) -> Result<Vec<String>, ApiError> {
+        database
             .query(
                 "SELECT word FROM zulip.zerver_alertword WHERE user_profile_id = $1",
                 &[&user_id],
@@ -215,6 +199,7 @@ impl AlertWords {
 
     async fn record_activity(
         &self,
+        database: &Client,
         user_id: i32,
         query: Option<&str>,
         headers: &HeaderMap,
@@ -222,7 +207,7 @@ impl AlertWords {
     ) -> Result<(), ApiError> {
         if let Some(activity) = &self.activity {
             activity
-                .record(&self.database, user_id, query, headers, browser)
+                .record(database, user_id, query, headers, browser)
                 .await
                 .map_err(|error| {
                     eprintln!("Alert-word activity failed: {error}");
@@ -323,6 +308,12 @@ enum ApiError {
 
 impl From<tokio_postgres::Error> for ApiError {
     fn from(error: tokio_postgres::Error) -> Self {
+        Self::database_unavailable(error)
+    }
+}
+
+impl ApiError {
+    fn database_unavailable(error: impl Display) -> Self {
         eprintln!("Alert-word PostgreSQL request failed: {error}");
         Self::DatabaseUnavailable
     }
@@ -380,11 +371,15 @@ pub(super) async fn get(State(state): State<AlertWords>, uri: Uri, headers: Head
     let mut clear_session_cookie = false;
     let mut rate_limit = None;
     let words = async {
-        let user_id = if let Some(sessions) = browser_session {
+        let (database, user_id) = if let Some(sessions) = browser_session {
             let subdomain =
                 subdomain(&headers, &state.external_host).ok_or(ApiError::InvalidHost)?;
-            let user = match sessions.lookup(&state.database, &headers).await? {
-                SessionLookup::User(user) => user,
+            let (user, database) = match sessions
+                .lookup(&state.database, &headers)
+                .await
+                .map_err(ApiError::database_unavailable)?
+            {
+                SessionLookup::User(user, database) => (user, database),
                 SessionLookup::Anonymous { clear_cookie } => {
                     clear_session_cookie = clear_cookie;
                     return Err(ApiError::MissingAuthentication);
@@ -411,21 +406,21 @@ pub(super) async fn get(State(state): State<AlertWords>, uri: Uri, headers: Head
                 ));
             }
             state
-                .record_activity(user.id, uri.query(), &headers, true)
+                .record_activity(&database, user.id, uri.query(), &headers, true)
                 .await?;
-            user.id
+            (database, user.id)
         } else {
-            let user = state.authenticate(&headers).await?;
+            let (database, user) = state.authenticate(&headers).await?;
             // Basic Auth records activity before the quota check.
             state
-                .record_activity(user.id, uri.query(), &headers, false)
+                .record_activity(&database, user.id, uri.query(), &headers, false)
                 .await?;
             state
                 .limit(user.id, &user.rate_limits, &mut rate_limit)
                 .await?;
-            user.id
+            (database, user.id)
         };
-        state.words(user_id).await
+        AlertWords::words(&database, user_id).await
     }
     .await;
     let mut response = match words {

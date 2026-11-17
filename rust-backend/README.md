@@ -135,6 +135,9 @@ used by Django, including its credentials. Set
 and `USAGE` on its ID sequence so new client names can be registered.
 The PostgreSQL session remains read-only when activity is disabled. The
 Redis and RabbitMQ settings are independent and optional for direct tests.
+If PostgreSQL disconnects after startup, the next database-backed request
+or readiness probe can reopen the connection. Requests that fail after
+acquiring a connection return an error without retrying the operation.
 
 In a provisioned Zulip development environment, the comparison test starts Django
 and the Rust binary on loopback and gives them the same test database with
@@ -146,6 +149,9 @@ cargo build --manifest-path rust-backend/Cargo.toml --locked --features http --b
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ./tools/test-backend zerver.tests.test_alert_words.AlertWordsRustHTTPTest
 ```
+
+This suite also terminates the Rust connection in the test database and
+checks that the same Rust process serves the original response after reconnecting.
 
 To include the shared Redis and RabbitMQ test, create a dedicated RabbitMQ
 vhost beginning with `zulip-rust-test-` and grant the development broker
