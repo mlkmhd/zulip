@@ -26,6 +26,7 @@
 
 | عملیات یا جریان                                                                         | منطق اختیاری Rust                                                 | مسیر HTTP در توسعه                                              | مسیر پیش‌فرض استقرار |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
+| `GET /api/v1/users/me/alert_words` و `HEAD` متناظر                                      | Basic Auth و خواندن از PostgreSQL                                 | Rust مستقیم روی loopback با تنظیم پایگاه داده و میزبان          | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                  | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS` | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`   | Django                                                          | Django               |
@@ -59,16 +60,13 @@
 [مدل و کش](../zerver/models/alert_words.py)، [تراکنش و رویداد](../zerver/actions/alert_words.py)،
 [تست واژه‌ها](../zerver/tests/test_alert_words.py) و [تست رویدادها](../zerver/tests/test_events.py).
 
-برای برش بعدی، داده‌های commit‌شدهٔ کاربر بدون واژه، کاربر دارای واژهٔ Unicode،
-دو کاربر در یک سازمان و کاربر سازمان دیگر را برای هر دو سرویس آماده کنید.
-برای `GET` و `HEAD` کد وضعیت، بدنه و هدرهای کش، احراز هویت و محدودیت نرخ
-را مقایسه کنید. پاسخ درخواست بدون اعتبارنامه، کلید نامعتبر، سازمان نادرست،
-حساب غیرفعال و ربات webhook را جدا ثبت کنید. در حالت بدون اعتبارنامه،
+تست HTTP با دادهٔ commit‌شده در Django و Rust، رفتار فهرست خالی، واژهٔ Unicode،
+کلید نامعتبر، سازمان نادرست، حساب غیرفعال و ربات webhook را برای مسیر API
+بررسی کرد. در حالت بدون اعتبارنامه،
 `Accept` بر انتخاب پاسخ JSON یا هدایت به صفحهٔ ورود اثر دارد و هدر
-`WWW-Authenticate` پاسخ JSON با پیشوند مسیر عوض می‌شود. `OPTIONS`، روش پشتیبانی‌نشده
-و alias نشست‌محور نیز بخشی از قراردادند. تست‌های موجود واژه‌های هشدار
-برای درخواست GET از alias وب استفاده می‌کنند. مقایسهٔ HTTP مستقل برای
-Basic Auth، نشست، هدرها و محدودیت نرخ در این برش اجرا نشده است.
+`WWW-Authenticate` پاسخ JSON با پیشوند مسیر عوض می‌شود. برابری محدودیت نرخ،
+نشست وب و رفتار `OPTIONS` در سرویس Rust هنوز تأیید نشده است.
+[نتیجهٔ مقایسه](MIGRATION_HANDOFF.md#آخرین-برش)
 [خطاهای API](../api_docs/rest-error-handling.md)، [middleware](../zerver/middleware.py)
 
 ## فهرست OpenAPI
