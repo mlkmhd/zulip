@@ -75,13 +75,11 @@ pub async fn router_with_user_reads(
         .route(user_reads::ALERT_WORDS_PATH, get(user_reads::get))
         .route(saved_snippets::PATH, snippet_route)
         .route("/health/rust-alert-words", get(user_reads::ready));
+    let snippet_detail_route = patch(user_reads::write_saved_snippet_detail)
+        .delete(user_reads::write_saved_snippet_detail)
+        .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT));
     if saved_snippet_writes {
-        routes = routes.route(
-            saved_snippets::DETAIL_PATH,
-            patch(user_reads::write_saved_snippet_detail)
-                .delete(user_reads::write_saved_snippet_detail)
-                .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT)),
-        );
+        routes = routes.route(saved_snippets::DETAIL_PATH, snippet_detail_route.clone());
     }
     if browser_enabled {
         let mut web_snippet_route = get(user_reads::get);
@@ -89,11 +87,7 @@ pub async fn router_with_user_reads(
             web_snippet_route = web_snippet_route
                 .post(user_reads::create_saved_snippet)
                 .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT));
-            routes = routes.route(
-                saved_snippets::SESSION_DETAIL_PATH,
-                patch(user_reads::write_saved_snippet_detail)
-                    .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT)),
-            );
+            routes = routes.route(saved_snippets::SESSION_DETAIL_PATH, snippet_detail_route);
         }
         routes = routes
             .route(user_reads::ALERT_WORDS_SESSION_PATH, get(user_reads::get))

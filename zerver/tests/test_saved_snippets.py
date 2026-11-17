@@ -493,6 +493,9 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
     def test_saved_snippet_web_patch_http_and_event_parity(self) -> None:
         self.check_web_write_parity(self.check_web_patch_cases)
 
+    def test_saved_snippet_web_delete_http_and_event_parity(self) -> None:
+        self.check_web_write_parity(self.check_web_delete_cases)
+
     def check_web_write_parity(
         self,
         check_cases: Callable[
@@ -789,6 +792,106 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 self.assertEqual(check(rust_port), django)
         finally:
             SavedSnippet.objects.filter(id__in=[own.id, foreign.id]).delete()
+
+    def check_web_delete_cases(
+        self,
+        scheme: str,
+        django_port: int,
+        rust_port: int | None,
+        user: UserProfile,
+        session: str,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> None:
+        host = user.realm.host
+        token = _get_new_csrf_string()
+        origin = {"Origin": f"{scheme}://{host}"}
+        cookie = f"{session}; {settings.CSRF_COOKIE_NAME}={token}"
+        valid = {**origin, "Cookie": cookie, "X-CSRFToken": token}
+        other = self.example_user("othello")
+        foreign = SavedSnippet.objects.create(
+            user_profile=other, realm=other.realm, title="Private", content="Keep"
+        )
+
+        def check(port: int) -> list[tuple[int, bytes, dict[str, str | None]]]:
+            own = do_create_saved_snippet("Delete me", "**Text**", user)
+            audit = RealmAuditLog.objects.get(
+                acting_user=user,
+                event_type=AuditLogEventType.SAVED_SNIPPET_CREATED,
+                extra_data={"saved_snippet_id": own.id},
+            )
+            channel.queue_purge("notify_tornado")
+            channel.queue_purge("user_activity")
+            responses = []
+
+            def delete(
+                headers: dict[str, str],
+                expected: int,
+                *,
+                snippet_id: int = own.id,
+                fields: dict[str, str] | None = None,
+            ) -> None:
+                response = request_test_http(
+                    port,
+                    "DELETE",
+                    host,
+                    {
+                        **headers,
+                        "User-Agent": "Mozilla/5.0",
+                        "X-Forwarded-Proto": scheme if port == django_port else "http",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    f"/json/saved_snippets/{snippet_id}",
+                    body=urlencode(fields or {}),
+                )
+                self.assertEqual(response[0], expected, response[1])
+                responses.append(response[:3])
+
+            credentials = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+            delete({**origin, "Authorization": f"Basic {credentials}"}, 401)
+            delete({**valid, "Cookie": session}, 403)
+            delete({**origin, "Cookie": cookie}, 403, fields={"csrfmiddlewaretoken": token})
+            delete({**valid, "X-CSRFToken": _get_new_csrf_string()}, 403)
+            delete({**valid, "Origin": f"{scheme}://other.testserver"}, 403)
+            if scheme == "https":
+                delete({"Cookie": cookie, "X-CSRFToken": token}, 403)
+            self.assertIsNone(channel.basic_get("user_activity", auto_ack=True)[0])
+            delete(valid, 404, snippet_id=foreign.id)
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            self.assertTrue(SavedSnippet.objects.filter(id=own.id).exists())
+
+            browser = (
+                {"Cookie": cookie, "X-CSRFToken": token, "Referer": f"https://{host}/"}
+                if scheme == "https"
+                else valid
+            )
+            delete(browser, 200, fields={"method": "PATCH", "csrfmiddlewaretoken": "ignored"})
+            self.assertFalse(SavedSnippet.objects.filter(id=own.id).exists())
+            self.assertTrue(RealmAuditLog.objects.filter(id=audit.id).exists())
+            delivery, properties, body = channel.basic_get("notify_tornado", auto_ack=True)
+            assert delivery is not None and properties is not None and body is not None
+            self.assertEqual(properties.delivery_mode, 2)
+            self.assertEqual(
+                orjson.loads(body),
+                {
+                    "users": [user.id],
+                    "event": {
+                        "type": "saved_snippets",
+                        "op": "remove",
+                        "saved_snippet_id": own.id,
+                    },
+                },
+            )
+            delete(valid, 404)
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            self.assertTrue(SavedSnippet.objects.filter(id=foreign.id, user_profile=other).exists())
+            return responses
+
+        try:
+            django = check(django_port)
+            if rust_port is not None:
+                self.assertEqual(check(rust_port), django)
+        finally:
+            foreign.delete()
 
     def post_snippet(
         self,
