@@ -11,6 +11,7 @@ pub use rate_limit::ClientIpSource;
 mod activity;
 mod alert_word_cache;
 pub mod alert_words;
+mod attachments;
 mod channel_folders;
 mod compatibility;
 mod csrf;
@@ -126,6 +127,7 @@ pub async fn router_with_user_reads(
         )
         .route(saved_snippets::PATH, snippet_route)
         .route(drafts::PATH, get(user_reads::get))
+        .route(attachments::PATH, get(user_reads::get))
         .route(linkifiers::PATH, get(user_reads::get))
         .route(realm_domains::PATH, get(user_reads::get))
         .route(custom_profile_fields::PATH, get(user_reads::get))
@@ -188,6 +190,7 @@ pub async fn router_with_user_reads(
                 },
             )
             .route(drafts::SESSION_PATH, get(user_reads::get))
+            .route(attachments::SESSION_PATH, get(user_reads::get))
             .route(linkifiers::SESSION_PATH, get(user_reads::get))
             .route(realm_domains::SESSION_PATH, get(user_reads::get))
             .route(custom_profile_fields::SESSION_PATH, get(user_reads::get))

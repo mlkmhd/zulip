@@ -718,6 +718,31 @@ physical PATCH and DELETE to Rust. Django handles OPTIONS and POST method
 overrides. Remove the development option or the detail includes to return
 the two methods to Django while preserving the collection routes.
 
+## Read uploaded files through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/attachments` with Basic Auth
+and on `/json/attachments` with the
+[Django session settings](#read-alert-words-with-a-django-session).
+Grant the Rust database role `SELECT` on `zulip.zerver_attachment`,
+`zulip.zerver_attachment_messages` and `zulip.analytics_realmcount`.
+
+The list contains the authenticated user's attachments and their linked
+message IDs. Organization usage is the latest daily byte count plus
+uploads at or after that count's cutoff. Rust calculates it from PostgreSQL
+per request.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_attachments
+./tools/run-dev --rust-http-port 9997 --rust-attachment-reads
+```
+
+For nginx staging, install `attachments-map.conf` in the HTTP context and
+`attachments-routes.conf` in `app.d/` for the verified organization host
+and port. Validate and reload nginx. To roll back, remove the development
+option or remove the nginx routes include, validate and reload. Attachment
+detail requests, uploads and OPTIONS use Django.
+
 ## Read channel folders through Rust
 
 The listener serves `GET` and `HEAD` on `/api/v1/channel_folders` with Basic

@@ -20,7 +20,7 @@ use tokio_postgres::Client;
 use super::{
     UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
-    alert_word_cache, alert_words, channel_folders, custom_profile_fields,
+    alert_word_cache, alert_words, attachments, channel_folders, custom_profile_fields,
     database::Database,
     drafts,
     form::{Form, FormError},
@@ -46,6 +46,7 @@ enum Endpoint {
     AlertWords,
     SavedSnippets,
     Drafts,
+    Attachments,
     Linkifiers,
     RealmDomains,
     CustomProfileFields,
@@ -83,6 +84,7 @@ impl Endpoint {
             Self::AlertWords => "list_alert_words",
             Self::SavedSnippets => "get_saved_snippets",
             Self::Drafts => "fetch_drafts",
+            Self::Attachments => "list_by_user",
             Self::Linkifiers => "list_linkifiers",
             Self::RealmDomains => "list_realm_domains",
             Self::CustomProfileFields => "list_realm_custom_profile_fields",
@@ -157,6 +159,15 @@ impl Endpoint {
                 let list =
                     serde_json::to_string(&drafts).expect("database fields can serialize to JSON");
                 return Ok(format!("\"count\":{},\"drafts\":{list}", drafts.len()));
+            }
+            Self::Attachments => {
+                let (attachments, upload_space_used) =
+                    attachments::list(database, user_id, realm_id).await?;
+                let list = serde_json::to_string(&attachments)
+                    .expect("database fields can serialize to JSON");
+                return Ok(format!(
+                    "\"attachments\":{list},\"upload_space_used\":{upload_space_used}"
+                ));
             }
         };
         let value = serialized.expect("database fields can serialize to JSON");
@@ -729,6 +740,7 @@ async fn respond(
     let endpoint = match uri.path() {
         saved_snippets::PATH | saved_snippets::SESSION_PATH => Endpoint::SavedSnippets,
         drafts::PATH | drafts::SESSION_PATH => Endpoint::Drafts,
+        attachments::PATH | attachments::SESSION_PATH => Endpoint::Attachments,
         linkifiers::PATH | linkifiers::SESSION_PATH => Endpoint::Linkifiers,
         realm_domains::PATH | realm_domains::SESSION_PATH => Endpoint::RealmDomains,
         custom_profile_fields::PATH | custom_profile_fields::SESSION_PATH => {
@@ -1162,6 +1174,7 @@ fn error_response(
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"DELETE\",\"HEAD\"]}",
             ),
             Endpoint::Drafts
+            | Endpoint::Attachments
             | Endpoint::Linkifiers
             | Endpoint::RealmDomains
             | Endpoint::CustomProfileFields
