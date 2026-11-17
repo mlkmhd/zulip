@@ -37,7 +37,7 @@
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
-| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | اجرای حذف گروهی داخل تراکنش Django با `ZULIP_RUST_ALERT_WORDS`         | Django                                                          | Django               |
+| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | پل `ZULIP_RUST_ALERT_WORDS` در Django. تراکنش مستقل Rust در آزمون یکپارچه تأیید شده است. | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -88,6 +88,12 @@
 `ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST`، بررسی آمادگی Rust فایل جاری و
 اتصال Memcached را اعتبارسنجی می‌کند. Django مسیرهای نوشتن را سرو می‌کند.
 [راهنمای انتشار فایل](README.md#share-djangos-alert-word-cache-namespace-with-zulip-http)
+
+تراکنش مستقل Rust ورودیِ کوچک‌شده طبق قواعد Python را می‌گیرد، حذف را به همان
+کاربر محدود می‌کند و دو کش سازمان را با پیشوندهای فایل جاری پاک می‌کند. خطای
+کش به rollback می‌انجامد. فهرست باقی‌مانده داخل تراکنش خوانده می‌شود و پس از
+commit برمی‌گردد. اتصال این عملیات به handler و انتشار رویداد Rust باقی است.
+[تست با PostgreSQL و Memcached](README.md#test-the-rust-alert-word-removal-transaction)
 
 تست HTTP با دادهٔ commit‌شده در Django و Rust، رفتار فهرست خالی، واژهٔ Unicode،
 کلید نامعتبر، سازمان نادرست، حساب غیرفعال و ربات webhook را برای مسیر API
