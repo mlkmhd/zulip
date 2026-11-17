@@ -7,14 +7,18 @@
 
 هدف این است که کل کد پایتون این فورک، شامل سرور، workerها، ابزارهای نصب و مدیریت، مهاجرت‌های پایگاه داده و تست‌ها، با Rust جایگزین شود. API و رفتار قابل مشاهدهٔ برنامه باید در طول مهاجرت سازگار بمانند. تا این تاریخ یک مسیر HTTP برای API موبایل در Rust مستقل اجرا می‌شود و چهار بخش دیگر منطق Rust را از داخل Django فراخوانی می‌کنند. پیاده‌سازی Django مبنای مقایسه است و در استقرار فعلی مسیر پیش‌فرض محسوب می‌شود.
 
+## آخرین برش
+
+[موجودی مسیرهای HTTP](API_INVENTORY.md) هر ۱۷۱ مدخل روش و مسیر OpenAPI را در مبنای `dd0b414ed1` ثبت می‌کند. سه مدخل نمونهٔ مستندات‌اند و ۱۶۸ عملیات به handler ثبت‌شده نگاشت شده‌اند. موجودی همچنین ۳۹ عملیات خارج از OpenAPI زیر `/api/v1/`، ۱۳۴ مسیر `/json/`، ۹۶ مسیر webhook ورودی و مسیرهای داخلی Django و Tornado را ثبت می‌کند. برای خانوادهٔ واژه‌های هشدار، احراز هویت، دسترسی داده، کش، رویداد، تست مرجع و وضعیت استقرار به تفکیک عملیات مستند شده است. شمارنده‌های انتقال کد همچنان مقدار ردیف مبنا را دارند.
+
 ## درصد و معیار پیشرفت
 
-| معیار | وضعیت در `dd0b414ed1` |
-| --- | --- |
-| فایل‌های پایتون مبنا که پس از جایگزینی بازنشسته شده‌اند | **۰ از ۲٬۰۶۲، معادل ۰٪** |
-| عملیات OpenAPI که مسیر کامل HTTP آن‌ها در Rust تأیید شده است | **۰ از ۱۷۱ عملیات** در ۱۲۲ مسیر مستند |
-| مسیر مستقل HTTP خارج از OpenAPI | **۱ مسیر**، `/compatibility` با `GET` و `HEAD` |
-| بخش‌هایی که Django بخشی از پردازش آن‌ها را به Rust می‌سپارد | **۴ بخش** |
+| معیار                                                        | وضعیت در `dd0b414ed1`                          |
+| ------------------------------------------------------------ | ---------------------------------------------- |
+| فایل‌های پایتون مبنا که پس از جایگزینی بازنشسته شده‌اند      | **۰ از ۲٬۰۶۲، معادل ۰٪**                       |
+| عملیات OpenAPI که مسیر کامل HTTP آن‌ها در Rust تأیید شده است | **۰ از ۱۷۱ عملیات** در ۱۲۲ مسیر مستند          |
+| مسیر مستقل HTTP خارج از OpenAPI                              | **۱ مسیر**، `/compatibility` با `GET` و `HEAD` |
+| بخش‌هایی که Django بخشی از پردازش آن‌ها را به Rust می‌سپارد  | **۴ بخش**                                      |
 
 این درصد پیشرفتِ حذف وابستگی به فایل‌های پایتون را اندازه می‌گیرد و تخمینی از کار یا زمان باقی‌مانده نیست. شاخهٔ فعلی ۲٬۰۶۳ فایل `.py` دارد، چون یک تست Python برای مقایسه با Rust اضافه شده است. از فایل‌های فعلی، ۹۶۹ مورد در مسیرهای `migrations/` هستند. دست‌کم ۷۰ فایل دیگر در `tools/` و `scripts/` با shebang پایتون اجرا می‌شوند و پسوند `.py` ندارند. شمارش OpenAPI نیز مسیر سازگاری موبایل، مسیرهای مستندنشده و همهٔ مسیرهای داخلی را پوشش نمی‌دهد.
 
@@ -39,12 +43,12 @@ PY
 
 ## بخش‌های انجام‌شده
 
-| کامیت | بخش منتقل‌شده | مرز پیاده‌سازی فعلی |
-| --- | --- | --- |
-| `d8044013cd` | انتخاب رنگ پیش‌فرض اشتراک کانال در [stream_color.rs](src/stream_color.rs) | `ZULIP_RUST_STREAM_COLOR=1` تابع انتخاب رنگ را عوض می‌کند. Django اشتراک و رویدادها را مدیریت می‌کند. |
-| `9a76e8e9d7` | پاک‌سازی و حذف تکرار هنگام افزودن واژهٔ هشدار در [alert_words.rs](src/alert_words.rs) | `ZULIP_RUST_ALERT_WORDS=1` منطق داخلی `POST /api/v1/users/me/alert_words` و معادل وب را فعال می‌کند. Django اعتبارسنجی درخواست، تراکنش، کش و رویداد را انجام می‌دهد. پل PyO3 برای تبدیل حروف به کوچک از قواعد Unicode نسخهٔ جاری Python استفاده می‌کند. |
-| `de0e7dcda4` | ساخت فیلدهای پاسخ و قواعد به‌روزرسانی وضعیت کاربر در [user_status.rs](src/user_status.rs) | `ZULIP_RUST_USER_STATUS=1` قواعد فیلدهای حذف‌شده و خالی و پاک‌کردن ایموجی را فعال می‌کند. مجوزها، جست‌وجوی ایموجی، دسترسی داده و انتشار رویداد در Django هستند. |
-| `135c51f5c6` | محاسبهٔ تغییر مصرف سهمیهٔ ذخیره‌سازی ربات بر اساس تعداد نویسه‌ها در [bot_storage.rs](src/bot_storage.rs) | `ZULIP_RUST_BOT_STORAGE=1` در `PUT /api/v1/bot_storage` و هنگام نوشتن ربات داخلی استفاده می‌شود. عملیات خواندن و نوشتن همچنان در Django است. |
+| کامیت        | بخش منتقل‌شده                                                                                                                      | مرز پیاده‌سازی فعلی                                                                                                                                                                                                                                                                                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `d8044013cd` | انتخاب رنگ پیش‌فرض اشتراک کانال در [stream_color.rs](src/stream_color.rs)                                                          | `ZULIP_RUST_STREAM_COLOR=1` تابع انتخاب رنگ را عوض می‌کند. Django اشتراک و رویدادها را مدیریت می‌کند.                                                                                                                                                                                                                     |
+| `9a76e8e9d7` | پاک‌سازی و حذف تکرار هنگام افزودن واژهٔ هشدار در [alert_words.rs](src/alert_words.rs)                                              | `ZULIP_RUST_ALERT_WORDS=1` منطق داخلی `POST /api/v1/users/me/alert_words` و معادل وب را فعال می‌کند. Django اعتبارسنجی درخواست، تراکنش، کش و رویداد را انجام می‌دهد. پل PyO3 برای تبدیل حروف به کوچک از قواعد Unicode نسخهٔ جاری Python استفاده می‌کند.                                                                   |
+| `de0e7dcda4` | ساخت فیلدهای پاسخ و قواعد به‌روزرسانی وضعیت کاربر در [user_status.rs](src/user_status.rs)                                          | `ZULIP_RUST_USER_STATUS=1` قواعد فیلدهای حذف‌شده و خالی و پاک‌کردن ایموجی را فعال می‌کند. مجوزها، جست‌وجوی ایموجی، دسترسی داده و انتشار رویداد در Django هستند.                                                                                                                                                           |
+| `135c51f5c6` | محاسبهٔ تغییر مصرف سهمیهٔ ذخیره‌سازی ربات بر اساس تعداد نویسه‌ها در [bot_storage.rs](src/bot_storage.rs)                           | `ZULIP_RUST_BOT_STORAGE=1` در `PUT /api/v1/bot_storage` و هنگام نوشتن ربات داخلی استفاده می‌شود. عملیات خواندن و نوشتن همچنان در Django است.                                                                                                                                                                              |
 | `dd0b414ed1` | `GET /compatibility` و `HEAD /compatibility` در [zulip-http](src/bin/zulip-http.rs) و [handler سازگاری](src/http/compatibility.rs) | Axum درخواست را دریافت می‌کند، کلاینت را بررسی می‌کند و پاسخ HTTP و JSON را می‌سازد. پیام ترجمه‌شدنی از فایل‌های کامپایل‌شدهٔ `locale/` خوانده می‌شود. پروکسی توسعه با `--rust-http-port` فقط درخواست‌های `GET` و `HEAD` این مسیر را روی میزبان اصلی توسعه به Rust می‌فرستد. استقرار تولید هنوز از Django استفاده می‌کند. |
 
 پل Python در [python.rs](src/python.rs) و بسته‌بندی آن در [pyproject.toml](pyproject.toml) است. گزینهٔ Cargo به نام `http`، سرور `zulip-http` را بدون PyO3 فعال می‌کند. گزینهٔ `python` افزونهٔ `_zulip_backend` را می‌سازد. [تنظیمات CI فعلی](../.github/workflows/rust-backend.yml) تست‌های Rust، lint و مقایسهٔ رنگ کانال را اجرا می‌کند. تست‌های HTTP و Django در Multipass اجرا شده‌اند و در این workflow پوشش داده نمی‌شوند.
@@ -53,17 +57,18 @@ PY
 
 اجرای هر ردیف به محدوده و کامیت همان مرحله مربوط است. ردیف‌های تجمیعی شامل ردیف‌های جزئی هستند.
 
-| تست | نسخهٔ Python | نسخهٔ Rust | شواهد و محدوده |
-| --- | --- | --- | --- |
-| `zerver.tests.test_subs` | ۱۳۳ پاس | ۱۳۳ پاس | تست‌های موجود اشتراک و رنگ کانال در Multipass. لاگ‌های `zulip-test-python.log` و `zulip-test-rust.log`. |
-| `test_alert_words` و `NormalActionsTest.test_alert_words_events` | ۱۴ پاس | ۱۴ پاس | اضافه و حذف، پاسخ و ذخیره‌سازی، کش و رویداد؛ شامل کیس جدید Unicode و واژهٔ تکراری. لاگ‌های `zulip-alert-words-{0,1}.log`. |
-| وضعیت کاربر همراه با مجموعهٔ واژه‌های هشدار و رویداد آن | ۱۷ پاس | ۱۷ پاس | شامل کیس جدید API برای پاک‌کردن ایموجی و حفظ متن وضعیت. لاگ‌های `zulip-user-status-{0,1}.log`. |
-| `zerver.tests.test_embedded_bot_system` | ۱۸ پاس | ۱۸ پاس | شامل سقف Unicode و اطمینان از تغییر نکردن داده پس از رد درخواست. لاگ‌های `zulip-bot-storage-{0,1}.log`. |
-| چهار بخش داخلی به‌صورت تجمیعی | ۱۶۸ پاس | ۱۶۸ پاس | در `135c51f5c6` با هر چهار پرچم خاموش یا روشن. لاگ‌های `zulip-rust-compatibility-{0,1}.log`. |
-| `zerver.tests.test_compatibility` | ۸ پاس با Django | ۸ پاس مستقیم و ۸ پاس از پشت پروکسی | از ۸ تست، ۴ تست به درخواست HTTP مربوط‌اند. مجموعه شامل ۶ تست قبلی و ۲ تست جدید برای `HEAD` و ترجمه است. لاگ‌های `zulip-compatibility-{django,rust,proxy}.log`. |
-| مقایسهٔ مستقیم پاسخ HTTP | مبنای Django | ۱۲۳ درخواست، ۰ اختلاف | مقایسهٔ status، بدنه و هدرهای `Content-Type`، `Content-Language` و `Vary`. آزمون کمکی فعلاً در VM با نام `/home/ubuntu/zulip-rust-http-compare.py` است و در Git ثبت نشده است. |
-| مقایسهٔ انتخاب رنگ | مبنای Python | ۵۰۲ ورودی برابر | [تست مقایسه](tests/test_stream_color_parity.py) ترتیب نتیجه و تغییر نکردن ورودی‌ها را هم بررسی می‌کند. |
-| `cargo test --locked --features http` | — | ۹ پاس | در بازبینی این سند روی `dd0b414ed1` دوباره اجرا شد. `cargo fmt --check` و Clippy با همهٔ featureها هم پاس شدند. |
+| تست                                                              | نسخهٔ Python    | نسخهٔ Rust                         | شواهد و محدوده                                                                                                                                                                                                                                                                       |
+| ---------------------------------------------------------------- | --------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `zerver.tests.test_subs`                                         | ۱۳۳ پاس         | ۱۳۳ پاس                            | تست‌های موجود اشتراک و رنگ کانال در Multipass. لاگ‌های `zulip-test-python.log` و `zulip-test-rust.log`.                                                                                                                                                                              |
+| `test_alert_words` و `NormalActionsTest.test_alert_words_events` | ۱۴ پاس          | ۱۴ پاس                             | اضافه و حذف، پاسخ و ذخیره‌سازی، کش و رویداد؛ شامل کیس جدید Unicode و واژهٔ تکراری. لاگ‌های `zulip-alert-words-{0,1}.log`.                                                                                                                                                            |
+| وضعیت کاربر همراه با مجموعهٔ واژه‌های هشدار و رویداد آن          | ۱۷ پاس          | ۱۷ پاس                             | شامل کیس جدید API برای پاک‌کردن ایموجی و حفظ متن وضعیت. لاگ‌های `zulip-user-status-{0,1}.log`.                                                                                                                                                                                       |
+| `zerver.tests.test_embedded_bot_system`                          | ۱۸ پاس          | ۱۸ پاس                             | شامل سقف Unicode و اطمینان از تغییر نکردن داده پس از رد درخواست. لاگ‌های `zulip-bot-storage-{0,1}.log`.                                                                                                                                                                              |
+| چهار بخش داخلی به‌صورت تجمیعی                                    | ۱۶۸ پاس         | ۱۶۸ پاس                            | در `135c51f5c6` با هر چهار پرچم خاموش یا روشن. لاگ‌های `zulip-rust-compatibility-{0,1}.log`.                                                                                                                                                                                         |
+| `zerver.tests.test_compatibility`                                | ۸ پاس با Django | ۸ پاس مستقیم و ۸ پاس از پشت پروکسی | از ۸ تست، ۴ تست به درخواست HTTP مربوط‌اند. مجموعه شامل ۶ تست قبلی و ۲ تست جدید برای `HEAD` و ترجمه است. لاگ‌های `zulip-compatibility-{django,rust,proxy}.log`.                                                                                                                       |
+| مقایسهٔ مستقیم پاسخ HTTP                                         | مبنای Django    | ۱۲۳ درخواست، ۰ اختلاف              | مقایسهٔ status، بدنه و هدرهای `Content-Type`، `Content-Language` و `Vary`. آزمون کمکی فعلاً در VM با نام `/home/ubuntu/zulip-rust-http-compare.py` است و در Git ثبت نشده است.                                                                                                        |
+| مقایسهٔ انتخاب رنگ                                               | مبنای Python    | ۵۰۲ ورودی برابر                    | [تست مقایسه](tests/test_stream_color_parity.py) ترتیب نتیجه و تغییر نکردن ورودی‌ها را هم بررسی می‌کند.                                                                                                                                                                               |
+| `cargo test --locked --features http`                            | —               | ۹ پاس                              | در بازبینی این سند روی `dd0b414ed1` دوباره اجرا شد. `cargo fmt --check` و Clippy با همهٔ featureها هم پاس شدند.                                                                                                                                                                      |
+| بررسی موجودی و مجموعهٔ واژه‌های هشدار                            | ۱۵ پاس          | ۱۴ پاس با پل PyO3                  | روی `dd0b414ed1` در Multipass. اجرای Django شامل `OpenAPIArgumentsTest.test_openapi_arguments` و هر دو اجرا شامل تست‌های واژه‌ها و `test_alert_words_events` بودند. هر دو فرمان با کد خروج `0` تمام شدند. لاگ‌های `zulip-api-inventory-django.log` و `zulip-api-inventory-rust.log`. |
 
 **خطاها و موارد تأییدنشده**
 
@@ -105,7 +110,15 @@ ZULIP_RUST_STREAM_COLOR=1 python -m unittest discover -s rust-backend/tests
 
 ```bash
 for mode in 0 1; do
-    ZULIP_RUST_STREAM_COLOR="$mode" +    ZULIP_RUST_ALERT_WORDS="$mode" +    ZULIP_RUST_USER_STATUS="$mode" +    ZULIP_RUST_BOT_STORAGE="$mode" +    ./tools/test-backend zerver.tests.test_subs +        zerver.tests.test_alert_words +        zerver.tests.test_events.NormalActionsTest.test_alert_words_events +        zerver.tests.test_user_status +        zerver.tests.test_embedded_bot_system || exit $?
+    ZULIP_RUST_STREAM_COLOR="$mode" \
+    ZULIP_RUST_ALERT_WORDS="$mode" \
+    ZULIP_RUST_USER_STATUS="$mode" \
+    ZULIP_RUST_BOT_STORAGE="$mode" \
+    ./tools/test-backend zerver.tests.test_subs \
+        zerver.tests.test_alert_words \
+        zerver.tests.test_events.NormalActionsTest.test_alert_words_events \
+        zerver.tests.test_user_status \
+        zerver.tests.test_embedded_bot_system || exit $?
 done
 ```
 
@@ -114,13 +127,16 @@ done
 اگر دانلود Cargo دوباره در VM مسدود شد، از همان `Cargo.lock` و فرمان `cargo vendor --manifest-path rust-backend/Cargo.toml --locked <vendor-dir>` روی میزبان استفاده کنید. محل کش موجود در VM در فرمان زیر آمده است. دایرکتوری vendor و تنظیمات مخصوص ماشین را محلی نگه دارید.
 
 ```bash
-cargo build --manifest-path rust-backend/Cargo.toml --locked --offline +    --features http --bin zulip-http +    --config 'source.crates-io.replace-with="local-vendor"' +    --config 'source.local-vendor.directory="/home/ubuntu/zulip-rust-http-deps/vendor"'
+cargo build --manifest-path rust-backend/Cargo.toml --locked --offline \
+    --features http --bin zulip-http \
+    --config 'source.crates-io.replace-with="local-vendor"' \
+    --config 'source.local-vendor.directory="/home/ubuntu/zulip-rust-http-deps/vendor"'
 ```
 
 ## کار باقی‌مانده و ترتیب پیشنهادی
 
-1. **موجودی API و روش تحویل هر عملیات.** از [OpenAPI](../zerver/openapi/zulip.yaml) و [مسیریابی Django](../zproject/urls.py) فهرست روش و مسیر بسازید. مسیرهای داخلی، aliasهای `/json/` و webhookها را هم در فهرست جداگانه ثبت کنید. برای هر عملیات، مجوز، منبع داده، تغییرات پایگاه داده، کش، رویداد، تست مرجع و وضعیت استقرار را مشخص کنید.
-2. **یک مسیر کامل با احراز هویت و PostgreSQL.** گزینهٔ بعدی `GET /api/v1/users/me/alert_words` است، چون فقط می‌خواند، تست‌های مرتبط آماده‌اند و قواعد آن از مسیر افزودن کوچک‌تر است. از [view موجود](../zerver/views/alert_words.py)، [REST dispatcher](../zerver/lib/rest.py) و [تست‌ها](../zerver/tests/test_alert_words.py) قرارداد را استخراج کنید. برای همان مسیر و معادل `/json/`، تفاوت API key و کوکی نشست، جداسازی سازمان‌ها، خطاهای ورود و محدودیت نرخ را بررسی کنید. با دادهٔ برابر روی Python و Rust، بدنه، status، هدرها و پاسخ کاربر نامعتبر را مقایسه کنید. اتصال مستقل Rust تغییرات commit نشدهٔ `Django TestCase` را نمی‌بیند، بنابراین تست HTTP را با fixtureهای commit شده یا snapshot جدا اجرا کنید.
+1. **موجودی API و روش تحویل هر عملیات.** [فهرست پایه و ممیزی واژه‌های هشدار](API_INVENTORY.md) ثبت شده‌اند. هنگام انتخاب هر خانوادهٔ بعدی، مجوز، منبع داده، تغییرات پایگاه داده، کش، رویداد، تست مرجع و وضعیت استقرار را تکمیل کنید. موجودی مسیرهای SCIM، SSO و افزونه‌های اختصاصی استقرار نیز باقی است.
+2. **یک مسیر کامل با احراز هویت و PostgreSQL.** برش بعدی `GET /api/v1/users/me/alert_words` است. از [قرارداد ثبت‌شده](API_INVENTORY.md#قرارداد-واژههای-هشدار) برای ساخت مقایسهٔ HTTP استفاده کنید. ابتدا رفتار Django را برای Basic Auth، نشست در alias وب، جداسازی سازمان‌ها، خطاهای ورود، محدودیت نرخ و روش‌های `HEAD` و `OPTIONS` ثبت کنید. سپس با دادهٔ برابر روی Python و Rust، بدنه، status و هدرها را مقایسه کنید. اتصال مستقل Rust تغییرات commit نشدهٔ `Django TestCase` را نمی‌بیند، بنابراین تست HTTP را با fixtureهای commit شده یا snapshot جدا اجرا کنید.
 3. **زیرساخت و استقرار مسیرها.** سیاست مشترک احراز هویت، مجوز، locale، خطای JSON، CORS/CSRF، محدودیت نرخ و ردیابی را از کد موجود استخراج کنید. سپس بسته‌بندی سرویس Rust، تنظیمات reverse proxy و Supervisor، readiness و روش برگشت به Django را در محیط آزمایشی تأیید کنید. الگوی توسعه در [tools/run-dev](../tools/run-dev) و الگوی تولید در [پیکربندی nginx](../puppet/zulip/files/nginx/zulip-include-frontend/app) قرار دارند.
 4. **سایر APIها و جریان‌های دارای اثر جانبی.** بعد از مسیرهای خواندنی، مسیرهای تغییردهندهٔ داده را منتقل کنید. ارسال و ویرایش پیام، کانال، عضویت، پیوست، جست‌وجو، ثبت رویداد و long polling، notification، webhook، worker و وظایف زمان‌دار هنوز باقی‌اند. در هر مرحله نتیجهٔ HTTP، تغییرات داده، ترتیب و محتوای رویداد، کش و رفتار retry را بررسی کنید. [معماری](../docs/overview/architecture-overview.md) و [سیستم رویداد](../docs/subsystems/events-system.md) نقطهٔ شروع‌اند.
 5. **پایگاه داده، ابزارها و حذف Python.** نصب تازه و آپگرید از نسخه‌های پشتیبانی‌شده باید با مسیر جدید همان schema و دادهٔ قابل‌استفاده را بسازند. معادل مهاجرت‌های تاریخی Django، PGroonga و جست‌وجو را قبل از حذف فایل‌های مهاجرت تأیید کنید. دستورهای مدیریت، نصب، انتشار، پشتیبان‌گیری، واردات/صادرات، analytics، billing، rendering و تست‌رانر را هم در موجودی پروژه ثبت کنید. تست‌های مرجع را پس از انتقال به fixture، تست Rust یا تست پروتکل مستقل منتقل کنید تا در پایان امکان حذف Python وجود داشته باشد. [راهنمای مهاجرت پایگاه داده](../docs/subsystems/schema-migrations.md)
