@@ -1,13 +1,21 @@
+import os
 import re
 import time
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
 from datetime import timedelta
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 from unittest import mock
+from urllib.parse import urlsplit
 
 import orjson
 import time_machine
 from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase
 from django.utils.timezone import now as timezone_now
 from typing_extensions import override
 
@@ -17,15 +25,155 @@ from zerver.actions.scheduled_messages import (
 )
 from zerver.actions.users import change_user_is_active
 from zerver.lib.message import is_message_to_self
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_helpers import most_recent_message
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.timestamp import timestamp_to_datetime
-from zerver.models import Attachment, Message, Recipient, ScheduledMessage, UserMessage
-from zerver.models.recipients import get_or_create_direct_message_group
+from zerver.models import Attachment, Message, Recipient, ScheduledMessage, UserMessage, UserProfile
+from zerver.models.clients import get_client
+from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
+from zerver.models.streams import get_stream
 from zerver.models.users import get_system_bot
 
 if TYPE_CHECKING:
     from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
+
+
+class ScheduledMessageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_scheduled_messages_and_reminders_parity_with_rust(self) -> None:
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        third = self.example_user("ZOE")
+        stream = get_stream("Denmark", user.realm)
+        channel_recipient = stream.recipient
+        assert channel_recipient is not None
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        token = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        api_headers = {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+
+            def group_recipient(ids: list[int]) -> Recipient:
+                group = get_direct_message_group(ids)
+                if group is None:
+                    group = get_or_create_direct_message_group(ids)
+                    assert group.recipient is not None
+                    cleanup.callback(group.recipient.delete)
+                    cleanup.callback(group.delete)
+                assert group.recipient is not None
+                return group.recipient
+
+            group = group_recipient([user.id, other.id, third.id])
+            dm_to_self = group_recipient([user.id])
+            client = get_client("website")
+
+            def create(
+                sender: UserProfile,
+                recipient: Recipient,
+                timestamp: float,
+                *,
+                failed: bool = False,
+                delivered: bool = False,
+                reminder_target: int | None = None,
+            ) -> ScheduledMessage:
+                is_stream = recipient == channel_recipient
+                message = ScheduledMessage(
+                    realm=sender.realm,
+                    sender=sender,
+                    recipient=recipient,
+                    stream=stream if is_stream else None,
+                    content="متن **پیام**",
+                    rendered_content="<p>متن <strong>پیام</strong></p>",
+                    sending_client=client,
+                    scheduled_timestamp=timestamp_to_datetime(timestamp),
+                    read_by_sender=True,
+                    failed=failed,
+                    delivered=delivered,
+                    reminder_target_message_id=reminder_target,
+                    delivery_type=(
+                        ScheduledMessage.SEND_LATER
+                        if reminder_target is None
+                        else ScheduledMessage.REMIND
+                    ),
+                )
+                message.set_topic_name("سلام" if is_stream else Message.DM_TOPIC)
+                message.save()
+                cleanup.callback(message.delete)
+                return message
+
+            direct = create(user, group, 2, failed=True)
+            channel = create(user, channel_recipient, -1.5)
+            self_dm = create(user, dm_to_self, 3)
+            delivered = create(user, group, 1, delivered=True)
+            other_message = create(other, group, 1)
+            reminder = create(user, dm_to_self, 1, failed=True, reminder_target=123)
+            delivered_reminder = create(user, dm_to_self, 2, delivered=True, reminder_target=456)
+
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(user.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": user.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            web_headers = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            service = (
+                rust_http_service(
+                    {
+                        "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                        "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                            settings.AUTHENTICATION_BACKENDS
+                        ).decode(),
+                    }
+                )
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with service as rust_port:
+
+                def check(method: str, path: str, headers: dict[str, str], status: int) -> bytes:
+                    django = request_test_http(django_port, method, user.realm.host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        rust = request_test_http(rust_port, method, user.realm.host, headers, path)
+                        self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                        if method == "GET":
+                            self.assertEqual(orjson.loads(rust[1]), orjson.loads(django[1]))
+                        else:
+                            self.assertEqual(rust[1], django[1])
+                    return django[1]
+
+                for prefix, headers in (("/api/v1", api_headers), ("/json", web_headers)):
+                    with self.subTest(prefix=prefix):
+                        query = "?unknown=1&client=ZulipMobile"
+                        messages_path = f"{prefix}/scheduled_messages{query}"
+                        reminders_path = f"{prefix}/reminders{query}"
+                        messages = orjson.loads(check("GET", messages_path, headers, 200))
+                        self.assertEqual(messages["ignored_parameters_unsupported"], ["unknown"])
+                        self.assertEqual(
+                            messages["scheduled_messages"][:3],
+                            [channel.to_dict(), direct.to_dict(), self_dm.to_dict()],
+                        )
+                        ids = {
+                            item["scheduled_message_id"] for item in messages["scheduled_messages"]
+                        }
+                        self.assertTrue(
+                            ids.isdisjoint({delivered.id, other_message.id, reminder.id})
+                        )
+                        reminders = orjson.loads(check("GET", reminders_path, headers, 200))
+                        self.assertEqual(reminders["ignored_parameters_unsupported"], ["unknown"])
+                        self.assertEqual(reminders["reminders"][0], reminder.to_reminder_dict())
+                        ids = {item["reminder_id"] for item in reminders["reminders"]}
+                        self.assertTrue(ids.isdisjoint({delivered_reminder.id, self_dm.id}))
+                        for path in (messages_path, reminders_path):
+                            self.assertEqual(check("HEAD", path, headers, 200), b"")
+                            check("GET", path, {}, 401)
 
 
 class ScheduledMessageTest(ZulipTestCase):

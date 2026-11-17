@@ -688,6 +688,31 @@ host and port resolve to the same organization in both services. `PATCH`,
 remove the development option or the `channel-folders-routes.conf` include
 and reload nginx after validation.
 
+## Read scheduled messages and reminders through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/scheduled_messages` and
+`/api/v1/reminders` with Basic Auth. The corresponding `/json/` endpoints
+use the [Django session settings](#read-alert-words-with-a-django-session).
+The Rust database role needs `SELECT` on `zulip.zerver_scheduledmessage`,
+`zulip.zerver_recipient`, and `zulip.zerver_subscription`. Each list
+contains the authenticated user's undelivered items of the requested kind,
+including failed deliveries, in scheduled time order. The existing Redis
+quota and RabbitMQ activity settings apply to these reads.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_scheduled_messages zerver.tests.test_reminders
+./tools/run-dev --rust-http-port 9997 --rust-scheduled-message-reads --rust-reminder-reads
+```
+
+Enable either development flag independently. For nginx staging, include
+`scheduled-messages-map.conf` and `reminders-map.conf` in the HTTP context and
+the corresponding `*-routes.conf` files in `app.d/`. Confirm that the
+allowlisted host and port resolve to the same organization in both services.
+`POST`, `OPTIONS`, and per-item writes use Django. To roll back either read,
+remove its development flag or the corresponding routes include and reload
+nginx after validation.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,

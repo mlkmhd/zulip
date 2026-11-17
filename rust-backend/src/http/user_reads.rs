@@ -30,6 +30,7 @@ use super::{
     rate_limit::{RateLimit, RateLimiter},
     realm_domains,
     saved_snippets::{self, SnippetEvent},
+    scheduled_messages::{self, JobKind},
     session::{SessionLookup, Sessions},
     unicode_lowercase::UnicodeLowercase,
 };
@@ -49,6 +50,8 @@ enum Endpoint {
     CustomProfileFields,
     NavigationViews,
     ChannelFolders,
+    ScheduledMessages,
+    Reminders,
 }
 
 #[derive(Clone, Copy)]
@@ -78,6 +81,8 @@ impl Endpoint {
             Self::CustomProfileFields => "list_realm_custom_profile_fields",
             Self::NavigationViews => "get_navigation_views",
             Self::ChannelFolders => "get_channel_folders",
+            Self::ScheduledMessages => "fetch_scheduled_messages",
+            Self::Reminders => "fetch_reminders",
         }
     }
 
@@ -126,6 +131,18 @@ impl Endpoint {
                 let extra =
                     ignored_parameters(&form, &[channel_folders::INCLUDE_ARCHIVED, "client"]);
                 return Ok(format!("\"channel_folders\":{folders}{extra}"));
+            }
+            Self::ScheduledMessages | Self::Reminders => {
+                let (field, kind) = match self {
+                    Self::ScheduledMessages => ("scheduled_messages", JobKind::Message),
+                    _ => ("reminders", JobKind::Reminder),
+                };
+                let form = Form::from_query(query).map_err(ApiError::Form)?;
+                let entries = scheduled_messages::list(database, user_id, realm_id, kind).await?;
+                let entries =
+                    serde_json::to_string(&entries).expect("database fields can serialize to JSON");
+                let extra = ignored_parameters(&form, &["client"]);
+                return Ok(format!("\"{field}\":{entries}{extra}"));
             }
             Self::Drafts => {
                 require_draft_synchronization(database, user_id).await?;
@@ -683,6 +700,10 @@ async fn respond(
         }
         navigation_views::PATH | navigation_views::SESSION_PATH => Endpoint::NavigationViews,
         channel_folders::PATH | channel_folders::SESSION_PATH => Endpoint::ChannelFolders,
+        scheduled_messages::PATH | scheduled_messages::SESSION_PATH => Endpoint::ScheduledMessages,
+        scheduled_messages::REMINDERS_PATH | scheduled_messages::SESSION_REMINDERS_PATH => {
+            Endpoint::Reminders
+        }
         _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
@@ -1023,7 +1044,9 @@ fn error_response(
             | Endpoint::RealmDomains
             | Endpoint::CustomProfileFields
             | Endpoint::NavigationViews
-            | Endpoint::ChannelFolders => {
+            | Endpoint::ChannelFolders
+            | Endpoint::ScheduledMessages
+            | Endpoint::Reminders => {
                 unreachable!("endpoints without a Rust POST do not override methods")
             }
             Endpoint::SavedSnippets => (
