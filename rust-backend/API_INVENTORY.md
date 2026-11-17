@@ -53,6 +53,8 @@
 | `GET /api/v1/channel_folders` و alias وب با `HEAD` متناظر | پوشه‌های سازمان با فیلتر بایگانی و ترتیب نمایش از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `GET /api/v1/scheduled_messages` و alias وب با `HEAD` متناظر | پیام‌های زمان‌بندی‌شدهٔ ارسال‌نشدهٔ کاربر از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `GET /api/v1/reminders` و alias وب با `HEAD` متناظر | یادآوری‌های تحویل‌نشدهٔ کاربر از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `DELETE /api/v1/scheduled_messages/{scheduled_message_id}` و alias وب | حذف پیام زمان‌بندی‌شدهٔ مالک و پیوندهای پیوست در یک تراکنش | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
+| `DELETE /api/v1/reminders/{reminder_id}` و alias وب | حذف یادآوری مالک و پیوندهای پیوست در یک تراکنش | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `GET /api/v1/bot_storage` و alias وب با `HEAD` متناظر | خواندن همهٔ کلیدها یا کلیدهای درخواست‌شده برای ربات احرازشده | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
@@ -76,6 +78,14 @@
 می‌کند. تست‌های ثبت، بازگشت تراکنش و رویداد در
 [test_drafts.py](../zerver/tests/test_drafts.py) و
 [DraftActionTest](../zerver/tests/test_events.py) هستند.
+
+در ایجاد و ویرایش، `ZULIP_RUST_DRAFT_GROUPS=1` ثبت `Recipient` و عضویت‌های
+گروه تازهٔ پیام مستقیم را به Rust می‌سپارد. Django دسترسی را پیش از
+جست‌وجو یا ایجاد سطر گروه بررسی می‌کند. Rust روی همان cursor تراکنش،
+گیرنده را به گروه وصل می‌کند و عضویت‌های متمایز، شامل فرستنده، را می‌نویسد.
+تراکنش ساخت گروه پیش از تراکنش درج پیش‌نویس است. اگر پس از ساخت گروه،
+اعتبارسنجی یکی از پیش‌نویس‌های بعدی شکست بخورد، گروه باقی می‌ماند و سطر
+یا رویداد پیش‌نویس ایجاد نمی‌شود.
 
 ## قرارداد ویرایش پیش‌نویس
 
@@ -292,9 +302,19 @@ Django نام تکراری را در view بررسی می‌کند و رقابت
 برمی‌گردانند. موارد ناموفق در فهرست می‌مانند. پیام کانال شناسهٔ کانال
 و عنوان دارد. پیام مستقیم فهرست گیرنده‌ها را از جدول عضویت می‌سازد و
 در پیام به خود، شناسهٔ مالک را نگه می‌دارد. یادآوری شناسهٔ پیام مرجع
-را برمی‌گرداند. نوشتن و تحویل زمان‌بندی‌شده در Django انجام می‌شوند.
+را برمی‌گرداند.
+
+`DELETE` در هر دو خانواده فقط ردیف هم‌نوع متعلق به فرستنده را حذف
+می‌کند و برای شناسهٔ ناموجود، متعلق به کاربر دیگر یا نوع دیگر `404`
+می‌دهد. پیوندهای همان ردیف در `zerver_attachment_scheduled_messages`
+در همان تراکنش پاک می‌شوند. رکورد پیوست و پیوندهای دیگر آن حفظ می‌شوند.
+مسیر وب نشست و CSRF را بررسی می‌کند. پس از commit یک رویداد
+`scheduled_messages/remove` یا `reminders/remove` به مالک ارسال می‌شود.
+فعال‌سازی و بازگشت هر مسیر مستقل است. `POST`، `PATCH` و worker تحویل
+در Django هستند.
 [پیاده‌سازی](src/http/scheduled_messages.rs)،
-[تست مقایسه](../zerver/tests/test_scheduled_messages.py)
+[تست مقایسه](../zerver/tests/test_scheduled_messages.py)،
+[فعال‌سازی و بازگشت](README.md#delete-scheduled-messages-and-reminders-through-rust)
 
 ## قرارداد متن‌های ذخیره‌شده
 
@@ -467,7 +487,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `POST`   | `/api/v1/register_client_device`                        | `register-client-device`               | `zerver.views.devices.register_device`                                         | Django         |
 | `GET`    | `/api/v1/reminders`                                     | `get-reminders`                        | `zerver.views.scheduled_messages.fetch_reminders`                              | Rust اختیاری |
 | `POST`   | `/api/v1/reminders`                                     | `create-message-reminder`              | `zerver.views.reminders.create_reminders_message_backend`                      | Django         |
-| `DELETE` | `/api/v1/reminders/{reminder_id}`                       | `delete-reminder`                      | `zerver.views.reminders.delete_reminder`                                       | Django         |
+| `DELETE` | `/api/v1/reminders/{reminder_id}`                       | `delete-reminder`                      | `zerver.views.reminders.delete_reminder`                                       | Rust اختیاری |
 | `POST`   | `/api/v1/remotes/push/e2ee/register`                    | `register-remote-push-device`          | `zilencer.views.register_remote_push_device_for_e2ee_push_notification`        | Django (push)  |
 | `POST`   | `/api/v1/remove_client_device`                          | `remove-client-device`                 | `zerver.views.devices.remove_device`                                           | Django         |
 | `POST`   | `/rest-error-handling`                                  | `rest-error-handling`                  | —                                                                              | مستندات        |
@@ -477,7 +497,7 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `PATCH`  | `/api/v1/saved_snippets/{saved_snippet_id}`             | `edit-saved-snippet`                   | `zerver.views.saved_snippets.edit_saved_snippet`                               | Rust اختیاری |
 | `GET`    | `/api/v1/scheduled_messages`                            | `get-scheduled-messages`               | `zerver.views.scheduled_messages.fetch_scheduled_messages`                     | Rust اختیاری |
 | `POST`   | `/api/v1/scheduled_messages`                            | `create-scheduled-message`             | `zerver.views.scheduled_messages.create_scheduled_message_backend`             | Django         |
-| `DELETE` | `/api/v1/scheduled_messages/{scheduled_message_id}`     | `delete-scheduled-message`             | `zerver.views.scheduled_messages.delete_scheduled_messages`                    | Django         |
+| `DELETE` | `/api/v1/scheduled_messages/{scheduled_message_id}`     | `delete-scheduled-message`             | `zerver.views.scheduled_messages.delete_scheduled_messages`                    | Rust اختیاری |
 | `PATCH`  | `/api/v1/scheduled_messages/{scheduled_message_id}`     | `update-scheduled-message`             | `zerver.views.scheduled_messages.update_scheduled_message_backend`             | Django         |
 | `GET`    | `/api/v1/server_settings`                               | `get-server-settings`                  | `zerver.views.auth.api_get_server_settings`                                    | Django         |
 | `PATCH`  | `/api/v1/settings`                                      | `update-settings`                      | `zerver.views.user_settings.json_change_settings`                              | Django         |
@@ -676,12 +696,12 @@ audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پ
 | `/json/register`                                      | `POST`                   | Django            |
 | `/json/register_client_device`                        | `POST`                   | Django            |
 | `/json/reminders`                                     | `GET`, `POST`            | `GET` در Rust اختیاری، نوشتن در Django |
-| `/json/reminders/{reminder_id}`                       | `DELETE`                 | Django            |
+| `/json/reminders/{reminder_id}`                       | `DELETE`                 | Rust اختیاری |
 | `/json/remove_client_device`                          | `POST`                   | Django            |
 | `/json/saved_snippets`                                | `GET`, `POST`            | Rust اختیاری |
 | `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Rust اختیاری |
 | `/json/scheduled_messages`                            | `GET`, `POST`            | `GET` در Rust اختیاری، نوشتن در Django |
-| `/json/scheduled_messages/{scheduled_message_id}`     | `DELETE`, `PATCH`        | Django            |
+| `/json/scheduled_messages/{scheduled_message_id}`     | `DELETE`, `PATCH`        | `DELETE` در Rust اختیاری، `PATCH` در Django |
 | `/json/self-hosted-billing`                           | `GET`                    | Django (مخصوص وب) |
 | `/json/settings`                                      | `PATCH`                  | Django            |
 | `/json/settings/display`                              | `PATCH`                  | Django            |

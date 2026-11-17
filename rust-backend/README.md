@@ -117,6 +117,21 @@ for mode in 0 1; do
 done
 ```
 
+Reinstall the extension and set `ZULIP_RUST_DRAFT_GROUPS=1` to initialize new
+direct-message recipients and subscriptions in Rust during draft creation
+and editing. Django resolves recipient permissions and obtains the unique
+group row before Rust runs on its transaction cursor. A valid earlier draft
+can create a group before a later draft in the same request fails validation.
+The failed batch saves no drafts and emits no draft event. Unset the flag
+and restart Django to restore the ORM path.
+
+```sh
+for mode in 0 1; do
+    ZULIP_RUST_DRAFT_GROUPS=$mode ./tools/test-backend \
+        zerver.tests.test_drafts zerver.tests.test_events.DraftActionTest
+done
+```
+
 ### Invalidate alert-word caches through Rust
 
 Reinstall the extension and set `ZULIP_RUST_ALERT_WORD_CACHE=1` in Django.
@@ -916,9 +931,42 @@ Enable either development flag independently. For nginx staging, include
 `scheduled-messages-map.conf` and `reminders-map.conf` in the HTTP context and
 the corresponding `*-routes.conf` files in `app.d/`. Confirm that the
 allowlisted host and port resolve to the same organization in both services.
-`POST`, `OPTIONS`, and per-item writes use Django. To roll back either read,
-remove its development flag or the corresponding routes include and reload
-nginx after validation.
+Creation and editing use Django. Each proxy keeps its existing `OPTIONS`
+handling. Per-item deletion has its own opt-in routing. To roll back either
+read, remove its development flag or the corresponding routes include and
+reload nginx after validation.
+
+## Delete scheduled messages and reminders through Rust
+
+Set `ZULIP_RUST_SCHEDULED_MESSAGE_DELETES=1` or
+`ZULIP_RUST_REMINDER_DELETES=1` on the Rust listener. Each flag enables
+`DELETE /api/v1/{scheduled_messages,reminders}/{id}` for its resource.
+The `/json/` aliases require the [Django session settings](#read-alert-words-with-a-django-session)
+and `ZULIP_RUST_WEB_POST_SCHEME` matching the external HTTP or HTTPS scheme.
+Configure the existing [RabbitMQ event delivery settings](#route-write-events-to-multiple-tornado-processes).
+The database role needs `SELECT` and `DELETE` on
+`zulip.zerver_scheduledmessage` and `zulip.zerver_attachment_scheduled_messages`.
+
+The transaction deletes the authenticated sender's row of the requested
+kind and removes its attachment links. The attachment records and their
+other links remain available. The listener publishes `scheduled_messages/remove`
+or `reminders/remove` to the sender's Tornado queue after commit.
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-scheduled-message-deletes --rust-reminder-deletes
+
+# Use a dedicated RabbitMQ vhost with permissions for the Zulip test account.
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-scheduled-delete \
+    ./tools/test-backend zerver.tests.test_scheduled_messages.ScheduledJobDeleteHTTPTest
+```
+
+For nginx staging, use `scheduled-messages-delete-map.conf` or
+`reminders-delete-map.conf` in place of the corresponding read-only map in
+the HTTP context. Include the corresponding `*-routes.conf` in `app.d/`.
+Match the allowlisted organization host and port to the staging deployment.
+To revert deletion while keeping reads in Rust, remove the relevant development
+flag or restore the read-only nginx map, validate the config and reload nginx.
 
 ## Stage saved-snippet reads in nginx
 
