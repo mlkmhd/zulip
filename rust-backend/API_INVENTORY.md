@@ -24,15 +24,15 @@
 
 ## وضعیت مهاجرت
 
-| عملیات یا جریان                                                                         | منطق اختیاری Rust                                                 | مسیر HTTP در توسعه                                              | مسیر پیش‌فرض استقرار |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
-| `GET /api/v1/users/me/alert_words` و `HEAD` متناظر                                      | Basic Auth و خواندن از PostgreSQL                                 | Rust مستقیم روی loopback با تنظیم پایگاه داده و میزبان          | Django               |
-| `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                  | Django                                                          | Django               |
-| `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS` | Django                                                          | Django               |
-| `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`   | Django                                                          | Django               |
-| `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                   | Django                                                          | Django               |
-| `POST /api/v1/users/me/subscriptions` و `POST /api/v1/channels/create` و aliasهای وب    | انتخاب رنگ هنگام ایجاد اشتراک با `ZULIP_RUST_STREAM_COLOR`        | Django                                                          | Django               |
-| `GET /compatibility` و `HEAD /compatibility`                                            | handler مستقل HTTP                                                | Rust مستقیم یا از پروکسی با `--rust-http-port` برای میزبان اصلی | Django               |
+| عملیات یا جریان                                                                         | منطق اختیاری Rust                                                      | مسیر HTTP در توسعه                                              | مسیر پیش‌فرض استقرار |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
+| `GET /api/v1/users/me/alert_words` و `HEAD` متناظر                                      | Basic Auth، خواندن PostgreSQL، سهمیهٔ مشترک Redis و صف فعالیت RabbitMQ | Rust مستقیم روی loopback با تنظیم پایگاه داده و میزبان          | Django               |
+| `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
+| `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
+| `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
+| `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
+| `POST /api/v1/users/me/subscriptions` و `POST /api/v1/channels/create` و aliasهای وب    | انتخاب رنگ هنگام ایجاد اشتراک با `ZULIP_RUST_STREAM_COLOR`             | Django                                                          | Django               |
+| `GET /compatibility` و `HEAD /compatibility`                                            | handler مستقل HTTP                                                     | Rust مستقیم یا از پروکسی با `--rust-http-port` برای میزبان اصلی | Django               |
 
 پرچم‌ها با مقدار `1` فعال‌اند. این جدول مسیرهای مرتبط با HTTP را ثبت می‌کند.
 برای محل پیاده‌سازی و تست‌های هر مؤلفه به [مستند تحویل](MIGRATION_HANDOFF.md) رجوع کنید.
@@ -64,8 +64,8 @@
 کلید نامعتبر، سازمان نادرست، حساب غیرفعال و ربات webhook را برای مسیر API
 بررسی کرد. در حالت بدون اعتبارنامه،
 `Accept` بر انتخاب پاسخ JSON یا هدایت به صفحهٔ ورود اثر دارد و هدر
-`WWW-Authenticate` پاسخ JSON با پیشوند مسیر عوض می‌شود. برابری محدودیت نرخ،
-نشست وب و رفتار `OPTIONS` در سرویس Rust هنوز تأیید نشده است.
+`WWW-Authenticate` پاسخ JSON با پیشوند مسیر عوض می‌شود. تستِ سهمیه در Redis مشترک و ثبت فعالیت در RabbitMQ برای مسیر API پاس شد.
+نشست وب و رفتار `OPTIONS` در سرویس Rust هنوز تأیید نشده‌اند.
 [نتیجهٔ مقایسه](MIGRATION_HANDOFF.md#آخرین-برش)
 [خطاهای API](../api_docs/rest-error-handling.md)، [middleware](../zerver/middleware.py)
 
