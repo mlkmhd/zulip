@@ -1,4 +1,15 @@
+import os
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
+from urllib.parse import urlsplit
+
+import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase
 
 from zerver.actions.create_realm import do_create_realm
 from zerver.actions.create_user import do_create_user
@@ -8,14 +19,144 @@ from zerver.actions.realm_settings import (
     do_set_realm_property,
 )
 from zerver.actions.user_groups import check_add_user_group
+from zerver.lib.cache import cache_delete
 from zerver.lib.emoji import get_emoji_file_name
 from zerver.lib.exceptions import JsonableError
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_helpers import get_test_image_file
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.thumbnail import BadImageError
+from zerver.lib.upload.local import LocalUploadBackend
+from zerver.lib.upload.s3 import S3UploadBackend
 from zerver.models import NamedUserGroup, RealmEmoji, UserProfile
 from zerver.models.groups import SystemGroups
+from zerver.models.realm_emoji import get_all_custom_emoji_for_realm_cache_key
 from zerver.models.realms import get_realm
+
+
+class RealmEmojiReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_list_emoji_parity_with_rust(self) -> None:
+        user = self.example_user("othello")
+        external = self.mit_user("sipbtest")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        api = "/api/v1/realm/emoji"
+        web = "/json/realm/emoji"
+        cache_key = get_all_custom_emoji_for_realm_cache_key(user.realm_id)
+        token = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        basic = {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(user.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": user.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            cleanup.callback(cache_delete, cache_key)
+            animated = RealmEmoji.objects.create(
+                name="animated",
+                realm=user.realm,
+                author=user,
+                file_name="animated.v1.gif",
+                is_animated=True,
+                deactivated=True,
+            )
+            pending = RealmEmoji.objects.create(name="pending", realm=user.realm, author=user)
+            foreign = RealmEmoji.objects.create(
+                name="foreign",
+                realm=external.realm,
+                author=external,
+                file_name="other.png",
+            )
+            for fixture in (animated, pending, foreign):
+                cleanup.callback(fixture.delete)
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            with self.settings(
+                S3_AVATAR_BUCKET="avatars",
+                S3_AUTH_UPLOADS_BUCKET="uploads",
+                S3_KEY="test-key",
+                S3_SECRET_KEY="test-secret",
+                S3_REGION="us-east-1",
+                S3_AVATAR_PUBLIC_URL_PREFIX="https://cdn.example.test/storage/avatars",
+            ):
+                backends = (LocalUploadBackend(), S3UploadBackend())
+            for storage in backends:
+                base = storage.get_public_upload_root_url()
+                with (
+                    self.subTest(base=base),
+                    mock.patch("zerver.lib.upload._upload_backend", storage),
+                ):
+                    cache_delete(cache_key)
+                    service = (
+                        rust_http_service(
+                            {
+                                "ZULIP_RUST_EMOJI_URL_BASE": base,
+                                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                                    settings.AUTHENTICATION_BACKENDS
+                                ).decode(),
+                            }
+                        )
+                        if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                        else nullcontext(None)
+                    )
+                    with service as rust_port:
+                        cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+
+                        def check(
+                            method: str, path: str, headers: dict[str, str], status: int
+                        ) -> bytes:
+                            django = request_test_http(
+                                django_port, method, user.realm.host, headers, path
+                            )
+                            self.assertEqual(django[0], status, django[1])
+                            if rust_port is not None:
+                                rust = request_test_http(
+                                    rust_port, method, user.realm.host, headers, path
+                                )
+                                self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                                if method == "GET" and status == 200:
+                                    self.assertEqual(orjson.loads(rust[1]), orjson.loads(django[1]))
+                                else:
+                                    self.assertEqual(rust[1], django[1])
+                            return django[1]
+
+                        for path, headers in ((api, basic), (web, cookie)):
+                            data = orjson.loads(check("GET", path + "?ignored=1", headers, 200))[
+                                "emoji"
+                            ]
+                            self.assertEqual(
+                                data[str(animated.id)],
+                                {
+                                    "id": str(animated.id),
+                                    "name": animated.name,
+                                    "source_url": f"{base}{user.realm_id}/emoji/images/animated.v1.gif",
+                                    "deactivated": True,
+                                    "author_id": user.id,
+                                    "still_url": f"{base}{user.realm_id}/emoji/images/still/animated.v1.png",
+                                },
+                            )
+                            self.assertNotIn(str(pending.id), data)
+                            self.assertNotIn(str(foreign.id), data)
+                            self.assertIsNone(
+                                next(row for row in data.values() if row["name"] == "green_tick")[
+                                    "still_url"
+                                ]
+                            )
+                            self.assertEqual(check("HEAD", path, headers, 200), b"")
+                            check("GET", path, {}, 401)
+                        animated.deactivated = False
+                        animated.save(update_fields=["deactivated"])
+                        data = orjson.loads(check("GET", api, basic, 200))["emoji"]
+                        self.assertFalse(data[str(animated.id)]["deactivated"])
+                        animated.deactivated = True
+                        animated.save(update_fields=["deactivated"])
 
 
 class RealmEmojiTest(ZulipTestCase):

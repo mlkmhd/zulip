@@ -38,6 +38,7 @@ def rust_http_service(
     env.pop("ZULIP_RUST_NAVIGATION_VIEW_POSTS", None)
     env.pop("ZULIP_RUST_NAVIGATION_VIEW_DETAILS", None)
     env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)
+    env.pop("ZULIP_RUST_EMOJI_URL_BASE", None)
     env.pop("ZULIP_RUST_CLIENT_IP_SOURCE", None)
     env.pop("ZULIP_RUST_DEBUG_RATE_LIMITING", None)
     env.pop("ZULIP_RUST_SAVED_SNIPPET_WRITES", None)

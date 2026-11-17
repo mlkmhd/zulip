@@ -24,6 +24,7 @@ mod locale;
 mod navigation_views;
 mod rate_limit;
 mod realm_domains;
+mod realm_emoji;
 mod saved_snippets;
 mod scheduled_messages;
 mod session;
@@ -39,6 +40,7 @@ pub fn router(locale_dir: &Path) -> Result<Router, Box<dyn Error>> {
 pub struct UserReadConfig<'a> {
     pub database: &'a str,
     pub external_host: &'a str,
+    pub emoji_url_base: Option<&'a str>,
     pub rate_limit: Option<RateLimitConfig<'a>>,
     pub activity: Option<ActivityConfig<'a>>,
     pub alert_word_cache_manifest: Option<&'a Path>,
@@ -79,6 +81,7 @@ pub async fn router_with_user_reads(
 ) -> Result<Router, Box<dyn Error>> {
     let locales = locale::Locales::load(locale_dir)?;
     let browser_enabled = config.session.is_some();
+    let emoji_reads = config.emoji_url_base.is_some();
     let saved_snippet_writes = config.saved_snippet_max_content_length.is_some();
     let alert_word_writes = config.alert_word_lowercase_file.is_some();
     let alert_word_posts = config.alert_word_posts;
@@ -143,6 +146,9 @@ pub async fn router_with_user_reads(
         .route(scheduled_messages::PATH, get(user_reads::get))
         .route(scheduled_messages::REMINDERS_PATH, get(user_reads::get))
         .route("/health/rust-alert-words", get(user_reads::ready));
+    if emoji_reads {
+        routes = routes.route(realm_emoji::PATH, get(user_reads::get));
+    }
     let snippet_detail_route = patch(user_reads::write_saved_snippet_detail)
         .delete(user_reads::write_saved_snippet_detail)
         .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
@@ -164,6 +170,9 @@ pub async fn router_with_user_reads(
         );
     }
     if browser_enabled {
+        if emoji_reads {
+            routes = routes.route(realm_emoji::SESSION_PATH, get(user_reads::get));
+        }
         let mut web_snippet_route = get(user_reads::get);
         if web_writes_enabled && saved_snippet_writes {
             web_snippet_route = web_snippet_route

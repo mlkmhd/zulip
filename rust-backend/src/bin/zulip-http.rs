@@ -50,6 +50,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .await?
         }
         Err(env::VarError::NotPresent) => {
+            if optional_env("ZULIP_RUST_EMOJI_URL_BASE")?.is_some() {
+                return Err("Custom emoji reads require ZULIP_RUST_DATABASE_URL".into());
+            }
             if draft_deletes {
                 return Err("Draft DELETE requires ZULIP_RUST_DATABASE_URL".into());
             }
@@ -89,6 +92,7 @@ async fn user_read_router(
     navigation_view_writes: NavigationViewWrites,
 ) -> Result<Router, Box<dyn Error>> {
     let external_host = env::var("ZULIP_RUST_EXTERNAL_HOST")?;
+    let emoji_url_base = optional_env("ZULIP_RUST_EMOJI_URL_BASE")?;
     let redis_url = optional_env("ZULIP_RUST_REDIS_URL")?;
     let rules = if redis_url.is_some() {
         env::var("ZULIP_RUST_RATE_LIMIT_RULES")?
@@ -150,6 +154,7 @@ async fn user_read_router(
             web_post_scheme,
             saved_snippet_max_content_length,
             external_host: &external_host,
+            emoji_url_base: emoji_url_base.as_deref(),
             rate_limit: redis_url.as_deref().map(|url| RateLimitConfig {
                 url,
                 key_prefix: &key_prefix,

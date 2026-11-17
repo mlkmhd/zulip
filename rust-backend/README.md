@@ -743,6 +743,35 @@ and port. Validate and reload nginx. To roll back, remove the development
 option or remove the nginx routes include, validate and reload. Attachment
 detail requests, uploads and OPTIONS use Django.
 
+## Read custom emoji through Rust
+
+Set `ZULIP_RUST_EMOJI_URL_BASE` to the public upload root from the Django
+deployment. This enables `GET` and `HEAD` on `/api/v1/realm/emoji` with
+Basic Auth and on `/json/realm/emoji` with the
+[Django session settings](#read-alert-words-with-a-django-session).
+The root is `/user_avatars/` for local uploads. For S3 it includes the
+configured path and CDN or bucket host.
+
+```sh
+./manage.py shell --verbosity 0 -c 'from zerver.lib.upload import get_public_upload_root_url; print(get_public_upload_root_url())'
+```
+
+Grant the Rust database role `SELECT` on `zulip.zerver_realmemoji`. The
+response includes active and deactivated uploads with a stored filename.
+Animated emoji include the still image URL.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_realm_emoji
+./tools/run-dev --rust-http-port 9997 --rust-realm-emoji-reads
+```
+
+For nginx staging, install `realm-emoji-map.conf` in the HTTP context and
+`realm-emoji-routes.conf` in `app.d/` for the verified organization host and
+port. Validate and reload. To return the reads to Django, remove the
+development option or the nginx routes include and reload after validation.
+Emoji uploads, deactivation and OPTIONS use Django.
+
 ## Read channel folders through Rust
 
 The listener serves `GET` and `HEAD` on `/api/v1/channel_folders` with Basic

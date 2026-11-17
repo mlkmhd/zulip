@@ -28,7 +28,7 @@ use super::{
     locale::Locales,
     navigation_views::{self, NavigationViewUpdate, UpdateOutcome},
     rate_limit::{RateLimit, RateLimiter},
-    realm_domains,
+    realm_domains, realm_emoji,
     saved_snippets::{self, SnippetEvent},
     scheduled_messages::{self, JobKind},
     session::{SessionLookup, Sessions},
@@ -49,6 +49,7 @@ enum Endpoint {
     Attachments,
     Linkifiers,
     RealmDomains,
+    RealmEmoji,
     CustomProfileFields,
     NavigationViews,
     ChannelFolders,
@@ -87,6 +88,7 @@ impl Endpoint {
             Self::Attachments => "list_by_user",
             Self::Linkifiers => "list_linkifiers",
             Self::RealmDomains => "list_realm_domains",
+            Self::RealmEmoji => "list_emoji",
             Self::CustomProfileFields => "list_realm_custom_profile_fields",
             Self::NavigationViews => "get_navigation_views",
             Self::ChannelFolders => "get_channel_folders",
@@ -101,6 +103,7 @@ impl Endpoint {
         user_id: i32,
         realm_id: i32,
         query: Option<&str>,
+        emoji_url_base: Option<&str>,
     ) -> Result<String, ApiError> {
         let (field, serialized) = match self {
             Self::AlertWords => (
@@ -118,6 +121,17 @@ impl Endpoint {
             Self::RealmDomains => (
                 "domains",
                 serde_json::to_string(&realm_domains::list(database, realm_id).await?),
+            ),
+            Self::RealmEmoji => (
+                "emoji",
+                serde_json::to_string(
+                    &realm_emoji::list(
+                        database,
+                        realm_id,
+                        emoji_url_base.expect("emoji route configured"),
+                    )
+                    .await?,
+                ),
             ),
             Self::CustomProfileFields => (
                 "custom_fields",
@@ -237,6 +251,7 @@ pub(super) async fn ready(State(state): State<UserReads>) -> Response {
 pub(super) struct UserReads {
     database: Arc<Database>,
     external_host: Arc<str>,
+    emoji_url_base: Option<Arc<str>>,
     locales: Locales,
     rate_limiter: Option<RateLimiter>,
     activity: Option<ActivityPublisher>,
@@ -259,6 +274,12 @@ impl UserReads {
             .map(Arc::new);
         if !settings.external_host.split('.').all(valid_label) {
             return Err("ZULIP_RUST_EXTERNAL_HOST must be a hostname without a port".into());
+        }
+        if settings
+            .emoji_url_base
+            .is_some_and(|base| !base.ends_with('/') || base.contains(['?', '#']))
+        {
+            return Err("ZULIP_RUST_EMOJI_URL_BASE must be a URL prefix ending in /".into());
         }
         let alert_word_lowercase = settings
             .alert_word_lowercase_file
@@ -303,6 +324,7 @@ impl UserReads {
         Ok(Self {
             database: Arc::new(database),
             external_host: Arc::from(settings.external_host.to_ascii_lowercase()),
+            emoji_url_base: settings.emoji_url_base.map(Arc::from),
             locales,
             rate_limiter,
             activity,
@@ -743,6 +765,7 @@ async fn respond(
         attachments::PATH | attachments::SESSION_PATH => Endpoint::Attachments,
         linkifiers::PATH | linkifiers::SESSION_PATH => Endpoint::Linkifiers,
         realm_domains::PATH | realm_domains::SESSION_PATH => Endpoint::RealmDomains,
+        realm_emoji::PATH | realm_emoji::SESSION_PATH => Endpoint::RealmEmoji,
         custom_profile_fields::PATH | custom_profile_fields::SESSION_PATH => {
             Endpoint::CustomProfileFields
         }
@@ -993,7 +1016,7 @@ async fn respond(
                     .await?;
                 // Django reads the current list again after the event has been published.
                 let fields = Endpoint::AlertWords
-                    .read(&database, user_id, realm_id, uri.query())
+                    .read(&database, user_id, realm_id, uri.query(), None)
                     .await?;
                 let processed: &[_] = if requested_write.is_some_and(WriteOperation::is_post)
                     || form.has_query_client()
@@ -1096,7 +1119,7 @@ async fn respond(
             ));
         }
         let fields = endpoint
-            .read(&database, user_id, realm_id, uri.query())
+            .read(&database, user_id, realm_id, uri.query(), state.emoji_url_base.as_deref())
             .await?;
         Ok(format!(
             "{{\"result\":\"success\",\"msg\":\"\",{fields}}}\n"
@@ -1177,6 +1200,7 @@ fn error_response(
             | Endpoint::Attachments
             | Endpoint::Linkifiers
             | Endpoint::RealmDomains
+            | Endpoint::RealmEmoji
             | Endpoint::CustomProfileFields
             | Endpoint::ChannelFolders
             | Endpoint::ScheduledMessages
