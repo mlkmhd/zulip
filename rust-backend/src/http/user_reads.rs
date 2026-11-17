@@ -14,7 +14,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use tokio_postgres::Client;
 
 use super::{
-    AlertWordsConfig,
+    UserReadConfig,
     activity::ActivityPublisher,
     database::Database,
     locale::Locales,
@@ -26,7 +26,7 @@ pub(super) const PATH: &str = "/api/v1/users/me/alert_words";
 pub(super) const SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
 
-pub(super) async fn ready(State(state): State<AlertWords>) -> Response {
+pub(super) async fn ready(State(state): State<UserReads>) -> Response {
     let ready = state.sessions.is_some()
         && tokio::time::timeout(Duration::from_secs(2), async {
             let Ok(database) = state.database.client().await else {
@@ -72,7 +72,7 @@ pub(super) async fn ready(State(state): State<AlertWords>) -> Response {
 }
 
 #[derive(Clone)]
-pub(super) struct AlertWords {
+pub(super) struct UserReads {
     database: Arc<Database>,
     external_host: Arc<str>,
     locales: Locales,
@@ -81,9 +81,9 @@ pub(super) struct AlertWords {
     sessions: Option<Arc<Sessions>>,
 }
 
-impl AlertWords {
+impl UserReads {
     pub(super) async fn connect(
-        settings: AlertWordsConfig<'_>,
+        settings: UserReadConfig<'_>,
         locales: Locales,
     ) -> Result<Self, Box<dyn Error>> {
         let sessions = settings
@@ -360,7 +360,7 @@ fn prefers_html(headers: &HeaderMap) -> bool {
     score("text/html", "text/*") > score("application/json", "application/*")
 }
 
-pub(super) async fn get(State(state): State<AlertWords>, uri: Uri, headers: HeaderMap) -> Response {
+pub(super) async fn get(State(state): State<UserReads>, uri: Uri, headers: HeaderMap) -> Response {
     let language = Locales::for_request(&headers);
     let browser_session = if uri.path() == SESSION_PATH {
         state.sessions.as_deref()
@@ -420,7 +420,7 @@ pub(super) async fn get(State(state): State<AlertWords>, uri: Uri, headers: Head
                 .await?;
             (database, user.id)
         };
-        AlertWords::words(&database, user_id).await
+        UserReads::words(&database, user_id).await
     }
     .await;
     let mut response = match words {

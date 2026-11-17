@@ -1,14 +1,9 @@
 import os
 import re
-import select
-import subprocess
 import time
 from base64 import b64encode
 from collections import Counter
-from collections.abc import Iterator
-from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
-from http.client import HTTPConnection
 from tempfile import NamedTemporaryFile
 from unittest import skipUnless
 from unittest.mock import patch
@@ -22,7 +17,6 @@ from django.contrib.sessions.models import Session
 from django.db import connection, transaction
 from django.test import LiveServerTestCase
 from django.utils.timezone import now as timezone_now
-from psycopg2.extensions import make_dsn
 
 from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
 from zerver.lib import redis_utils
@@ -30,6 +24,7 @@ from zerver.lib.alert_words import alert_words_in_realm, user_alert_words
 from zerver.lib.rate_limiter import RateLimitedUser, RedisRateLimiterBackend
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_helpers import most_recent_message, most_recent_usermessage
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.models import AlertWord, Client, Realm, UserActivity, UserProfile
 from zerver.worker.user_activity import UserActivityWorker
 
@@ -316,7 +311,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         try:
             UserProfile.objects.filter(id=inactive.id).update(is_active=False)
             Realm.objects.filter(id=realm.id).update(deactivated=True)
-            with self.rust_service({}) as rust_port:
+            with rust_http_service({}) as rust_port:
                 django_port = urlsplit(self.live_server_url).port
                 assert django_port is not None
                 self.compare_cases(
@@ -334,7 +329,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         )
         headers = {"Authorization": authorization}
         application_name = "zulip-rust-alert-words-recovery-test"
-        with self.rust_service({}, database_application_name=application_name) as rust_port:
+        with rust_http_service({}, database_application_name=application_name) as rust_port:
             before = self.request_words(rust_port, "GET", user.realm.host, headers)
             self.assertEqual(before[0], 200)
 
@@ -406,7 +401,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 authorization = (
                     "Basic " + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
                 )
-                with self.rust_service(self.django_session_environment(secret.name)) as rust_port:
+                with rust_http_service(self.django_session_environment(secret.name)) as rust_port:
                     cases = [
                         ("valid session", "GET", 200, user.realm.host, cookie(valid)),
                         ("regular session", "GET", 200, user.realm.host, cookie(regular)),
@@ -492,52 +487,6 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             self.assertEqual(orjson.loads(django[1])["code"], "CSRF_FAILED")
             self.assertEqual(rust[0], 405)
             self.assertCountEqual(user_alert_words(user), words)
-
-    @contextmanager
-    def rust_service(
-        self, extra_env: dict[str, str], *, database_application_name: str | None = None
-    ) -> Iterator[int]:
-        db = connection.settings_dict
-        database = make_dsn(
-            dbname=db["NAME"],
-            host=db["HOST"],
-            user=db["USER"],
-            password=db["PASSWORD"],
-            port=db["PORT"] or None,
-            application_name=database_application_name,
-        )
-        external_host = urlsplit("//" + settings.EXTERNAL_HOST).hostname
-        assert external_host is not None
-        env = os.environ.copy()
-        env.pop("ZULIP_RUST_REDIS_URL", None)
-        env.pop("ZULIP_RUST_AMQP_URL", None)
-        env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)
-        with subprocess.Popen(
-            [os.environ["ZULIP_RUST_HTTP_BIN"], "127.0.0.1:0"],
-            stderr=subprocess.PIPE,
-            text=True,
-            env={
-                **env,
-                "ZULIP_RUST_DATABASE_URL": database,
-                "ZULIP_RUST_EXTERNAL_HOST": external_host,
-                **extra_env,
-            },
-        ) as rust:
-            assert rust.stderr is not None
-            try:
-                ready, _, _ = select.select([rust.stderr], [], [], 10)
-                self.assertTrue(ready, "Rust HTTP service did not start")
-                address = re.fullmatch(
-                    r"Zulip HTTP listening on 127\.0\.0\.1:(\d+)\n", rust.stderr.readline()
-                )
-                assert address is not None, "Rust HTTP service failed to bind"
-                yield int(address[1])
-            finally:
-                rust.terminate()
-                try:
-                    rust.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    rust.kill()
 
     def django_session_environment(self, secret_file: str) -> dict[str, str]:
         return {
@@ -686,43 +635,10 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         query: str = "",
         browser: bool = False,
     ) -> tuple[int, bytes, dict[str, str | None], str | None]:
-        client = HTTPConnection("127.0.0.1", port, timeout=5)
-        try:
-            client.request(
-                method,
-                ("/json" if browser else "/api/v1")
-                + "/users/me/alert_words"
-                + (f"?{query}" if query else ""),
-                headers={
-                    "Host": host,
-                    "User-Agent": "ZulipMobile/1.0",
-                    "X-Real-IP": "192.0.2.1",
-                    **headers,
-                },
-            )
-            response = client.getresponse()
-            compared_headers = (
-                "Content-Type",
-                "Content-Length",
-                "Content-Language",
-                "Vary",
-                "Cache-Control",
-                "WWW-Authenticate",
-                "Location",
-                "X-RateLimit-Limit",
-                "X-RateLimit-Remaining",
-                "X-RateLimit-Reset",
-                "Retry-After",
-                "Set-Cookie",
-            )
-            return (
-                response.status,
-                response.read(),
-                {name: response.getheader(name) for name in compared_headers},
-                response.getheader("Expires"),
-            )
-        finally:
-            client.close()
+        path = ("/json" if browser else "/api/v1") + "/users/me/alert_words"
+        if query:
+            path += f"?{query}"
+        return request_test_http(port, method, host, headers, path)
 
     @skipUnless(
         os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable"
@@ -783,7 +699,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                         USER_ACTIVITY_SHARDS=shards,
                     ),
                     patch.object(RedisRateLimiterBackend, "_testing_clock", False),
-                    self.rust_service(environment) as rust_port,
+                    rust_http_service(environment) as rust_port,
                 ):
                     self.check_shared_quota(rust_port, user, custom_user)
                     self.check_session_quota(rust_port, user)

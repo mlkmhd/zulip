@@ -6,8 +6,7 @@ use std::{
 };
 
 use _zulip_backend::http::{
-    ActivityConfig, AlertWordsConfig, RateLimitConfig, SessionConfig, router,
-    router_with_alert_words,
+    ActivityConfig, RateLimitConfig, SessionConfig, UserReadConfig, router, router_with_user_reads,
 };
 use axum::Router;
 use tokio::net::TcpListener;
@@ -24,7 +23,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let locale_dir =
         env::var_os("ZULIP_LOCALE_DIR").map_or_else(|| PathBuf::from("locale"), PathBuf::from);
     let app = match env::var("ZULIP_RUST_DATABASE_URL") {
-        Ok(database) => alert_words_router(&locale_dir, &database).await?,
+        Ok(database) => user_read_router(&locale_dir, &database).await?,
         Err(env::VarError::NotPresent) => router(&locale_dir)?,
         Err(error) => return Err(error.into()),
     };
@@ -34,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn alert_words_router(locale_dir: &Path, database: &str) -> Result<Router, Box<dyn Error>> {
+async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, Box<dyn Error>> {
     let external_host = env::var("ZULIP_RUST_EXTERNAL_HOST")?;
     let redis_url = optional_env("ZULIP_RUST_REDIS_URL")?;
     let rules = if redis_url.is_some() {
@@ -54,9 +53,9 @@ async fn alert_words_router(locale_dir: &Path, database: &str) -> Result<Router,
     };
     let cookie_name = optional_env("ZULIP_RUST_SESSION_COOKIE_NAME")?;
     let csrf_cookie_name = optional_env("ZULIP_RUST_CSRF_COOKIE_NAME")?;
-    router_with_alert_words(
+    router_with_user_reads(
         locale_dir,
-        AlertWordsConfig {
+        UserReadConfig {
             database,
             external_host: &external_host,
             rate_limit: redis_url.as_deref().map(|url| RateLimitConfig {

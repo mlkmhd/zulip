@@ -3,19 +3,19 @@ use std::{error::Error, path::Path};
 use axum::{Router, routing::get};
 
 mod activity;
-mod alert_words;
 mod compatibility;
 mod database;
 mod locale;
 mod rate_limit;
 mod session;
 mod user_agent;
+mod user_reads;
 
 pub fn router(locale_dir: &Path) -> Result<Router, Box<dyn Error>> {
     Ok(compatibility_router(locale::Locales::load(locale_dir)?))
 }
 
-pub struct AlertWordsConfig<'a> {
+pub struct UserReadConfig<'a> {
     pub database: &'a str,
     pub external_host: &'a str,
     pub rate_limit: Option<RateLimitConfig<'a>>,
@@ -41,20 +41,20 @@ pub struct ActivityConfig<'a> {
     pub shards: u32,
 }
 
-pub async fn router_with_alert_words(
+pub async fn router_with_user_reads(
     locale_dir: &Path,
-    config: AlertWordsConfig<'_>,
+    config: UserReadConfig<'_>,
 ) -> Result<Router, Box<dyn Error>> {
     let locales = locale::Locales::load(locale_dir)?;
     let browser_enabled = config.session.is_some();
-    let alert_words = alert_words::AlertWords::connect(config, locales.clone()).await?;
+    let user_reads = user_reads::UserReads::connect(config, locales.clone()).await?;
     let mut routes = Router::new()
-        .route(alert_words::PATH, get(alert_words::get))
-        .route("/health/rust-alert-words", get(alert_words::ready));
+        .route(user_reads::PATH, get(user_reads::get))
+        .route("/health/rust-alert-words", get(user_reads::ready));
     if browser_enabled {
-        routes = routes.route(alert_words::SESSION_PATH, get(alert_words::get));
+        routes = routes.route(user_reads::SESSION_PATH, get(user_reads::get));
     }
-    Ok(compatibility_router(locales).merge(routes.with_state(alert_words)))
+    Ok(compatibility_router(locales).merge(routes.with_state(user_reads)))
 }
 
 fn compatibility_router(locales: locale::Locales) -> Router {
