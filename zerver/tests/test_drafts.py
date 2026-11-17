@@ -19,6 +19,7 @@ from django.contrib.sessions.backends.db import SessionStore
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import LiveServerTestCase
 
+from zerver.actions.user_groups import check_add_user_group
 from zerver.lib.drafts import (
     DraftData,
     ValidatedDraftData,
@@ -32,6 +33,7 @@ from zerver.lib.users import check_can_access_user
 from zerver.models import (
     DirectMessageGroup,
     Draft,
+    GroupGroupMembership,
     Realm,
     Recipient,
     Stream,
@@ -240,6 +242,23 @@ class DraftCreationTests(ZulipTestCase):
             [direct_draft], [{**direct_draft, "to": sorted([othello.id, zoe.id]), "topic": ""}]
         )
         self.assertEqual(Draft.objects.get(user_profile=owner).recipient_id, recipient.id)
+
+    def test_create_batch_validates_all_draft_fields_before_creating_groups(self) -> None:
+        owner = self.example_user("hamlet")
+        members = [owner.id, self.example_user("othello").id, self.example_user("ZOE").id]
+        self.assertIsNone(get_direct_message_group(members))
+        draft = {"type": "private", "to": members[1:], "topic": "", "content": "Unsent"}
+        with self.capture_send_event_calls(expected_num_events=0):
+            response = self.api_post(
+                owner,
+                "/api/v1/drafts",
+                {"drafts": orjson.dumps([draft, {**draft, "to": ["2"]}]).decode()},
+                intentionally_undocumented=True,
+            )
+            self.assert_json_error(response, 'drafts[1]["to"][0] is not an integer')
+
+        self.assertIsNone(get_direct_message_group(members))
+        self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
 
     def test_create_draft_rolls_back_incomplete_direct_message_group(self) -> None:
         owner = self.example_user("hamlet")
@@ -476,6 +495,33 @@ class DraftCreationTests(ZulipTestCase):
             }
         ]
         self.create_and_check_drafts_for_error(draft_dicts, "Invalid channel ID")
+
+    def test_create_stream_draft_with_subgroup_access(self) -> None:
+        owner = self.example_user("hamlet")
+        guest = self.example_user("polonius")
+        self.assertTrue(guest.is_guest)
+        stream = self.make_stream("Private draft channel", invite_only=True)
+        members = check_add_user_group(
+            owner.realm, "Draft group members", [owner, guest], acting_user=owner
+        )
+        subscribers = check_add_user_group(
+            owner.realm, "Draft channel subscribers", [], acting_user=owner
+        )
+        GroupGroupMembership.objects.create(supergroup=subscribers, subgroup=members)
+        stream.can_subscribe_group = subscribers
+        stream.save(update_fields=["can_subscribe_group"])
+        draft = {"type": "stream", "to": [stream.id], "topic": "Drafts", "content": "Unsent"}
+        params = {"drafts": orjson.dumps([draft]).decode()}
+
+        self.assert_json_success(self.api_post(owner, "/api/v1/drafts", params))
+        self.assertEqual(Draft.objects.get(user_profile=owner).recipient_id, stream.recipient_id)
+        self.assert_json_error(self.api_post(guest, "/api/v1/drafts", params), "Invalid channel ID")
+        self.assertFalse(Draft.objects.filter(user_profile=guest).exists())
+
+        stream.deactivated = True
+        stream.save(update_fields=["deactivated"])
+        self.assert_json_error(self.api_post(owner, "/api/v1/drafts", params), "Invalid channel ID")
+        self.assertEqual(Draft.objects.filter(user_profile=owner).count(), 1)
 
     def test_create_personal_message_draft_for_non_existing_user(self) -> None:
         draft_dicts = [
