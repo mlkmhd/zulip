@@ -317,11 +317,12 @@ the remaining list just for the affected user after commit. Unavailable cache
 or broker services return `503`. A broker failure after commit can leave the
 deletion persisted with its notification unconfirmed.
 
-These settings enable DELETE on the direct listener. The supplied development
-and nginx proxy configurations route alert-word writes to Django. Unset
-`ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE` and restart Rust to disable the direct
-DELETE routes. If using `ZULIP_RUST_WEB_POST_SCHEME` solely for alert-word
-deletion, unset it as well.
+These settings enable DELETE on the direct listener. See the separate routing
+steps for [the development proxy](#route-alert-word-deletion-through-the-development-proxy)
+and [nginx staging](#stage-alert-word-deletion-in-nginx). Unset
+`ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE` and restart Rust to disable direct DELETE.
+If using `ZULIP_RUST_WEB_POST_SCHEME` solely for alert-word deletion, unset it
+as well.
 
 For the comparison, set `ZULIP_RUST_ACTIVITY_TEST_VHOST` and
 `ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS` to the dedicated test instances
@@ -375,6 +376,24 @@ DJANGO_SETTINGS_MODULE=zproject.test_settings ZULIP_RUST_PROXY_EXPECT_RUST=1 \
 
 Restart the proxy without `--rust-alert-words` and repeat with
 `ZULIP_RUST_PROXY_EXPECT_RUST=0`, leaving the Rust service running.
+
+### Route alert-word deletion through the development proxy
+
+Start Rust with the [alert-word DELETE settings](#delete-alert-words-through-rust).
+To send both `GET` and `HEAD` and physical `DELETE` requests to Rust, run:
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-alert-words --rust-alert-word-deletes
+```
+
+The supported host and exact paths are the same as for reads. A physical POST
+using `method=DELETE` follows the Django route. A disconnect during a proxied
+DELETE returns `502`. Restart the proxy without `--rust-alert-word-deletes`
+to restore Django deletion. The read flag can be toggled independently.
+
+Run the same proxy smoke test with `ZULIP_RUST_PROXY_EXPECT_DELETE=1` when
+the delete flag is enabled and `0` after rollback. Set
+`ZULIP_RUST_PROXY_EXPECT_RUST` to match the read flag.
 
 ## Read saved snippets through Rust
 
@@ -650,6 +669,20 @@ The smoke test above also runs against nginx with
 routing include installed, then `0` after removing it and reloading. During
 testing, use a disposable Django database and dedicated dependency instances
 when exercising outages.
+
+### Stage alert-word deletion in nginx
+
+Start Rust with the [alert-word DELETE settings](#delete-alert-words-through-rust)
+and verify readiness. Keep the health and route includes from the read setup.
+Replace `alert-words-map.conf` with `alert-words-delete-map.conf` in nginx's HTTP
+context, using the same verified host and port. Run `nginx -t` and reload.
+The replacement map also routes physical DELETE to Rust on both alert-word
+paths. POST and OPTIONS follow the Django route. A Rust upstream failure uses
+the API error response.
+
+To restore only DELETE to Django, reinstall `alert-words-map.conf` in place of
+the replacement, run `nginx -t`, and reload. To remove all alert-word routing,
+remove `alert-words-routes.conf` and reload after validation.
 
 ## Migration sequence
 

@@ -72,6 +72,11 @@ parser.add_argument(
     help="Forward alert-word GET and HEAD requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-alert-word-deletes",
+    action="store_true",
+    help="Forward alert-word DELETE requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--rust-saved-snippets",
     action="store_true",
     help="Forward saved-snippet API GET and HEAD requests to the Rust HTTP server",
@@ -200,6 +205,8 @@ if options.rust_http_port is not None and (
     parser.error("--rust-http-port must be a valid port outside the development server port range")
 if options.rust_alert_words and options.rust_http_port is None:
     parser.error("--rust-alert-words requires --rust-http-port")
+if options.rust_alert_word_deletes and options.rust_http_port is None:
+    parser.error("--rust-alert-word-deletes requires --rust-http-port")
 if options.rust_saved_snippets and options.rust_http_port is None:
     parser.error("--rust-saved-snippets requires --rust-http-port")
 if options.rust_saved_snippets_web and options.rust_http_port is None:
@@ -336,8 +343,24 @@ SKIP_AUTO_HEADERS = {
 }
 
 
+async def prevent_upstream_retry(
+    request: aiohttp.ClientRequest, handler: aiohttp.ClientHandlerType
+) -> aiohttp.ClientResponse:
+    try:
+        return await handler(request)
+    except (aiohttp.ClientOSError, aiohttp.ServerDisconnectedError) as error:
+        logging.error(
+            "Backend disconnected while forwarding %s %s", request.method, request.url.path
+        )
+        raise web.HTTPBadGateway from error
+
+
 async def forward(
-    upstream_port: int, request: web.Request, *, replace_real_ip: bool = False
+    upstream_port: int,
+    request: web.Request,
+    *,
+    replace_real_ip: bool = False,
+    retry_connection: bool = True,
 ) -> web.StreamResponse:
     assert request.remote is not None
     headers = [
@@ -359,6 +382,7 @@ async def forward(
                 allow_redirects=False,
                 auto_decompress=False,
                 skip_auto_headers=SKIP_AUTO_HEADERS,
+                middlewares=None if retry_connection else (prevent_upstream_retry,),
             )
         except aiohttp.ClientConnectorError as error:
             if time.time() - request_started > 30:
@@ -488,9 +512,12 @@ build step and rerun `run-dev`.""")
 
         rust_routes: dict[str, set[str]] = {}
         read_methods = {hdrs.METH_GET, hdrs.METH_HEAD}
-        if options.rust_alert_words:
-            rust_routes["/api/v1/users/me/alert_words"] = read_methods
-            rust_routes["/json/users/me/alert_words"] = read_methods
+        if options.rust_alert_words or options.rust_alert_word_deletes:
+            alert_word_methods = read_methods.copy() if options.rust_alert_words else set()
+            if options.rust_alert_word_deletes:
+                alert_word_methods.add(hdrs.METH_DELETE)
+            rust_routes["/api/v1/users/me/alert_words"] = alert_word_methods
+            rust_routes["/json/users/me/alert_words"] = alert_word_methods
         if options.rust_saved_snippets or options.rust_saved_snippet_writes:
             snippet_methods = read_methods.copy() if options.rust_saved_snippets else set()
             if options.rust_saved_snippet_writes:
@@ -555,7 +582,13 @@ def add_rust_routes(rust_port: int, routes: dict[str, set[str]]) -> None:
 
     async def forward_route(methods: set[str], request: web.Request) -> web.StreamResponse:
         if request.method in methods and supports_rust_host(request.host):
-            return await forward(rust_port, request, replace_real_ip=True)
+            # A DELETE might have committed before the upstream disconnected.
+            return await forward(
+                rust_port,
+                request,
+                replace_real_ip=True,
+                retry_connection=request.method != hdrs.METH_DELETE,
+            )
         return await forward(django_port, request)
 
     for path, methods in routes.items():

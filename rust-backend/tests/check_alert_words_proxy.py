@@ -17,7 +17,7 @@ from zerver.lib.alert_words import user_alert_words
 from zerver.models import AlertWord, UserProfile
 
 
-def check_proxy(rust_enabled: bool) -> None:
+def check_proxy(rust_enabled: bool, rust_deletes: bool) -> None:
     assert settings.TEST_SUITE and connection.settings_dict["NAME"].startswith("zulip_rust_proxy_")
     proxy_port = int(os.environ.get("ZULIP_RUST_PROXY_PORT", "9981"))
     user = UserProfile.objects.get(delivery_email="hamlet@zulip.com", realm__string_id="zulip")
@@ -91,12 +91,24 @@ def check_proxy(rust_enabled: bool) -> None:
             assert word in user_alert_words(user)
             request("POST", path, auth, 200, fields={"method": "GET"})
             assert word in user_alert_words(user)
-            request("DELETE", path, auth, 200, fields=fields)
+            request(
+                "DELETE", path + "?client=ZulipMobile", auth, 200, rust=rust_deletes, fields=fields
+            )
+            assert word not in user_alert_words(user)
+            request("POST", path, auth, 200, fields=fields)
+            assert word in user_alert_words(user)
+            request("POST", path, auth, 200, fields={**fields, "method": "DELETE"})
             assert word not in user_alert_words(user)
 
         path = "/json/users/me/alert_words"
         body, _ = request("POST", path, {"Cookie": browser["Cookie"]}, 403, fields=fields)
         assert orjson.loads(body)["code"] == "CSRF_FAILED"
+        request("POST", path, browser, 200, fields=fields)
+        body, _ = request("DELETE", path, {"Cookie": browser["Cookie"]}, 403, fields=fields)
+        assert orjson.loads(body)["code"] == "CSRF_FAILED"
+        assert word in user_alert_words(user)
+        request("DELETE", path, browser, 200, rust=rust_deletes, fields=fields)
+        assert word not in user_alert_words(user)
         assert sorted(user_alert_words(user)) == sorted(original_words)
 
         path = "/api/v1/users/me/alert_words"
@@ -106,10 +118,12 @@ def check_proxy(rust_enabled: bool) -> None:
     finally:
         session.delete()
         AlertWord.objects.filter(user_profile=user, word=word).delete()
-    print(
-        f"{checks} proxy checks passed with Rust alert words {'enabled' if rust_enabled else 'disabled'}."
-    )
+    print(f"{checks} proxy checks passed with Rust reads={rust_enabled}, DELETE={rust_deletes}.")
 
 
 if __name__ == "__main__":
-    check_proxy(rust_enabled={"0": False, "1": True}[os.environ["ZULIP_RUST_PROXY_EXPECT_RUST"]])
+    flags = {"0": False, "1": True}
+    check_proxy(
+        rust_enabled=flags[os.environ["ZULIP_RUST_PROXY_EXPECT_RUST"]],
+        rust_deletes=flags[os.environ.get("ZULIP_RUST_PROXY_EXPECT_DELETE", "0")],
+    )
