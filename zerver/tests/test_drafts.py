@@ -152,6 +152,22 @@ class DraftCreationTests(ZulipTestCase):
         ]
         self.create_and_check_drafts_for_success(draft_dicts, expected_draft_dicts)
 
+    def test_create_draft_reuses_existing_direct_message_group(self) -> None:
+        owner = self.example_user("hamlet")
+        othello = self.example_user("othello")
+        zoe = self.example_user("ZOE")
+        group = get_or_create_direct_message_group([zoe.id, owner.id, othello.id])
+        draft = DraftData(type="private", to=[othello.id, zoe.id], topic="", content="Unsent")
+
+        (created,) = do_create_drafts([draft], owner)
+
+        assert group.recipient_id is not None
+        self.assertEqual(created.recipient_id, group.recipient_id)
+        members = Subscription.objects.filter(recipient_id=group.recipient_id)
+        self.assertCountEqual(
+            members.values_list("user_profile_id", flat=True), [owner.id, othello.id, zoe.id]
+        )
+
     def test_create_batch_of_drafts_properly(self) -> None:
         hamlet = self.example_user("hamlet")
         visible_stream_name = self.get_streams(hamlet)[0]

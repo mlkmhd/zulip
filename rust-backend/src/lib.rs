@@ -1,5 +1,6 @@
 pub mod alert_words;
 pub mod bot_storage;
+pub mod direct_message_group;
 pub mod draft_text;
 pub mod draft_timestamp;
 pub mod stream_color;

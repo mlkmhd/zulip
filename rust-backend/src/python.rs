@@ -6,7 +6,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::{
-    alert_words, bot_storage, draft_text, draft_timestamp, memcached, stream_color, user_status,
+    alert_words, bot_storage, direct_message_group, draft_text, draft_timestamp, memcached,
+    stream_color, user_status,
 };
 
 #[pymodule]
@@ -19,13 +20,46 @@ mod _zulip_backend {
     }
 
     #[pyfunction]
-    fn initialize_direct_message_group(
+    fn get_or_create_direct_message_group(
         cursor: &Bound<'_, PyAny>,
-        group_id: i64,
-        recipient_type: i16,
         member_ids: Vec<i32>,
+        recipient_type: i16,
         default_color: &str,
-    ) -> PyResult<i32> {
+    ) -> PyResult<(i64, Option<i32>)> {
+        let member_hash = direct_message_group::member_hash(&member_ids);
+        let group_size = i32::try_from(member_ids.len())
+            .map_err(|_| PyValueError::new_err("Too many direct message group members"))?;
+        let lookup = || -> PyResult<Option<(i64, Option<i32>)>> {
+            cursor.call_method1(
+                "execute",
+                (
+                    "SELECT id, recipient_id FROM zulip.zerver_huddle
+                     WHERE huddle_hash = %s AND group_size = %s",
+                    (&member_hash, group_size),
+                ),
+            )?;
+            cursor.call_method0("fetchone")?.extract()
+        };
+        if let Some(group) = lookup()? {
+            return Ok(group);
+        }
+
+        cursor.call_method1(
+            "execute",
+            (
+                "INSERT INTO zulip.zerver_huddle (huddle_hash, group_size)
+                 VALUES (%s, %s) ON CONFLICT (huddle_hash) DO NOTHING RETURNING id",
+                (&member_hash, group_size),
+            ),
+        )?;
+        let inserted: Option<(i64,)> = cursor.call_method0("fetchone")?.extract()?;
+        let Some((group_id,)) = inserted else {
+            // PostgreSQL can observe the conflicting insert before it is
+            // visible in this statement's snapshot. Read it in a new statement.
+            return lookup()?
+                .ok_or_else(|| PyValueError::new_err("Direct message group not found"));
+        };
+
         cursor.call_method1(
             "execute",
             (
@@ -49,7 +83,7 @@ mod _zulip_backend {
             ),
         )?;
         let (recipient_id,) = cursor.call_method0("fetchone")?.extract()?;
-        Ok(recipient_id)
+        Ok((group_id, Some(recipient_id)))
     }
 
     #[pyfunction]

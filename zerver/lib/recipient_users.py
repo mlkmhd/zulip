@@ -9,6 +9,7 @@ from zerver.models import DirectMessageGroup, Recipient, UserProfile
 from zerver.models.recipients import (
     get_direct_message_group_hash,
     get_or_create_direct_message_group,
+    get_or_create_direct_message_group_recipient_in_rust,
 )
 from zerver.models.users import is_cross_realm_bot_email
 
@@ -39,9 +40,9 @@ def get_recipient_from_user_profiles(
     user_ids = list(recipient_user_ids)
 
     if create:
-        direct_message_group = get_or_create_direct_message_group(
-            user_ids, use_rust_for_group_creation=use_rust_for_group_creation
-        )
+        if use_rust_for_group_creation:
+            return get_or_create_direct_message_group_recipient_in_rust(user_ids)
+        direct_message_group = get_or_create_direct_message_group(user_ids)
     else:
         # We intentionally let the DirectMessageGroup.DoesNotExist escape,
         # in the case that there is no such direct message group, and the
