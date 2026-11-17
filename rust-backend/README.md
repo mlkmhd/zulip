@@ -787,6 +787,28 @@ port. Validate and reload. To return the reads to Django, remove the
 development option or the nginx routes include and reload after validation.
 Emoji uploads, deactivation and OPTIONS use Django.
 
+## Read bot storage through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/bot_storage` with Basic
+Auth and on `/json/bot_storage` with the
+[Django session settings](#read-alert-words-with-a-django-session).
+The Rust database role needs `SELECT` on `zulip.zerver_botstoragedata`.
+The authenticated bot can read all of its own storage or request specific
+keys with a JSON list. The existing Redis quota and RabbitMQ activity
+settings apply.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_embedded_bot_system
+./tools/run-dev --rust-http-port 9997 --rust-bot-storage-reads
+```
+
+For nginx staging, install `bot-storage-map.conf` in the HTTP context and
+`bot-storage-routes.conf` in `app.d/` for the verified organization host
+and port. Validate and reload. `PUT`, `DELETE`, and `OPTIONS` use Django.
+Remove the development option or the nginx routes include and reload after
+validation to return reads to Django.
+
 ## Read channel folders through Rust
 
 The listener serves `GET` and `HEAD` on `/api/v1/channel_folders` with Basic

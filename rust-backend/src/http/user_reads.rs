@@ -20,7 +20,8 @@ use tokio_postgres::Client;
 use super::{
     UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
-    alert_word_cache, alert_words, attachments, channel_folders, custom_profile_fields,
+    alert_word_cache, alert_words, attachments, bot_storage, channel_folders,
+    custom_profile_fields,
     database::Database,
     drafts,
     form::{Form, FormError},
@@ -47,6 +48,7 @@ enum Endpoint {
     SavedSnippets,
     Drafts,
     Attachments,
+    BotStorage,
     Linkifiers,
     RealmDomains,
     RealmEmoji,
@@ -86,6 +88,7 @@ impl Endpoint {
             Self::SavedSnippets => "get_saved_snippets",
             Self::Drafts => "fetch_drafts",
             Self::Attachments => "list_by_user",
+            Self::BotStorage => "get_storage",
             Self::Linkifiers => "list_linkifiers",
             Self::RealmDomains => "list_realm_domains",
             Self::RealmEmoji => "list_emoji",
@@ -154,6 +157,20 @@ impl Endpoint {
                 let extra =
                     ignored_parameters(&form, &[channel_folders::INCLUDE_ARCHIVED, "client"]);
                 return Ok(format!("\"channel_folders\":{folders}{extra}"));
+            }
+            Self::BotStorage => {
+                let form = Form::from_query(query).map_err(ApiError::Form)?;
+                let storage = bot_storage::read(
+                    database,
+                    user_id,
+                    bot_storage::keys(&form).map_err(ApiError::Form)?,
+                )
+                .await?
+                .ok_or(ApiError::BotStorageKeyNotFound)?;
+                let storage =
+                    serde_json::to_string(&storage).expect("database fields can serialize to JSON");
+                let extra = ignored_parameters(&form, &[bot_storage::KEYS, "client"]);
+                return Ok(format!("\"storage\":{storage}{extra}"));
             }
             Self::ScheduledMessages | Self::Reminders => {
                 let (field, kind) = match self {
@@ -349,7 +366,7 @@ impl UserReads {
             .map_err(ApiError::database_unavailable)?;
         let user = database
             .query_opt(
-                "SELECT u.id, u.realm_id, u.delivery_email, u.is_active, u.bot_type, u.rate_limits,
+                "SELECT u.id, u.realm_id, u.delivery_email, u.is_active, u.bot_type, u.is_bot, u.rate_limits,
                         r.string_id, r.deactivated
                  FROM zulip.zerver_userprofile AS u
                  JOIN zulip.zerver_realm AS r ON r.id = u.realm_id
@@ -385,6 +402,7 @@ impl UserReads {
             id: user.try_get("id")?,
             realm_id: user.try_get("realm_id")?,
             rate_limits: user.try_get("rate_limits")?,
+            is_bot: user.try_get("is_bot")?,
         };
         Ok((database, user))
     }
@@ -500,6 +518,7 @@ struct AuthenticatedUser {
     id: i32,
     realm_id: i32,
     rate_limits: String,
+    is_bot: bool,
 }
 
 fn valid_label(label: &str) -> bool {
@@ -576,6 +595,8 @@ enum ApiError {
     Csrf(String),
     Unauthorized(&'static str),
     BadRequest(&'static str),
+    BotRequired,
+    BotStorageKeyNotFound,
     InvalidNavigationView(&'static str),
     NavigationViewNotFound,
     DeactivatedUser,
@@ -763,6 +784,7 @@ async fn respond(
         saved_snippets::PATH | saved_snippets::SESSION_PATH => Endpoint::SavedSnippets,
         drafts::PATH | drafts::SESSION_PATH => Endpoint::Drafts,
         attachments::PATH | attachments::SESSION_PATH => Endpoint::Attachments,
+        bot_storage::PATH | bot_storage::SESSION_PATH => Endpoint::BotStorage,
         linkifiers::PATH | linkifiers::SESSION_PATH => Endpoint::Linkifiers,
         realm_domains::PATH | realm_domains::SESSION_PATH => Endpoint::RealmDomains,
         realm_emoji::PATH | realm_emoji::SESSION_PATH => Endpoint::RealmEmoji,
@@ -820,7 +842,7 @@ async fn respond(
         } else {
             None
         };
-        let (database, user_id, realm_id) = if let Some(sessions) = browser_session {
+        let (database, user_id, realm_id, is_bot) = if let Some(sessions) = browser_session {
             let subdomain =
                 subdomain(&headers, &state.external_host).ok_or(ApiError::InvalidHost)?;
             let (user, database) = match sessions
@@ -875,7 +897,7 @@ async fn respond(
             state
                 .record_activity(&database, user.id, activity_name, client)
                 .await?;
-            (database, user.id, user.realm_id)
+            (database, user.id, user.realm_id, user.is_bot)
         } else {
             let (database, user) = state.authenticate(&headers).await?;
             let client = client_name(form_client, uri.query(), &headers);
@@ -894,8 +916,11 @@ async fn respond(
                     .limit(user.id, &user.rate_limits, &mut rate_limit)
                     .await?;
             }
-            (database, user.id, user.realm_id)
+            (database, user.id, user.realm_id, user.is_bot)
         };
+        if matches!(endpoint, Endpoint::BotStorage) && !is_bot {
+            return Err(ApiError::BotRequired);
+        }
         if let (Some(write), Some(form)) = (write, form) {
             if let WriteOperation::EditNavigationView(fragment)
             | WriteOperation::DeleteNavigationView(fragment) = write
@@ -1198,6 +1223,7 @@ fn error_response(
             ),
             Endpoint::Drafts
             | Endpoint::Attachments
+            | Endpoint::BotStorage
             | Endpoint::Linkifiers
             | Endpoint::RealmDomains
             | Endpoint::RealmEmoji
@@ -1331,6 +1357,16 @@ fn error_response(
             "BAD_REQUEST",
             "User has disabled synchronizing drafts.",
         ),
+        ApiError::BotRequired => (
+            StatusCode::BAD_REQUEST,
+            "PERMISSION_DENIED",
+            "Must be a bot user",
+        ),
+        ApiError::BotStorageKeyNotFound => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "Key does not exist.",
+        ),
         ApiError::DraftNotFound => (StatusCode::NOT_FOUND, "BAD_REQUEST", "Draft does not exist"),
         ApiError::NavigationViewNotFound => (
             StatusCode::NOT_FOUND,
@@ -1389,6 +1425,8 @@ fn error_response(
         | ApiError::InvalidNavigationView(_)
         | ApiError::NavigationViewNotFound
         | ApiError::DraftSyncDisabled
+        | ApiError::BotRequired
+        | ApiError::BotStorageKeyNotFound
         | ApiError::DraftNotFound => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };

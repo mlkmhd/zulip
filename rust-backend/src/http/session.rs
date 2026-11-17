@@ -40,6 +40,7 @@ pub(super) struct SessionUser {
     pub active: bool,
     pub realm_deactivated: bool,
     pub bot_type: Option<i16>,
+    pub is_bot: bool,
 }
 
 pub(super) enum SessionLookup {
@@ -118,12 +119,16 @@ impl Sessions {
         if !self.backends.contains(backend) {
             return Ok(anonymous);
         }
-        let Some(row) = db.query_opt(
-            "SELECT u.realm_id, u.password, u.is_active, u.bot_type, u.rate_limits, r.string_id, r.deactivated
+        let Some(row) = db
+            .query_opt(
+                "SELECT u.realm_id, u.password, u.is_active, u.bot_type, u.is_bot,
+                    u.rate_limits, r.string_id, r.deactivated
              FROM zulip.zerver_userprofile AS u
              JOIN zulip.zerver_realm AS r ON r.id = u.realm_id WHERE u.id = $1",
-            &[&id],
-        ).await? else {
+                &[&id],
+            )
+            .await?
+        else {
             return Ok(anonymous);
         };
         let password: &str = row.try_get("password")?;
@@ -147,6 +152,7 @@ impl Sessions {
                 active: row.try_get("is_active")?,
                 realm_deactivated: row.try_get("deactivated")?,
                 bot_type: row.try_get("bot_type")?,
+                is_bot: row.try_get("is_bot")?,
             },
             db,
         ))

@@ -12,6 +12,7 @@ mod activity;
 mod alert_word_cache;
 pub mod alert_words;
 mod attachments;
+mod bot_storage;
 mod channel_folders;
 mod compatibility;
 mod csrf;
@@ -143,6 +144,7 @@ pub async fn router_with_user_reads(
             },
         )
         .route(channel_folders::PATH, get(user_reads::get))
+        .route(bot_storage::PATH, get(user_reads::get))
         .route(scheduled_messages::PATH, get(user_reads::get))
         .route(scheduled_messages::REMINDERS_PATH, get(user_reads::get))
         .route("/health/rust-alert-words", get(user_reads::ready));
@@ -170,6 +172,7 @@ pub async fn router_with_user_reads(
         );
     }
     if browser_enabled {
+        routes = routes.route(bot_storage::SESSION_PATH, get(user_reads::get));
         if emoji_reads {
             routes = routes.route(realm_emoji::SESSION_PATH, get(user_reads::get));
         }

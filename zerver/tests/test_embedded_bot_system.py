@@ -1,8 +1,15 @@
+import os
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.parse import urlencode, urlsplit
 
 import orjson
 from django.conf import settings
-from django.test import override_settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase, override_settings
 from typing_extensions import override
 
 from zerver.actions.create_user import do_create_user
@@ -15,13 +22,108 @@ from zerver.lib.bot_lib import (
 )
 from zerver.lib.bot_storage import StateError
 from zerver.lib.display_recipient import get_display_recipient
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.validator import check_string
-from zerver.models import UserProfile
+from zerver.models import BotStorageData, UserProfile
 from zerver.models.bots import get_service_profile
 from zerver.models.realms import get_realm
 from zerver.models.recipients import get_or_create_direct_message_group
 from zerver.models.users import get_user
+
+
+class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_get_storage_parity_with_rust(self) -> None:
+        bot = self.example_user("default_bot")
+        other = self.example_user("outgoing_webhook_bot")
+        human = self.example_user("hamlet")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+
+        def basic(user: UserProfile) -> dict[str, str]:
+            token = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+            return {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            for owner, key, value in (
+                (bot, "درود", "📝"),
+                (bot, "plain", "text"),
+                (other, "secret", "other bot's value"),
+            ):
+                row = BotStorageData.objects.create(bot_profile=owner, key=key, value=value)
+                cleanup.callback(row.delete)
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(bot.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": bot.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            service = (
+                rust_http_service(
+                    {
+                        "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                        "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                            settings.AUTHENTICATION_BACKENDS
+                        ).decode(),
+                    }
+                )
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with service as rust_port:
+
+                def check(method: str, path: str, headers: dict[str, str], status: int) -> bytes:
+                    django = request_test_http(django_port, method, bot.realm.host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        rust = request_test_http(rust_port, method, bot.realm.host, headers, path)
+                        self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                        if method == "GET":
+                            self.assertEqual(orjson.loads(rust[1]), orjson.loads(django[1]))
+                        else:
+                            self.assertEqual(rust[1], django[1])
+                    return django[1]
+
+                for path, headers in (
+                    ("/api/v1/bot_storage", basic(bot)),
+                    ("/json/bot_storage", cookie),
+                ):
+                    with self.subTest(path=path):
+                        expected = {"درود": "📝", "plain": "text"}
+                        self.assertEqual(
+                            orjson.loads(check("GET", path, headers, 200))["storage"], expected
+                        )
+                        self.assertEqual(check("HEAD", path, headers, 200), b"")
+                        for raw, storage in (
+                            ("null", expected),
+                            ("[]", {}),
+                            ('["درود","درود"]', {"درود": "📝"}),
+                        ):
+                            query = urlencode([("keys", "bad"), ("keys", raw), ("unknown", "1")])
+                            result = orjson.loads(check("GET", f"{path}?{query}", headers, 200))
+                            self.assertEqual(result["storage"], storage)
+                            self.assertEqual(result["ignored_parameters_unsupported"], ["unknown"])
+                        for raw, error in (
+                            ('["secret"]', "Key does not exist."),
+                            ("garbage", "keys is not valid JSON"),
+                            ("{}", "keys is not a list"),
+                            ("[42]", "keys[0] is not a string"),
+                        ):
+                            query = urlencode({"keys": raw})
+                            result = orjson.loads(check("GET", f"{path}?{query}", headers, 400))
+                            self.assertEqual(result["msg"], error)
+
+                path = "/api/v1/bot_storage?keys=garbage"
+                result = orjson.loads(check("GET", path, basic(human), 400))
+                self.assertEqual(result["code"], "PERMISSION_DENIED")
+                self.assertEqual(result["msg"], "Must be a bot user")
 
 
 class TestEmbeddedBotMessaging(ZulipTestCase):
