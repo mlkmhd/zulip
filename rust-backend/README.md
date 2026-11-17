@@ -490,7 +490,8 @@ routes. The database role also needs `SELECT` on `zulip.zerver_draft`,
 Rust checks the account's draft synchronization preference and returns only
 its drafts. The response uses Django's ascending edit-time order, including
 the same recipient IDs for channels, direct messages and drafts without a
-recipient. The development and staging proxies still send drafts to Django.
+recipient. See [proxy routing](#route-draft-reads-and-deletion-through-proxies)
+to test the routes through development or staging.
 
 ```sh
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
@@ -512,6 +513,28 @@ a different account return the same `404` response.
 With a dedicated `ZULIP_RUST_ACTIVITY_TEST_VHOST`, the drafts test suite
 compares both DELETE routes and checks concurrent requests. Remove the
 `ZULIP_RUST_DRAFT_DELETES` setting and restart to disable direct deletion.
+
+## Route draft reads and deletion through proxies
+
+With [Rust draft deletion enabled](#delete-drafts-through-rust), use the two
+independent development flags for the same supported realm hosts as alert words:
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-draft-reads --rust-draft-deletes
+```
+
+For nginx staging, include `drafts-delete-map.conf` in the HTTP context and
+`drafts-routes.conf` in `app.d/`. Use the sample host and port only in the test
+environment or replace them with the verified target values. Validate with
+`nginx -t` and reload. This forwards `GET` and `HEAD` on the two collection
+paths and physical `DELETE` on their numeric detail paths. Django handles
+POST, PATCH, and OPTIONS. When the Rust upstream is down, nginx returns its
+API error response for routed requests.
+
+To roll back deletion alone, remove `--rust-draft-deletes` in development or
+replace `drafts-delete-map.conf` with `drafts-map.conf` and reload nginx.
+To roll back all draft routing, also remove `--rust-draft-reads` or remove
+`drafts-routes.conf` and reload after validation.
 
 ## Stage saved-snippet reads in nginx
 
