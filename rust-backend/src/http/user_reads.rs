@@ -21,6 +21,7 @@ use super::{
     activity::{ActivityPublisher, client_name},
     alert_word_cache, alert_words,
     database::Database,
+    form::{Form, FormError},
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
     saved_snippets::{self, SnippetEvent},
@@ -357,7 +358,7 @@ enum ApiError {
     RateLimiterUnavailable,
     ActivityUnavailable,
     NotificationUnavailable,
-    Form(saved_snippets::FormError),
+    Form(FormError),
     UnsupportedMethodOverride,
     SnippetNotFound,
     RateLimited(f64),
@@ -460,7 +461,7 @@ async fn respond_snippet_write(
     write: SnippetWrite,
 ) -> Response {
     let (uri, headers) = (request.uri().clone(), request.headers().clone());
-    let form = saved_snippets::SnippetForm::parse(request).await;
+    let form = Form::parse(request).await;
     respond(state, peer, uri, headers, Some((write, form))).await
 }
 
@@ -469,10 +470,7 @@ async fn respond(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     uri: Uri,
     headers: HeaderMap,
-    form: Option<(
-        SnippetWrite,
-        Result<saved_snippets::SnippetForm, saved_snippets::FormError>,
-    )>,
+    form: Option<(SnippetWrite, Result<Form, FormError>)>,
 ) -> Response {
     let language = Locales::for_request(&headers);
     let endpoint = if matches!(
@@ -498,8 +496,7 @@ async fn respond(
         };
         let write = match (
             requested_write,
-            form.as_ref()
-                .and_then(saved_snippets::SnippetForm::method_override),
+            form.as_ref().and_then(|form| form.post_value("method")),
         ) {
             (Some(SnippetWrite::Create), Some("GET" | "HEAD")) => None,
             (Some(SnippetWrite::Create), Some(method)) if method != "POST" => {
@@ -657,7 +654,14 @@ async fn respond(
                 // Django's delete view returns a plain success response.
                 return Ok("{\"result\":\"success\",\"msg\":\"\"}\n".to_owned());
             }
-            let ignored = form.ignored_parameters(matches!(write, SnippetWrite::Edit(_)));
+            // Django identifies the client before it parses the PATCH body.
+            let processed: &[_] =
+                if !matches!(write, SnippetWrite::Edit(_)) || form.has_query_client() {
+                    &["title", "content", "client"]
+                } else {
+                    &["title", "content"]
+                };
+            let ignored = form.ignored_parameters(processed);
             let extra = if ignored.is_empty() {
                 String::new()
             } else {
@@ -798,22 +802,22 @@ fn error_response(
             "SERVICE_UNAVAILABLE",
             "Notification service unavailable",
         ),
-        ApiError::Form(saved_snippets::FormError::Missing(_)) => (
+        ApiError::Form(FormError::Missing(_)) => (
             StatusCode::BAD_REQUEST,
             "REQUEST_VARIABLE_MISSING",
             "Missing '{var_name}' argument",
         ),
-        ApiError::Form(saved_snippets::FormError::Blank(_)) => (
+        ApiError::Form(FormError::Blank(_)) => (
             StatusCode::BAD_REQUEST,
             "BAD_REQUEST",
             "{var_name} cannot be blank",
         ),
-        ApiError::Form(saved_snippets::FormError::TooLong(..)) => (
+        ApiError::Form(FormError::TooLong(..)) => (
             StatusCode::BAD_REQUEST,
             "BAD_REQUEST",
             "{var_name} is too long (limit: {max_length} characters)",
         ),
-        ApiError::Form(saved_snippets::FormError::Malformed) => {
+        ApiError::Form(FormError::Malformed) => {
             (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Malformed payload")
         }
         ApiError::UnsupportedMethodOverride => unreachable!("override handled above"),
@@ -831,17 +835,17 @@ fn error_response(
     let translated = locales.gettext(language, message);
     let message = match &error {
         ApiError::Csrf(reason) => translated.replace("{reason}", reason),
-        ApiError::Form(
-            saved_snippets::FormError::Missing(name) | saved_snippets::FormError::Blank(name),
-        ) => translated.replace("{var_name}", name),
-        ApiError::Form(saved_snippets::FormError::TooLong(name, length)) => translated
+        ApiError::Form(FormError::Missing(name) | FormError::Blank(name)) => {
+            translated.replace("{var_name}", name)
+        }
+        ApiError::Form(FormError::TooLong(name, length)) => translated
             .replace("{var_name}", name)
             .replace("{max_length}", &length.to_string()),
         _ => translated.to_owned(),
     };
     let message = serde_json::to_string(&message).expect("strings can serialize to JSON");
     let details = match &error {
-        ApiError::Form(saved_snippets::FormError::Missing(name)) => {
+        ApiError::Form(FormError::Missing(name)) => {
             format!(",\"var_name\":\"{name}\"")
         }
         ApiError::Csrf(reason) => {
