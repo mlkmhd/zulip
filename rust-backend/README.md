@@ -105,8 +105,8 @@ ZULIP_RUST_COMPATIBILITY_TEST_PORT=9997 ./tools/test-backend zerver.tests.test_c
 Set `ZULIP_RUST_DATABASE_URL` to a PostgreSQL connection string for the local
 Zulip database and `ZULIP_RUST_EXTERNAL_HOST` to the base hostname without a
 port. The database role needs read access to `zulip.zerver_userprofile`,
-`zulip.zerver_realm`, and `zulip.zerver_alertword`. The service accepts a local
-Unix socket or loopback PostgreSQL connection and uses a read-only session.
+`zulip.zerver_realm`, and `zulip.zerver_alertword`. Use a local Unix socket
+or loopback PostgreSQL connection.
 
 ```sh
 export ZULIP_RUST_DATABASE_URL='host=/var/run/postgresql dbname=zulip user=zulip'
@@ -119,8 +119,23 @@ Send `GET /api/v1/users/me/alert_words` to the loopback listener with
 name is the account email and the password is its API key. The base hostname
 selects the root-domain organization. This direct development route supports
 the standard realm subdomain layout. Django serves configured custom realm hosts,
-the web session alias, writes, and normal proxy traffic. Shared rate limiting
-and activity tracking remain part of the production integration work.
+the web session alias, writes, and normal proxy traffic.
+
+To share the API quota, set `ZULIP_RUST_REDIS_URL` to Django's Redis database
+0 and `ZULIP_RUST_RATE_LIMIT_RULES` to the effective
+`RATE_LIMITING_RULES["api_by_user"]` as JSON, for example `[[60,200]]`. Use
+`[]` for Django's empty rule list. Per-user PostgreSQL overrides take
+precedence. `ZULIP_RUST_REDIS_KEY_PREFIX` defaults to the empty prefix used
+outside tests. The loopback endpoint applies the quota to all authenticated
+clients when Redis is configured.
+
+To publish activity, set `ZULIP_RUST_AMQP_URL` to the AMQP endpoint and vhost
+used by Django, including its credentials. Set
+`ZULIP_RUST_USER_ACTIVITY_SHARDS` to Django's shard count if it differs from
+`1`. The database role needs `SELECT` and `INSERT` on `zulip.zerver_client`
+and `USAGE` on its ID sequence so new client names can be registered.
+The PostgreSQL session remains read-only when activity is disabled. The
+Redis and RabbitMQ settings are independent and optional for direct tests.
 
 In a provisioned Zulip development environment, the comparison test starts Django
 and the Rust binary on loopback and gives them the same test database with
@@ -130,6 +145,18 @@ committed fixtures.
 source .venv/bin/activate
 cargo build --manifest-path rust-backend/Cargo.toml --locked --features http --bin zulip-http
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_alert_words.AlertWordsRustHTTPTest
+```
+
+To include the shared Redis and RabbitMQ test, create a dedicated RabbitMQ
+vhost beginning with `zulip-rust-test-` and grant the development broker
+user access. The test purges and reads its own activity queues in that vhost.
+
+```sh
+sudo rabbitmqctl add_vhost zulip-rust-test-alert-words
+sudo rabbitmqctl set_permissions -p zulip-rust-test-alert-words zulip '.*' '.*' '.*'
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
     ./tools/test-backend zerver.tests.test_alert_words.AlertWordsRustHTTPTest
 ```
 

@@ -2,23 +2,32 @@ import os
 import re
 import select
 import subprocess
+import time
 from base64 import b64encode
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
 from unittest import skipUnless
-from urllib.parse import urlsplit
+from unittest.mock import patch
+from urllib.parse import quote, urlencode, urlsplit
 
 import orjson
+import pika
 from django.conf import settings
-from django.db import connection
+from django.db import connection, transaction
 from django.test import LiveServerTestCase
 from psycopg2.extensions import make_dsn
 
 from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
+from zerver.lib import redis_utils
 from zerver.lib.alert_words import alert_words_in_realm, user_alert_words
+from zerver.lib.rate_limiter import RateLimitedUser, RedisRateLimiterBackend
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_helpers import most_recent_message, most_recent_usermessage
-from zerver.models import AlertWord, Realm, UserProfile
+from zerver.models import AlertWord, Client, Realm, UserActivity, UserProfile
+from zerver.worker.user_activity import UserActivityWorker
 
 
 class AlertWordTests(ZulipTestCase):
@@ -303,20 +312,19 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         try:
             UserProfile.objects.filter(id=inactive.id).update(is_active=False)
             Realm.objects.filter(id=realm.id).update(deactivated=True)
-            self.compare_responses(user, other_realm, inactive, deactivated, webhook)
+            with self.rust_service({}) as rust_port:
+                django_port = urlsplit(self.live_server_url).port
+                assert django_port is not None
+                self.compare_cases(
+                    django_port, rust_port, user, other_realm, inactive, deactivated, webhook
+                )
         finally:
             word.delete()
             UserProfile.objects.filter(id=inactive.id).update(is_active=inactive.is_active)
             Realm.objects.filter(id=realm.id).update(deactivated=realm.deactivated)
 
-    def compare_responses(
-        self,
-        user: UserProfile,
-        other_realm: UserProfile,
-        inactive: UserProfile,
-        deactivated: UserProfile,
-        webhook: UserProfile,
-    ) -> None:
+    @contextmanager
+    def rust_service(self, extra_env: dict[str, str]) -> Iterator[int]:
         db = connection.settings_dict
         database = make_dsn(
             dbname=db["NAME"],
@@ -327,14 +335,18 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         )
         external_host = urlsplit("//" + settings.EXTERNAL_HOST).hostname
         assert external_host is not None
+        env = os.environ.copy()
+        env.pop("ZULIP_RUST_REDIS_URL", None)
+        env.pop("ZULIP_RUST_AMQP_URL", None)
         with subprocess.Popen(
             [os.environ["ZULIP_RUST_HTTP_BIN"], "127.0.0.1:0"],
             stderr=subprocess.PIPE,
             text=True,
             env={
-                **os.environ,
+                **env,
                 "ZULIP_RUST_DATABASE_URL": database,
                 "ZULIP_RUST_EXTERNAL_HOST": external_host,
+                **extra_env,
             },
         ) as rust:
             assert rust.stderr is not None
@@ -345,12 +357,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     r"Zulip HTTP listening on 127\.0\.0\.1:(\d+)\n", rust.stderr.readline()
                 )
                 assert address is not None, "Rust HTTP service failed to bind"
-                rust_port = int(address[1])
-                django_port = urlsplit(self.live_server_url).port
-                assert django_port is not None
-                self.compare_cases(
-                    django_port, rust_port, user, other_realm, inactive, deactivated, webhook
-                )
+                yield int(address[1])
             finally:
                 rust.terminate()
                 try:
@@ -486,13 +493,13 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     self.assertEqual(orjson.loads(rust[1])["alert_words"], [])
 
     def request_words(
-        self, port: int, method: str, host: str, headers: dict[str, str]
+        self, port: int, method: str, host: str, headers: dict[str, str], *, query: str = ""
     ) -> tuple[int, bytes, dict[str, str | None], str | None]:
         client = HTTPConnection("127.0.0.1", port, timeout=5)
         try:
             client.request(
                 method,
-                "/api/v1/users/me/alert_words",
+                "/api/v1/users/me/alert_words" + (f"?{query}" if query else ""),
                 headers={
                     "Host": host,
                     "User-Agent": "ZulipMobile/1.0",
@@ -512,6 +519,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 "X-RateLimit-Limit",
                 "X-RateLimit-Remaining",
                 "X-RateLimit-Reset",
+                "Retry-After",
             )
             return (
                 response.status,
@@ -521,3 +529,198 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             )
         finally:
             client.close()
+
+    @skipUnless(
+        os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable"
+    )
+    def test_shared_rate_limit_and_activity(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        self.assertTrue(vhost.startswith("zulip-rust-test-"), "Use a dedicated RabbitMQ test vhost")
+        shards = 3
+        rules = [(120, 2), (180, 3)]
+        user = self.example_user("hamlet")
+        custom_user = self.example_user("othello")
+        custom_rules = "120:1,240:2"
+        custom_name = ("Rust+parity café " * 3)[: Client.MAX_NAME_LENGTH]
+        username = settings.RABBITMQ_USERNAME
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        broker_url = (
+            f"amqp://{quote(username, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        redis_password = settings.REDIS_PASSWORD
+        redisauth = f":{quote(redis_password, safe='')}@" if redis_password else ""
+        redis_url = f"redis://{redisauth}{settings.REDIS_HOST}:{settings.REDIS_PORT}/0"
+        environment = {
+            "ZULIP_RUST_REDIS_URL": redis_url,
+            "ZULIP_RUST_REDIS_KEY_PREFIX": redis_utils.REDIS_KEY_PREFIX,
+            "ZULIP_RUST_RATE_LIMIT_RULES": orjson.dumps(rules).decode(),
+            "ZULIP_RUST_AMQP_URL": broker_url,
+            "ZULIP_RUST_USER_ACTIVITY_SHARDS": str(shards),
+        }
+        params = pika.ConnectionParameters(
+            settings.RABBITMQ_HOST,
+            port=settings.RABBITMQ_PORT,
+            virtual_host=vhost,
+            credentials=pika.PlainCredentials(username, password),
+        )
+        self.assertFalse(Client.objects.filter(name=custom_name).exists())
+        with pika.BlockingConnection(params) as broker:
+            channel = broker.channel()
+            for shard in range(1, shards + 1):
+                channel.queue_declare(f"user_activity_shard{shard}", durable=True)
+                channel.queue_purge(f"user_activity_shard{shard}")
+            UserProfile.objects.filter(id=custom_user.id).update(rate_limits=custom_rules)
+            try:
+                with (
+                    self.settings(
+                        RATE_LIMITING=True,
+                        DEBUG_RATE_LIMITING=False,
+                        RATE_LIMITING_RULES={**settings.RATE_LIMITING_RULES, "api_by_user": rules},
+                        USING_RABBITMQ=True,
+                        RABBITMQ_VHOST=vhost,
+                        USER_ACTIVITY_SHARDS=shards,
+                    ),
+                    patch.object(RedisRateLimiterBackend, "_testing_clock", False),
+                    self.rust_service(environment) as rust_port,
+                ):
+                    self.check_shared_quota(rust_port, user, custom_user)
+                self.check_activity(channel, shards, user, custom_user, custom_name)
+            finally:
+                RateLimitedUser(user).clear_history()
+                RateLimitedUser(custom_user).clear_history()
+                Client.objects.filter(name=custom_name).delete()
+                UserProfile.objects.filter(id=custom_user.id).update(
+                    rate_limits=custom_user.rate_limits
+                )
+
+    def check_shared_quota(
+        self, rust_port: int, user: UserProfile, custom_user: UserProfile
+    ) -> None:
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        for port in (django_port, rust_port):
+            status, _, headers, _ = self.request_words(port, "GET", user.realm.host, {})
+            self.assertEqual(status, 401)
+            self.assertIsNone(headers["X-RateLimit-Limit"])
+
+        def request(
+            port: int, profile: UserProfile, method: str = "GET", **query: str
+        ) -> tuple[int, bytes, dict[str, str | None], str | None]:
+            authorization = (
+                "Basic "
+                + b64encode(f"{profile.delivery_email}:{profile.api_key}".encode()).decode()
+            )
+            return self.request_words(
+                port,
+                method,
+                profile.realm.host,
+                {"Authorization": authorization},
+                query=urlencode(query),
+            )
+
+        django = request(django_port, user)
+        rust = request(rust_port, user)
+        self.assertEqual(django[:2], rust[:2])
+        for response, remaining in [(django, "2"), (rust, "1")]:
+            self.assertEqual(response[0], 200)
+            self.assertEqual(response[2]["X-RateLimit-Limit"], "3")
+            self.assertEqual(response[2]["X-RateLimit-Remaining"], remaining)
+            self.assertIsNone(response[2]["Retry-After"])
+        for name in ("Content-Type", "Content-Length", "Content-Language", "Vary", "Cache-Control"):
+            self.assertEqual(django[2][name], rust[2][name])
+        django_reset = django[2]["X-RateLimit-Reset"]
+        rust_reset = rust[2]["X-RateLimit-Reset"]
+        assert django_reset is not None and rust_reset is not None
+        self.assertLessEqual(abs(int(rust_reset) - int(django_reset) - 60), 1)
+
+        def assert_limited_pair() -> None:
+            errors = []
+            for port in (django_port, rust_port):
+                status, body, headers, _ = request(port, user)
+                self.assertEqual(status, 429)
+                self.assertEqual(headers["X-RateLimit-Limit"], "3")
+                self.assertEqual(headers["X-RateLimit-Remaining"], "0")
+                self.assertIsNone(headers["Cache-Control"])
+                data = orjson.loads(body)
+                self.assertEqual(data["code"], "RATE_LIMIT_HIT")
+                retry = headers.pop("Retry-After")
+                reset = headers.pop("X-RateLimit-Reset")
+                assert retry is not None and reset is not None
+                self.assertEqual(float(retry), data.pop("retry-after"))
+                self.assertGreater(float(retry), 0)
+                self.assertLessEqual(abs(int(reset) - int(time.time() + float(retry))), 1)
+                headers.pop("Content-Length")
+                errors.append((data, headers, float(retry), int(reset)))
+            self.assertEqual(errors[0][:2], errors[1][:2])
+            self.assertLessEqual(abs(errors[0][2] - errors[1][2]), 1)
+            self.assertLessEqual(abs(errors[0][3] - errors[1][3]), 1)
+
+        rate_limit = RateLimitedUser(user)
+        gcra, _ = RedisRateLimiterBackend.get_keys(rate_limit.key())
+        redis = redis_utils.get_redis_client()
+        snapshot = redis.hgetall(gcra)
+        self.assertEqual(set(snapshot), {b"120:2", b"180:3"})
+        assert_limited_pair()
+        self.assertEqual(redis.hgetall(gcra), snapshot)
+
+        rate_limit.block_access(120)
+        assert_limited_pair()
+        self.assertEqual(redis.hgetall(gcra), snapshot)
+
+        client = "Rust+parity café " * 3
+        rust = request(rust_port, custom_user, "HEAD", client=client)
+        django = request(django_port, custom_user, client=client)
+        self.assertEqual(rust[:2], (200, b""))
+        self.assertEqual(django[0], 429)
+        self.assertEqual(rust[2]["X-RateLimit-Limit"], "2")
+        self.assertEqual(django[2]["X-RateLimit-Limit"], "2")
+        self.assertEqual(django[2]["X-RateLimit-Remaining"], "0")
+
+    def check_activity(
+        self,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+        shards: int,
+        user: UserProfile,
+        custom_user: UserProfile,
+        custom_name: str,
+    ) -> None:
+        mobile = Client.objects.get(name="ZulipMobile")
+        custom = Client.objects.get(name=custom_name)
+        expected = Counter({(user.id, mobile.id): 6, (custom_user.id, custom.id): 2})
+        events = []
+        for shard in range(1, shards + 1):
+            queue = f"user_activity_shard{shard}"
+            while True:
+                delivery, properties, body = channel.basic_get(queue, auto_ack=True)
+                if delivery is None:
+                    break
+                assert properties is not None and body is not None
+                event = orjson.loads(body)
+                self.assertEqual(properties.delivery_mode, 2)
+                self.assertEqual(set(event), {"query", "user_profile_id", "time", "client_id"})
+                self.assertEqual(event["query"], "list_alert_words")
+                self.assertEqual(event["user_profile_id"] % shards + 1, shard)
+                self.assertIs(type(event["time"]), int)
+                self.assertLessEqual(abs(event["time"] - int(time.time())), 10)
+                events.append(event)
+        self.assertEqual(
+            Counter((event["user_profile_id"], event["client_id"]) for event in events), expected
+        )
+
+        def activity_counts() -> Counter[tuple[int, int]]:
+            return Counter(
+                {
+                    (user_id, client_id): count
+                    for user_id, client_id, count in UserActivity.objects.filter(
+                        user_profile_id__in=[user.id, custom_user.id], query="list_alert_words"
+                    ).values_list("user_profile_id", "client_id", "count")
+                }
+            )
+
+        with transaction.atomic(durable=True):
+            previous = activity_counts()
+            UserActivityWorker(disable_timeout=True).consume_batch(events)
+            self.assertEqual(activity_counts(), previous + expected)
+            transaction.set_rollback(True)

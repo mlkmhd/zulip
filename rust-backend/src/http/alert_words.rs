@@ -6,14 +6,16 @@ use std::{
 };
 
 use axum::{
-    extract::State,
+    extract::{RawQuery, State},
     http::{HeaderMap, HeaderValue, StatusCode, header, uri::Authority},
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use tokio_postgres::{Client, Config, NoTls, config::Host};
 
-use super::locale::Locales;
+use super::{
+    AlertWordsConfig, activity::ActivityPublisher, locale::Locales, rate_limit::RateLimiter,
+};
 
 pub(super) const PATH: &str = "/api/v1/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
@@ -23,18 +25,19 @@ pub(super) struct AlertWords {
     database: Arc<Client>,
     external_host: Arc<str>,
     locales: Locales,
+    rate_limiter: Option<RateLimiter>,
+    activity: Option<ActivityPublisher>,
 }
 
 impl AlertWords {
     pub(super) async fn connect(
-        database: &str,
-        external_host: &str,
+        settings: AlertWordsConfig<'_>,
         locales: Locales,
     ) -> Result<Self, Box<dyn Error>> {
-        if !external_host.split('.').all(valid_label) {
+        if !settings.external_host.split('.').all(valid_label) {
             return Err("ZULIP_RUST_EXTERNAL_HOST must be a hostname without a port".into());
         }
-        let mut config: Config = database.parse()?;
+        let mut config: Config = settings.database.parse()?;
         if config.get_hosts().is_empty()
             || config.get_hosts().iter().any(|host| match host {
                 Host::Tcp(host) => {
@@ -55,22 +58,38 @@ impl AlertWords {
             }
         });
         database
-            .batch_execute("SET default_transaction_read_only = on; SET statement_timeout = '5s'")
+            .batch_execute("SET statement_timeout = '5s'")
             .await?;
+        let rate_limiter = match settings.rate_limit {
+            Some(config) => Some(RateLimiter::connect(config).await?),
+            None => None,
+        };
+        let activity = match settings.activity {
+            Some(config) => Some(ActivityPublisher::connect(config).await?),
+            None => {
+                database
+                    .batch_execute("SET default_transaction_read_only = on")
+                    .await?;
+                None
+            }
+        };
         Ok(Self {
             database: Arc::new(database),
-            external_host: Arc::from(external_host.to_ascii_lowercase()),
+            external_host: Arc::from(settings.external_host.to_ascii_lowercase()),
             locales,
+            rate_limiter,
+            activity,
         })
     }
 
-    async fn words(&self, headers: &HeaderMap) -> Result<Vec<String>, ApiError> {
+    async fn authenticate(&self, headers: &HeaderMap) -> Result<AuthenticatedUser, ApiError> {
         let subdomain = subdomain(headers, &self.external_host).ok_or(ApiError::InvalidHost)?;
         let auth = credentials(headers)?;
         let user = self
             .database
             .query_opt(
-                "SELECT u.id, u.delivery_email, u.is_active, u.bot_type, r.string_id, r.deactivated
+                "SELECT u.id, u.delivery_email, u.is_active, u.bot_type, u.rate_limits,
+                        r.string_id, r.deactivated
                  FROM zulip.zerver_userprofile AS u
                  JOIN zulip.zerver_realm AS r ON r.id = u.realm_id
                  WHERE u.api_key = $1",
@@ -101,7 +120,13 @@ impl AlertWords {
             ));
         }
 
-        let user_id: i32 = user.try_get("id")?;
+        Ok(AuthenticatedUser {
+            id: user.try_get("id")?,
+            rate_limits: user.try_get("rate_limits")?,
+        })
+    }
+
+    async fn words(&self, user_id: i32) -> Result<Vec<String>, ApiError> {
         self.database
             .query(
                 "SELECT word FROM zulip.zerver_alertword WHERE user_profile_id = $1",
@@ -112,6 +137,11 @@ impl AlertWords {
             .map(|row| row.try_get("word").map_err(ApiError::from))
             .collect()
     }
+}
+
+struct AuthenticatedUser {
+    id: i32,
+    rate_limits: String,
 }
 
 fn valid_label(label: &str) -> bool {
@@ -190,6 +220,9 @@ enum ApiError {
     BadRequest(&'static str),
     InvalidHost,
     DatabaseUnavailable,
+    RateLimiterUnavailable,
+    ActivityUnavailable,
+    RateLimited(f64),
 }
 
 impl From<tokio_postgres::Error> for ApiError {
@@ -240,9 +273,43 @@ fn prefers_html(headers: &HeaderMap) -> bool {
     score("text/html", "text/*") > score("application/json", "application/*")
 }
 
-pub(super) async fn get(State(state): State<AlertWords>, headers: HeaderMap) -> Response {
+pub(super) async fn get(
+    State(state): State<AlertWords>,
+    RawQuery(query): RawQuery,
+    headers: HeaderMap,
+) -> Response {
     let language = Locales::for_request(&headers);
-    let mut response = match state.words(&headers).await {
+    let mut rate_limit = None;
+    let words = async {
+        let user = state.authenticate(&headers).await?;
+        if let Some(activity) = &state.activity {
+            // Django records activity for authenticated requests even when the limiter rejects them.
+            activity
+                .record(&state.database, user.id, query.as_deref(), &headers)
+                .await
+                .map_err(|error| {
+                    eprintln!("Alert-word activity failed: {error}");
+                    ApiError::ActivityUnavailable
+                })?;
+        }
+        if let Some(limiter) = &state.rate_limiter {
+            let limit = limiter
+                .check(user.id, &user.rate_limits)
+                .await
+                .map_err(|error| {
+                    eprintln!("Alert-word rate limit check failed: {error}");
+                    ApiError::RateLimiterUnavailable
+                })?;
+            let retry_after = limit.retry_after;
+            rate_limit = Some(limit);
+            if let Some(seconds) = retry_after {
+                return Err(ApiError::RateLimited(seconds));
+            }
+        }
+        state.words(user.id).await
+    }
+    .await;
+    let mut response = match words {
         Ok(words) => {
             let words = serde_json::to_string(&words).expect("strings can serialize to JSON");
             (
@@ -269,6 +336,9 @@ pub(super) async fn get(State(state): State<AlertWords>, headers: HeaderMap) -> 
             header::EXPIRES,
             HeaderValue::try_from(expires).expect("HTTP date"),
         );
+    }
+    if let Some(limit) = rate_limit {
+        limit.set_headers(response_headers);
     }
     response
 }
@@ -308,22 +378,58 @@ fn error_response(
             "SERVICE_UNAVAILABLE",
             "Database unavailable",
         ),
+        ApiError::RateLimiterUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+            "Rate limiter unavailable",
+        ),
+        ApiError::ActivityUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+            "Activity service unavailable",
+        ),
+        ApiError::RateLimited(_) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            "RATE_LIMIT_HIT",
+            "API usage exceeded rate limit; see https://zulip.com/api/http-headers#rate-limiting-response-headers",
+        ),
     };
     let message = serde_json::to_string(locales.gettext(language, message))
         .expect("strings can serialize to JSON");
+    let (extra, vary) = match error {
+        ApiError::RateLimited(seconds) => {
+            (format!(",\"retry-after\":{seconds:?}"), "Accept-Language")
+        }
+        _ => (String::new(), "Accept-Language, Cookie"),
+    };
     let mut response = (
         status,
         [
             (header::CONTENT_TYPE, "application/json"),
-            (header::VARY, "Accept-Language, Cookie"),
+            (header::VARY, vary),
         ],
-        format!("{{\"result\":\"error\",\"msg\":{message},\"code\":\"{code}\"}}\n"),
+        format!("{{\"result\":\"error\",\"msg\":{message},\"code\":\"{code}\"{extra}}}\n"),
     )
         .into_response();
     if status == StatusCode::UNAUTHORIZED {
         response.headers_mut().insert(
             header::WWW_AUTHENTICATE,
             HeaderValue::from_static("Basic realm=\"zulip\""),
+        );
+    }
+    if let ApiError::RateLimited(seconds) = error {
+        let retry = format!("{seconds:?}");
+        let retry = if let Some((mantissa, exponent)) = retry.split_once('e') {
+            format!(
+                "{mantissa}e{:+03}",
+                exponent.parse::<i32>().expect("float exponent")
+            )
+        } else {
+            retry
+        };
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            HeaderValue::try_from(retry).expect("numeric retry delay"),
         );
     }
     response

@@ -12,7 +12,10 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 python = ["dep:pyo3"]
-http = ["dep:axum", "dep:base64", "dep:gettext", "dep:httpdate", "dep:regex", "dep:serde_json", "dep:tokio", "dep:tokio-postgres"]
+http = [
+    "dep:axum", "dep:base64", "dep:form_urlencoded", "dep:gettext", "dep:httpdate",
+    "dep:lapin", "dep:redis", "dep:regex", "dep:serde_json", "dep:tokio", "dep:tokio-postgres",
+]
 
 [[bin]]
 name = "zulip-http"
@@ -22,10 +25,13 @@ required-features = ["http"]
 [dependencies]
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"], optional = true }
 base64 = { version = "0.22", optional = true }
+form_urlencoded = { version = "1", optional = true }
 gettext = { version = "0.4.0", optional = true }
 httpdate = { version = "1.0", optional = true }
+lapin = { version = "~4.7.2", default-features = false, features = ["default-runtime"], optional = true }
 pyo3 = { version = "0.30.1", features = ["abi3-py310"], optional = true }
+redis = { version = "~1.0.4", default-features = false, features = ["connection-manager", "script", "tokio-comp"], optional = true }
 regex = { version = "1.12", optional = true }
 serde_json = { version = "1.0", optional = true }
-tokio = { version = "1.54", features = ["macros", "net", "rt"], optional = true }
+tokio = { version = "1.54", features = ["macros", "net", "rt", "time"], optional = true }
 tokio-postgres = { version = "0.7", optional = true }
