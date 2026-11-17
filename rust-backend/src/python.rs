@@ -67,6 +67,35 @@ mod _zulip_backend {
     }
 
     #[pyfunction]
+    fn update_draft(
+        cursor: &Bound<'_, PyAny>,
+        user_id: i32,
+        draft_id: i64,
+        recipient_id: Option<i32>,
+        topic: &str,
+        content: &str,
+        last_edit_time: &Bound<'_, PyAny>,
+    ) -> PyResult<bool> {
+        cursor.call_method1(
+            "execute",
+            (
+                "UPDATE zulip.zerver_draft
+                 SET recipient_id = %s, topic = %s, content = %s, last_edit_time = %s
+                 WHERE user_profile_id = %s AND id = %s",
+                (
+                    recipient_id,
+                    topic,
+                    content,
+                    last_edit_time,
+                    user_id,
+                    draft_id,
+                ),
+            ),
+        )?;
+        Ok(cursor.getattr("rowcount")?.extract::<i64>()? == 1)
+    }
+
+    #[pyfunction]
     fn format_user_status<'py>(
         py: Python<'py>,
         presence_enabled: bool,

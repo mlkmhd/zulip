@@ -16,9 +16,16 @@ import orjson
 import pika
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
+from django.db import DatabaseError
 from django.test import LiveServerTestCase
 
-from zerver.lib.drafts import DraftData, do_create_drafts
+from zerver.lib.drafts import (
+    DraftData,
+    ValidatedDraftData,
+    do_create_drafts,
+    do_edit_draft,
+    further_validated_draft_dict,
+)
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.users import check_can_access_user
@@ -447,6 +454,51 @@ class DraftCreationTests(ZulipTestCase):
 
 
 class DraftEditTests(ZulipTestCase):
+    def test_edit_does_not_recreate_a_deleted_draft(self) -> None:
+        owner = self.example_user("hamlet")
+        stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        original = Draft.objects.create(
+            user_profile=owner, content="Original", last_edit_time=stamp
+        )
+        draft = DraftData(type="", to=[], topic="", content="Replacement", timestamp=1595479021)
+
+        def validate_and_delete(data: DraftData, owner: UserProfile) -> ValidatedDraftData:
+            validated = further_validated_draft_dict(data, owner)
+            Draft.objects.filter(id=original.id).delete()
+            return validated
+
+        with (
+            self.capture_send_event_calls(expected_num_events=0),
+            patch(
+                "zerver.lib.drafts.further_validated_draft_dict", side_effect=validate_and_delete
+            ),
+            self.assertRaisesRegex(
+                DatabaseError, "Save with update_fields did not affect any rows"
+            ),
+        ):
+            do_edit_draft(original.id, draft, owner)
+
+        self.assertFalse(Draft.objects.filter(id=original.id).exists())
+
+    def test_edit_rolls_back_if_event_serialization_fails(self) -> None:
+        owner = self.example_user("hamlet")
+        stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        original = Draft.objects.create(
+            user_profile=owner, content="Original", last_edit_time=stamp
+        )
+        draft = DraftData(type="", to=[], topic="", content="Replacement", timestamp=1595479021)
+
+        with (
+            self.capture_send_event_calls(expected_num_events=0),
+            patch.object(Draft, "to_dict", side_effect=ValueError("Unable to serialize draft")),
+            self.assertRaisesRegex(ValueError, "Unable to serialize draft"),
+        ):
+            do_edit_draft(original.id, draft, owner)
+
+        original.refresh_from_db()
+        self.assertEqual(original.content, "Original")
+        self.assertEqual(original.last_edit_time, stamp)
+
     def test_require_enable_drafts_synchronization(self) -> None:
         hamlet = self.example_user("hamlet")
         hamlet.enable_drafts_synchronization = False

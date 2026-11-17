@@ -9,7 +9,7 @@ from typing import Annotated, Concatenate, Literal, cast
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.db import connection, transaction
+from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import gettext as _
 from pydantic import BaseModel, ConfigDict
@@ -37,6 +37,9 @@ _rust_draft_text = (
 )
 _rust_draft_creation = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_CREATION") == "1" else None
+)
+_rust_draft_edit = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_EDIT") == "1" else None
 )
 
 
@@ -215,7 +218,21 @@ def do_edit_draft(draft_id: int, draft: DraftData, user_profile: UserProfile) ->
     draft_object.last_edit_time = valid_draft_dict.last_edit_time
 
     with transaction.atomic(durable=True):
-        draft_object.save(update_fields=["content", "topic", "recipient_id", "last_edit_time"])
+        if _rust_draft_edit is None:
+            draft_object.save(update_fields=["content", "topic", "recipient_id", "last_edit_time"])
+        else:
+            with connection.cursor() as cursor:
+                updated = _rust_draft_edit.update_draft(
+                    cursor,
+                    user_profile.id,
+                    draft_id,
+                    draft_object.recipient_id,
+                    draft_object.topic,
+                    draft_object.content,
+                    draft_object.last_edit_time,
+                )
+            if not updated:
+                raise DatabaseError("Save with update_fields did not affect any rows.")
 
         event = DraftsUpdateEvent(draft=DraftFields(**draft_object.to_dict()))
         send_event_on_commit(user_profile.realm, event, [user_profile.id])
