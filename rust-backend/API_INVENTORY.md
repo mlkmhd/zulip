@@ -37,6 +37,7 @@
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
+| `DELETE /api/v1/users/me/alert_words` و alias وب                                        | اجرای حذف گروهی داخل تراکنش Django با `ZULIP_RUST_ALERT_WORDS`         | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -69,13 +70,20 @@
 [مدل و کش](../zerver/models/alert_words.py)، [تراکنش و رویداد](../zerver/actions/alert_words.py)،
 [تست واژه‌ها](../zerver/tests/test_alert_words.py) و [تست رویدادها](../zerver/tests/test_events.py).
 
+با `ZULIP_RUST_ALERT_WORDS=1`، Rust کوئری پارامتری حذف را روی cursor
+تراکنش Django اجرا می‌کند. ورودی با `str.lower()` پایتون و مقدار ذخیره‌شده با
+`lower` PostgreSQL مقایسه می‌شود. Django دو کش سازمان را با همان سازوکار
+فضای نام استقرار پاک می‌کند و انتشار رویداد را به commit موکول می‌کند.
+درخواست با فهرست خالی همچنان پاسخ و رویداد فهرست فعلی را می‌دهد.
+[راهنمای پرچم](README.md)، [تست حذف](../zerver/tests/test_alert_words.py)
+
 تست HTTP با دادهٔ commit‌شده در Django و Rust، رفتار فهرست خالی، واژهٔ Unicode،
 کلید نامعتبر، سازمان نادرست، حساب غیرفعال و ربات webhook را برای مسیر API
 بررسی کرد. در حالت بدون اعتبارنامه،
 `Accept` بر انتخاب پاسخ JSON یا هدایت به صفحهٔ ورود اثر دارد و هدر
 `WWW-Authenticate` پاسخ JSON با پیشوند مسیر عوض می‌شود. تستِ سهمیه در Redis مشترک و ثبت فعالیت در RabbitMQ برای مسیر API پاس شد.
 تست نشست وب، اعتبار امضا و هش نشست، هدرهای کوکی و رفتار CSRF برای `GET` و `HEAD` پاس شد. `OPTIONS` و عملیات نوشتن در Django هستند.
-[نتیجهٔ مقایسه](MIGRATION_HANDOFF.md#آخرین-برش)
+[نتیجهٔ مقایسهٔ HTTP](MIGRATION_HANDOFF.md#برشهای-قبلی-http)
 [خطاهای API](../api_docs/rest-error-handling.md)، [middleware](../zerver/middleware.py)
 
 ## قرارداد متن‌های ذخیره‌شده

@@ -44,9 +44,14 @@ Unset the variable to switch back.
 
 `ZULIP_RUST_ALERT_WORDS=1` selects the Rust implementation for trimming and
 deduplicating additions through `POST /api/v1/users/me/alert_words` and its
-web app equivalent. Django still handles HTTP validation, transactions,
-cache invalidation, and events. The extension uses Python's Unicode lowercase
-rules so existing words are matched the same way during the transition.
+web app equivalent. It also executes the owner-scoped PostgreSQL delete
+for `DELETE /api/v1/users/me/alert_words` and the matching web route.
+Rust uses the cursor from Django's transaction. Django handles HTTP validation,
+input lowercasing for deletion, cache invalidation, and post-commit events.
+The addition bridge uses Python's Unicode lowercase rules for deduplication.
+
+Reinstall the extension before enabling the flag to load the current
+deletion function.
 
 Run the existing alert-word and event tests in both modes:
 
