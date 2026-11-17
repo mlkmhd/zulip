@@ -55,8 +55,6 @@ def remove_storage(
     *,
     keys: Json[list[str] | None] = None,
 ) -> HttpResponse:
-    if keys is None:
-        keys = get_keys_in_bot_storage(user_profile)
     try:
         remove_bot_storage(user_profile, keys)
     except StateError as e:

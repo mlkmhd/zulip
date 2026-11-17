@@ -49,6 +49,7 @@ pub struct UserReadConfig<'a> {
     pub alert_word_posts: bool,
     pub draft_deletes: bool,
     pub bot_storage_deletes: bool,
+    pub bot_storage_size_limit: Option<u64>,
     pub navigation_view_posts: bool,
     pub navigation_view_details: bool,
     pub session: Option<SessionConfig<'a>>,
@@ -89,6 +90,7 @@ pub async fn router_with_user_reads(
     let alert_word_posts = config.alert_word_posts;
     let draft_deletes = config.draft_deletes;
     let bot_storage_deletes = config.bot_storage_deletes;
+    let bot_storage_updates = config.bot_storage_size_limit.is_some();
     let navigation_view_posts = config.navigation_view_posts;
     let navigation_view_details = config.navigation_view_details;
     if alert_word_posts && !alert_word_writes {
@@ -101,6 +103,7 @@ pub async fn router_with_user_reads(
                 || alert_word_writes
                 || draft_deletes
                 || bot_storage_deletes
+                || bot_storage_updates
                 || navigation_view_posts
                 || navigation_view_details))
     {
@@ -123,9 +126,14 @@ pub async fn router_with_user_reads(
     let navigation_view_post_route = get(user_reads::get)
         .post(user_reads::create_navigation_view)
         .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
-    let bot_storage_delete_route = get(user_reads::get)
-        .delete(user_reads::delete_bot_storage)
-        .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
+    let mut bot_storage_route = get(user_reads::get);
+    if bot_storage_deletes {
+        bot_storage_route = bot_storage_route.delete(user_reads::delete_bot_storage);
+    }
+    if bot_storage_updates {
+        bot_storage_route = bot_storage_route.put(user_reads::update_bot_storage);
+    }
+    let bot_storage_route = bot_storage_route.layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
     let mut routes = Router::new()
         .route(
             user_reads::ALERT_WORDS_PATH,
@@ -150,14 +158,7 @@ pub async fn router_with_user_reads(
             },
         )
         .route(channel_folders::PATH, get(user_reads::get))
-        .route(
-            bot_storage::PATH,
-            if bot_storage_deletes {
-                bot_storage_delete_route.clone()
-            } else {
-                get(user_reads::get)
-            },
-        )
+        .route(bot_storage::PATH, bot_storage_route.clone())
         .route(scheduled_messages::PATH, get(user_reads::get))
         .route(scheduled_messages::REMINDERS_PATH, get(user_reads::get))
         .route("/health/rust-alert-words", get(user_reads::ready));
@@ -187,8 +188,8 @@ pub async fn router_with_user_reads(
     if browser_enabled {
         routes = routes.route(
             bot_storage::SESSION_PATH,
-            if web_writes_enabled && bot_storage_deletes {
-                bot_storage_delete_route
+            if web_writes_enabled {
+                bot_storage_route
             } else {
                 get(user_reads::get)
             },

@@ -128,6 +128,11 @@ async fn user_read_router(
             ),
             Some(_) => return Err("ZULIP_RUST_SAVED_SNIPPET_WRITES must be 0 or 1".into()),
         };
+    let bot_storage_size_limit = if enabled("ZULIP_RUST_BOT_STORAGE_UPDATES")? {
+        Some(env::var("ZULIP_RUST_USER_STATE_SIZE_LIMIT")?.parse()?)
+    } else {
+        None
+    };
     let web_post_scheme = match optional_env("ZULIP_RUST_WEB_POST_SCHEME")?.as_deref() {
         None => None,
         Some("http") => Some(WebPostScheme::Http),
@@ -153,6 +158,7 @@ async fn user_read_router(
             alert_word_posts,
             draft_deletes,
             bot_storage_deletes: enabled("ZULIP_RUST_BOT_STORAGE_DELETES")?,
+            bot_storage_size_limit,
             navigation_view_posts: navigation_view_writes.posts,
             navigation_view_details: navigation_view_writes.details,
             web_post_scheme,

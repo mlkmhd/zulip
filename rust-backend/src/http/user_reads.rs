@@ -71,6 +71,7 @@ enum WriteOperation<'a> {
     RemoveAlertWords,
     DeleteDraft(Option<i64>),
     DeleteBotStorage,
+    UpdateBotStorage,
 }
 
 impl WriteOperation<'_> {
@@ -278,6 +279,7 @@ pub(super) struct UserReads {
     sessions: Option<Arc<Sessions>>,
     web_post_scheme: Option<WebPostScheme>,
     saved_snippet_max_content_length: Option<usize>,
+    bot_storage_size_limit: Option<u64>,
 }
 
 impl UserReads {
@@ -307,7 +309,9 @@ impl UserReads {
         if alert_word_lowercase.is_some() && settings.alert_word_cache_manifest.is_none() {
             return Err("Alert-word DELETE requires ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST".into());
         }
-        let read_only = settings.activity.is_none() && !settings.bot_storage_deletes;
+        let read_only = settings.activity.is_none()
+            && !settings.bot_storage_deletes
+            && settings.bot_storage_size_limit.is_none();
         let database = Database::connect(settings.database, read_only).await?;
         let rate_limiter = match settings.rate_limit {
             Some(config) => Some(RateLimiter::connect(config).await?),
@@ -352,6 +356,7 @@ impl UserReads {
             sessions,
             web_post_scheme: settings.web_post_scheme,
             saved_snippet_max_content_length: settings.saved_snippet_max_content_length,
+            bot_storage_size_limit: settings.bot_storage_size_limit,
         })
     }
 
@@ -599,6 +604,7 @@ enum ApiError {
     BadRequest(&'static str),
     BotRequired,
     BotStorageKeyNotFound,
+    BotStorageLimitExceeded { excess: i128, limit: u64 },
     InvalidNavigationView(&'static str),
     NavigationViewNotFound,
     DeactivatedUser,
@@ -734,6 +740,14 @@ pub(super) async fn delete_bot_storage(
     respond_write(state, peer, request, WriteOperation::DeleteBotStorage).await
 }
 
+pub(super) async fn update_bot_storage(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    respond_write(state, peer, request, WriteOperation::UpdateBotStorage).await
+}
+
 pub(super) async fn delete_draft(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -846,6 +860,7 @@ async fn respond(
             Some(WriteOperation::RemoveAlertWords) => "remove_alert_words",
             Some(WriteOperation::DeleteDraft(_)) => "delete_draft",
             Some(WriteOperation::DeleteBotStorage) => "remove_storage",
+            Some(WriteOperation::UpdateBotStorage) => "update_storage",
             None => endpoint.activity_name(),
         };
         let form_client = if requested_write.is_some_and(WriteOperation::is_post) {
@@ -933,15 +948,27 @@ async fn respond(
             return Err(ApiError::BotRequired);
         }
         if let (Some(write), Some(form)) = (write, form) {
-            if matches!(write, WriteOperation::DeleteBotStorage) {
-                let keys = bot_storage::keys(&form).map_err(ApiError::Form)?;
-                if !bot_storage::delete(&database, user_id, keys).await? {
-                    return Err(ApiError::BotStorageKeyNotFound);
-                }
-                let processed: &[_] = if form.has_query_client() {
-                    &[bot_storage::KEYS, "client"]
+            if matches!(write, WriteOperation::DeleteBotStorage | WriteOperation::UpdateBotStorage) {
+                let parameter = if matches!(write, WriteOperation::UpdateBotStorage) {
+                    let storage = bot_storage::storage(&form).map_err(ApiError::Form)?;
+                    let limit = state.bot_storage_size_limit.expect("bot storage update route configured");
+                    let mut writer = state.database.writer().await.map_err(ApiError::database_unavailable)?;
+                    if let Some(excess) = bot_storage::update(&mut writer, user_id, storage, limit).await? {
+                        return Err(ApiError::BotStorageLimitExceeded { excess, limit });
+                    }
+                    bot_storage::STORAGE
                 } else {
-                    &[bot_storage::KEYS]
+                    let keys = bot_storage::keys(&form).map_err(ApiError::Form)?;
+                    let mut writer = state.database.writer().await.map_err(ApiError::database_unavailable)?;
+                    if !bot_storage::delete(&mut writer, user_id, keys).await? {
+                        return Err(ApiError::BotStorageKeyNotFound);
+                    }
+                    bot_storage::KEYS
+                };
+                let processed: &[_] = if form.has_query_client() {
+                    &[parameter, "client"]
+                } else {
+                    &[parameter]
                 };
                 let extra = ignored_parameters(&form, processed);
                 return Ok(format!("{{\"result\":\"success\",\"msg\":\"\"{extra}}}\n"));
@@ -1132,7 +1159,8 @@ async fn respond(
                 | WriteOperation::EditNavigationView(_)
                 | WriteOperation::DeleteNavigationView(_)
                 | WriteOperation::DeleteDraft(_)
-                | WriteOperation::DeleteBotStorage => {
+                | WriteOperation::DeleteBotStorage
+                | WriteOperation::UpdateBotStorage => {
                     unreachable!("handled above")
                 }
             };
@@ -1353,7 +1381,12 @@ fn error_response(
             "BAD_REQUEST",
             "{var_name} is not a boolean",
         ),
-        ApiError::Form(FormError::ExpectedString(..)) => (
+        ApiError::Form(FormError::ExpectedDict(_)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} is not a dict",
+        ),
+        ApiError::Form(FormError::ExpectedString(..) | FormError::ExpectedDictString(..)) => (
             StatusCode::BAD_REQUEST,
             "BAD_REQUEST",
             "{var_name} is not a string",
@@ -1392,6 +1425,11 @@ fn error_response(
             "BAD_REQUEST",
             "Key does not exist.",
         ),
+        ApiError::BotStorageLimitExceeded { .. } => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "Request exceeds storage limit by {excess} characters. The limit is {limit} characters.",
+        ),
         ApiError::DraftNotFound => (StatusCode::NOT_FOUND, "BAD_REQUEST", "Draft does not exist"),
         ApiError::NavigationViewNotFound => (
             StatusCode::NOT_FOUND,
@@ -1417,11 +1455,18 @@ fn error_response(
             | FormError::Blank(name)
             | FormError::InvalidJson(name)
             | FormError::ExpectedBoolean(name)
-            | FormError::ExpectedList(name),
+            | FormError::ExpectedList(name)
+            | FormError::ExpectedDict(name),
         ) => translated.replace("{var_name}", name),
         ApiError::Form(FormError::ExpectedString(name, index)) => {
             translated.replace("{var_name}", &format!("{name}[{index}]"))
         }
+        ApiError::Form(FormError::ExpectedDictString(name, key)) => {
+            translated.replace("{var_name}", &format!("{name}[{key}]"))
+        }
+        ApiError::BotStorageLimitExceeded { excess, limit } => message
+            .replace("{excess}", &excess.to_string())
+            .replace("{limit}", &limit.to_string()),
         ApiError::Form(FormError::ItemTooLong(name, index, length)) => translated
             .replace("{var_name}", &format!("{name}[{index}]"))
             .replace("{max_length}", &length.to_string()),
@@ -1452,6 +1497,7 @@ fn error_response(
         | ApiError::DraftSyncDisabled
         | ApiError::BotRequired
         | ApiError::BotStorageKeyNotFound
+        | ApiError::BotStorageLimitExceeded { .. }
         | ApiError::DraftNotFound => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };

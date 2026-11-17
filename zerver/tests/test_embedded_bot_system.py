@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Barrier
 from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
 
@@ -35,16 +36,17 @@ from zerver.models.users import get_user
 
 
 class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    @staticmethod
+    def basic(user: UserProfile) -> dict[str, str]:
+        token = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        return {"Authorization": f"Basic {token}"}
+
     def test_storage_parity_with_rust(self) -> None:
         bot = self.example_user("default_bot")
         other = self.example_user("outgoing_webhook_bot")
         human = self.example_user("hamlet")
         django_port = urlsplit(self.live_server_url).port
         assert django_port is not None
-
-        def basic(user: UserProfile) -> dict[str, str]:
-            token = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
-            return {"Authorization": f"Basic {token}"}
 
         with TemporaryDirectory() as directory, ExitStack() as cleanup:
             for owner, key, value in (
@@ -100,7 +102,7 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     return django[1]
 
                 for path, headers in (
-                    ("/api/v1/bot_storage", basic(bot)),
+                    ("/api/v1/bot_storage", self.basic(bot)),
                     ("/json/bot_storage", cookie),
                 ):
                     with self.subTest(path=path):
@@ -129,7 +131,7 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                             self.assertEqual(result["msg"], error)
 
                 path = "/api/v1/bot_storage?keys=garbage"
-                result = orjson.loads(check("GET", path, basic(human), 400))
+                result = orjson.loads(check("GET", path, self.basic(human), 400))
                 self.assertEqual(result["code"], "PERMISSION_DENIED")
                 self.assertEqual(result["msg"], "Must be a bot user")
 
@@ -197,7 +199,7 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     return responses
 
                 for path, headers in (
-                    ("/api/v1/bot_storage", basic(bot)),
+                    ("/api/v1/bot_storage", self.basic(bot)),
                     ("/json/bot_storage", cookie),
                 ):
                     with self.subTest(delete=path):
@@ -208,7 +210,7 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 if rust_port is not None:
                     path = "/api/v1/bot_storage"
                     auth = {
-                        **basic(bot),
+                        **self.basic(bot),
                         "Content-Type": "application/x-www-form-urlencoded",
                     }
 
@@ -236,6 +238,177 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                             BotStorageData.objects.filter(bot_profile=bot, key="plain").exists(),
                             first.result() == 400,
                         )
+
+    @override_settings(USER_STATE_SIZE_LIMIT=10)
+    def test_update_storage_parity_with_rust(self) -> None:
+        bot = self.example_user("default_bot")
+        other = self.example_user("outgoing_webhook_bot")
+        human = self.example_user("hamlet")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        api_path = "/api/v1/bot_storage"
+        web_path = "/json/bot_storage"
+        storage = BotStorageData.objects.filter(bot_profile=bot)
+
+        def stored() -> dict[str, str]:
+            return dict(storage.values_list("key", "value"))
+
+        def request(
+            port: int, path: str, headers: dict[str, str], raw: str | None, *, extra: str = ""
+        ) -> tuple[int, bytes, dict[str, str | None]]:
+            body = extra if raw is None else urlencode({"storage": raw}) + extra
+            status, payload, response_headers, _ = request_test_http(
+                port,
+                "PUT",
+                bot.realm.host,
+                {"Content-Type": "application/x-www-form-urlencoded", **headers},
+                path,
+                body=body,
+            )
+            return status, payload, response_headers
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            cleanup.callback(storage.delete)
+            foreign = BotStorageData.objects.create(bot_profile=other, key="x", value="foreign")
+            cleanup.callback(foreign.delete)
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(bot.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": bot.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            csrf = _get_new_csrf_string()
+            cookie = {
+                "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; "
+                f"{settings.CSRF_COOKIE_NAME}={csrf}"
+            }
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            rust_settings = {
+                "ZULIP_RUST_BOT_STORAGE_DELETES": "1",
+                "ZULIP_RUST_BOT_STORAGE_UPDATES": "1",
+                "ZULIP_RUST_USER_STATE_SIZE_LIMIT": str(settings.USER_STATE_SIZE_LIMIT),
+            }
+
+            def exercise(port: int) -> list[tuple[int, bytes, dict[str, str | None]]]:
+                responses = []
+
+                def check(
+                    path: str,
+                    headers: dict[str, str],
+                    raw: str | None,
+                    status: int,
+                    *,
+                    extra: str = "",
+                    message: str = "",
+                ) -> dict[str, object]:
+                    response = request(port, path, headers, raw, extra=extra)
+                    responses.append(response)
+                    self.assertEqual(response[0], status, response[1])
+                    result = orjson.loads(response[1])
+                    if status != 403:
+                        self.assertEqual(result["msg"], message)
+                    return result
+
+                check(api_path, self.basic(human), "{}", 400, message="Must be a bot user")
+                check(web_path, cookie, '{"x":"no CSRF"}', 403)
+                self.assertEqual(stored(), {})
+                for path, headers in (
+                    (api_path, self.basic(bot)),
+                    (web_path, {**cookie, "X-CSRFToken": csrf}),
+                ):
+                    storage.all().delete()
+                    for raw, message in (
+                        (None, "Missing 'storage' argument"),
+                        ("invalid", "storage is not valid JSON"),
+                        ("[]", "storage is not a dict"),
+                        ('{"x":false,"x":"valid"}', 'storage["x"] is not a string'),
+                        ('{"📝":42,"a":false}', 'storage["\\ud83d\\udcdd"] is not a string'),
+                    ):
+                        check(path, headers, raw, 400, message=message)
+                    self.assertEqual(stored(), {})
+                    result = check(
+                        path,
+                        headers,
+                        '{"x":"old","x":"📝📝","در":"و"}',
+                        200,
+                        extra="&unsupported=1",
+                    )
+                    self.assertEqual(result["ignored_parameters_unsupported"], ["unsupported"])
+                    self.assertEqual(stored(), {"x": "📝📝", "در": "و"})
+                    check(path, headers, '{"x":"📝📝📝📝📝","y":""}', 200)
+                    check(path, headers, "{}", 200)
+                    check(
+                        path,
+                        headers,
+                        '{"x":"replacement","z":""}',
+                        400,
+                        message="Request exceeds storage limit by 7 characters. The limit is 10 characters.",
+                    )
+                    self.assertEqual(stored(), {"x": "📝📝📝📝📝", "در": "و", "y": ""})
+                    query = urlencode({"storage": '{"x":"short"}'})
+                    check(f"{path}?{query}", headers, None, 200)
+                    self.assertEqual(stored(), {"x": "short", "در": "و", "y": ""})
+                    foreign.refresh_from_db()
+                    self.assertEqual(foreign.value, "foreign")
+                storage.all().delete()
+                return responses
+
+            baseline = exercise(django_port)
+            if not os.environ.get("ZULIP_RUST_HTTP_BIN"):
+                return
+            with rust_http_service(
+                {
+                    **rust_settings,
+                    "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                    "ZULIP_RUST_WEB_POST_SCHEME": "http",
+                    "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                        settings.AUTHENTICATION_BACKENDS
+                    ).decode(),
+                }
+            ) as rust_port:
+                self.assertEqual(exercise(rust_port), baseline)
+
+                def race_updates(first_port: int) -> None:
+                    barrier = Barrier(2, timeout=5)
+
+                    def update(port: int, key: str) -> int:
+                        barrier.wait()
+                        raw = orjson.dumps({key: "📝" * 5}).decode()
+                        return request(port, api_path, self.basic(bot), raw)[0]
+
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        first = executor.submit(update, first_port, "a")
+                        second = executor.submit(update, rust_port, "b")
+                        outcomes = [first.result(), second.result()]
+                    self.assertCountEqual(outcomes, [200, 400])
+                    self.assertEqual(stored(), {"a" if outcomes[0] == 200 else "b": "📝" * 5})
+                    storage.all().delete()
+
+                race_updates(django_port)
+                with rust_http_service(rust_settings) as second_port:
+                    race_updates(second_port)
+                    storage.create(key="full", value="📝" * 6, bot_profile=bot)
+                    barrier = Barrier(2, timeout=5)
+
+                    def update_while_deleting() -> int:
+                        barrier.wait()
+                        return request(rust_port, api_path, self.basic(bot), '{"new":"v"}')[0]
+
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        update = executor.submit(update_while_deleting)
+                        barrier.wait()
+                        deletion = request_test_http(
+                            second_port, "DELETE", bot.realm.host, self.basic(bot), api_path
+                        )
+                        outcome = update.result()
+                    self.assertEqual(deletion[0], 200, deletion[1])
+                    self.assertIn(outcome, [200, 400])
+                    self.assertEqual(stored(), {"new": "v"} if outcome == 200 else {})
 
 
 class TestEmbeddedBotMessaging(ZulipTestCase):

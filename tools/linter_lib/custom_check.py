@@ -486,6 +486,10 @@ python_rules = RuleList(
                     "with suppress(IntegrityError), transaction.atomic(savepoint=True):",
                 ),
                 (
+                    "zerver/lib/bot_storage.py",
+                    "@transaction.atomic(savepoint=True)  # Roll back only this storage operation.",
+                ),
+                (
                     "zerver/lib/test_classes.py",
                     "with transaction.atomic(savepoint=True):",
                 ),

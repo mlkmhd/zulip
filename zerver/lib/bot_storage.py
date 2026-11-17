@@ -2,6 +2,7 @@ import os
 from importlib import import_module
 
 from django.conf import settings
+from django.db import connection, transaction
 from django.db.models import F, Sum
 from django.db.models.functions import Length
 
@@ -40,7 +41,18 @@ def get_bot_storage_size(bot_profile: UserProfile, key: str | None = None) -> in
             return 0
 
 
+def lock_bot_storage(bot_profile: UserProfile) -> None:
+    # The Rust listener uses the same transaction lock, even for empty storage.
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext('zulip.bot_storage'), %s)", [bot_profile.id]
+        )
+
+
+# Embedded bots can catch StateError inside an outer transaction.
+@transaction.atomic(savepoint=True)  # Roll back only this storage operation.
 def set_bot_storage(bot_profile: UserProfile, entries: list[tuple[str, str]]) -> None:
+    lock_bot_storage(bot_profile)
     storage_size_limit = settings.USER_STATE_SIZE_LIMIT
     measured_entries: list[tuple[str, str, int]] = []
     storage_size_difference = 0
@@ -66,10 +78,14 @@ def set_bot_storage(bot_profile: UserProfile, entries: list[tuple[str, str]]) ->
             )
 
 
-def remove_bot_storage(bot_profile: UserProfile, keys: list[str]) -> None:
-    queryset = BotStorageData.objects.filter(bot_profile=bot_profile, key__in=keys)
-    if queryset.count() < len(keys):
-        raise StateError("Key does not exist.")
+@transaction.atomic(savepoint=True)  # Roll back only this storage operation.
+def remove_bot_storage(bot_profile: UserProfile, keys: list[str] | None) -> None:
+    lock_bot_storage(bot_profile)
+    queryset = BotStorageData.objects.filter(bot_profile=bot_profile)
+    if keys is not None:
+        queryset = queryset.filter(key__in=keys)
+        if queryset.count() < len(keys):
+            raise StateError("Key does not exist.")
     queryset.delete()
 
 

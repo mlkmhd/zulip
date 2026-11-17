@@ -36,6 +36,7 @@ def rust_http_service(
     env.pop("ZULIP_RUST_ALERT_WORD_POSTS", None)
     env.pop("ZULIP_RUST_DRAFT_DELETES", None)
     env.pop("ZULIP_RUST_BOT_STORAGE_DELETES", None)
+    env.pop("ZULIP_RUST_BOT_STORAGE_UPDATES", None)
     env.pop("ZULIP_RUST_NAVIGATION_VIEW_POSTS", None)
     env.pop("ZULIP_RUST_NAVIGATION_VIEW_DETAILS", None)
     env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)

@@ -9,7 +9,6 @@ use jiter::JsonValue;
 
 pub(super) const FORM_BODY_LIMIT: usize = 25 * 1024 * 1024;
 
-#[derive(Clone, Copy)]
 pub(super) enum FormError {
     Missing(&'static str),
     Blank(&'static str),
@@ -18,7 +17,9 @@ pub(super) enum FormError {
     InvalidJson(&'static str),
     ExpectedBoolean(&'static str),
     ExpectedList(&'static str),
+    ExpectedDict(&'static str),
     ExpectedString(&'static str, usize),
+    ExpectedDictString(&'static str, String),
     Malformed,
 }
 
