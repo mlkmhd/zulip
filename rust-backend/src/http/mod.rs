@@ -1,6 +1,6 @@
 use std::{error::Error, path::Path};
 
-use axum::{Router, routing::get};
+use axum::{Router, extract::DefaultBodyLimit, routing::get};
 pub use rate_limit::ClientIpSource;
 
 mod activity;
@@ -23,6 +23,7 @@ pub struct UserReadConfig<'a> {
     pub rate_limit: Option<RateLimitConfig<'a>>,
     pub activity: Option<ActivityConfig<'a>>,
     pub session: Option<SessionConfig<'a>>,
+    pub saved_snippet_max_content_length: Option<usize>,
 }
 
 pub struct SessionConfig<'a> {
@@ -51,10 +52,17 @@ pub async fn router_with_user_reads(
 ) -> Result<Router, Box<dyn Error>> {
     let locales = locale::Locales::load(locale_dir)?;
     let browser_enabled = config.session.is_some();
+    let saved_snippet_writes = config.saved_snippet_max_content_length.is_some();
     let user_reads = user_reads::UserReads::connect(config, locales.clone()).await?;
+    let mut snippet_route = get(user_reads::get);
+    if saved_snippet_writes {
+        snippet_route = snippet_route
+            .post(user_reads::create_saved_snippet)
+            .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT));
+    }
     let mut routes = Router::new()
         .route(user_reads::ALERT_WORDS_PATH, get(user_reads::get))
-        .route(saved_snippets::PATH, get(user_reads::get))
+        .route(saved_snippets::PATH, snippet_route)
         .route("/health/rust-alert-words", get(user_reads::ready));
     if browser_enabled {
         routes = routes.route(user_reads::SESSION_PATH, get(user_reads::get));

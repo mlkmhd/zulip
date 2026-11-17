@@ -13,7 +13,7 @@ use lapin::{
 use tokio::time::timeout;
 use tokio_postgres::Client;
 
-use super::user_agent;
+use super::{saved_snippets, user_agent};
 
 #[derive(Clone)]
 pub(super) struct ActivityPublisher(Arc<Publisher>);
@@ -34,6 +34,7 @@ impl ActivityPublisher {
 
     pub(super) async fn connect(
         settings: super::ActivityConfig<'_>,
+        saved_snippet_writes: bool,
     ) -> Result<Self, Box<dyn Error>> {
         if settings.shards == 0 {
             return Err("ZULIP_RUST_USER_ACTIVITY_SHARDS must be positive".into());
@@ -52,11 +53,14 @@ impl ActivityPublisher {
             channel.confirm_select(ConfirmSelectOptions::default()),
         )
         .await??;
-        for shard in 0..settings.shards {
+        let queues = (0..settings.shards)
+            .map(|shard| queue_name(shard, settings.shards))
+            .chain(saved_snippet_writes.then(|| saved_snippets::NOTIFICATION_QUEUE.to_owned()));
+        for queue in queues {
             timeout(
                 BROKER_TIMEOUT,
                 channel.queue_declare(
-                    queue_name(shard, settings.shards).into(),
+                    queue.into(),
                     QueueDeclareOptions::durable(),
                     FieldTable::default(),
                 ),
@@ -85,6 +89,25 @@ impl ActivityPublisher {
             "client_id": client_id,
         });
         let queue = queue_name(user_id as u32 % self.0.shards, self.0.shards);
+        self.publish(&queue, event).await
+    }
+
+    pub(super) async fn saved_snippet_added(
+        &self,
+        user_id: i32,
+        snippet: &saved_snippets::SavedSnippet,
+    ) -> Result<(), ActivityError> {
+        self.publish(
+            saved_snippets::NOTIFICATION_QUEUE,
+            serde_json::json!({
+                "event": {"type": "saved_snippets", "op": "add", "saved_snippet": snippet},
+                "users": [user_id],
+            }),
+        )
+        .await
+    }
+
+    async fn publish(&self, queue: &str, event: serde_json::Value) -> Result<(), ActivityError> {
         let body = serde_json::to_vec(&event)?;
         let confirmation = timeout(BROKER_TIMEOUT, async {
             self.0
@@ -104,7 +127,7 @@ impl ActivityPublisher {
         })
         .await??;
         if !matches!(confirmation, Confirmation::Ack(None)) {
-            return Err("RabbitMQ did not confirm a routed activity message".into());
+            return Err("RabbitMQ did not confirm a routed message".into());
         }
         Ok(())
     }
@@ -118,7 +141,14 @@ fn queue_name(shard: u32, shards: u32) -> String {
     }
 }
 
-pub(super) fn client_name(query: Option<&str>, headers: &HeaderMap) -> String {
+pub(super) fn client_name(
+    form_client: Option<&str>,
+    query: Option<&str>,
+    headers: &HeaderMap,
+) -> String {
+    if let Some(name) = form_client {
+        return name.chars().take(30).collect();
+    }
     if let Some((_, name)) = query.and_then(|query| {
         form_urlencoded::parse(query.as_bytes())
             .filter(|(key, _)| key == "client")

@@ -33,6 +33,7 @@ def rust_http_service(
     env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)
     env.pop("ZULIP_RUST_CLIENT_IP_SOURCE", None)
     env.pop("ZULIP_RUST_DEBUG_RATE_LIMITING", None)
+    env.pop("ZULIP_RUST_SAVED_SNIPPET_WRITES", None)
     with subprocess.Popen(
         [os.environ["ZULIP_RUST_HTTP_BIN"], "127.0.0.1:0"],
         stderr=subprocess.PIPE,
@@ -62,13 +63,20 @@ def rust_http_service(
 
 
 def request_test_http(
-    port: int, method: str, host: str, headers: dict[str, str], path: str
+    port: int,
+    method: str,
+    host: str,
+    headers: dict[str, str],
+    path: str,
+    *,
+    body: bytes | str | None = None,
 ) -> tuple[int, bytes, dict[str, str | None], str | None]:
     client = HTTPConnection("127.0.0.1", port, timeout=5)
     try:
         client.request(
             method,
             path,
+            body=body,
             headers={
                 "Host": host,
                 "User-Agent": "ZulipMobile/1.0",

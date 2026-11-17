@@ -59,6 +59,15 @@ async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, B
         Some(_) => return Err("ZULIP_RUST_DEBUG_RATE_LIMITING must be 0 or 1".into()),
     };
     let amqp_url = optional_env("ZULIP_RUST_AMQP_URL")?;
+    let saved_snippet_max_content_length =
+        match optional_env("ZULIP_RUST_SAVED_SNIPPET_WRITES")?.as_deref() {
+            None | Some("0") => None,
+            Some("1") => Some(
+                optional_env("ZULIP_RUST_MAX_MESSAGE_LENGTH")?
+                    .map_or(Ok(10_000), |value| value.parse())?,
+            ),
+            Some(_) => return Err("ZULIP_RUST_SAVED_SNIPPET_WRITES must be 0 or 1".into()),
+        };
     let shards =
         optional_env("ZULIP_RUST_USER_ACTIVITY_SHARDS")?.map_or(Ok(1), |value| value.parse())?;
     let secret_file = env::var_os("ZULIP_RUST_DJANGO_SECRET_KEY_FILE").map(PathBuf::from);
@@ -73,6 +82,7 @@ async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, B
         locale_dir,
         UserReadConfig {
             database,
+            saved_snippet_max_content_length,
             external_host: &external_host,
             rate_limit: redis_url.as_deref().map(|url| RateLimitConfig {
                 url,

@@ -302,6 +302,40 @@ and reload. While the Rust route is active, an unreachable Rust listener
 produces the existing nginx JSON error response. nginx keeps the request on
 the selected upstream to avoid duplicating quota and activity side effects.
 
+### Enable saved-snippet creation
+
+Set `ZULIP_RUST_SAVED_SNIPPET_WRITES=1` on `zulip-http` with the staging
+`ZULIP_RUST_AMQP_URL`. This slice targets a single Tornado process that
+consumes `notify_tornado`. Use `ZULIP_RUST_MAX_MESSAGE_LENGTH` if Django's
+`MAX_MESSAGE_LENGTH` differs from `10000`. The PostgreSQL role also needs
+`INSERT` on `zulip.zerver_savedsnippet` and `zulip.zerver_realmauditlog`,
+`SELECT` on the returned columns, and `USAGE` on both ID sequences.
+
+To route `POST /api/v1/saved_snippets` on the verified staging host, replace
+the read-only HTTP map with `saved-snippets-write-map.conf`, keep
+`saved-snippets-routes.conf` installed, run `nginx -t`, and reload. In the
+development proxy, use `--rust-http-port 9997 --rust-saved-snippet-writes`.
+The `--rust-saved-snippets` option controls reads independently.
+
+Rust commits the snippet and audit row together, then publishes the
+`saved_snippets/add` event for the owner to RabbitMQ. If RabbitMQ cannot
+confirm the publication after commit, the endpoint returns `503` and logs
+the saved snippet ID. Check whether the snippet exists before resubmitting
+an ambiguous result.
+
+To roll back writes while keeping Rust reads, reinstall the read-only map
+and reload nginx, or remove `--rust-saved-snippet-writes` from the development
+proxy. The web alias and edit and delete routes continue through Django.
+
+Use the dedicated RabbitMQ vhost described in the alert-word instructions
+to compare PostgreSQL rows and events from both implementations:
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
+    ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest
+```
+
 ## Stage alert-word reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with PostgreSQL, session settings, and

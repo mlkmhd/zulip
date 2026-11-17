@@ -3,15 +3,20 @@ from base64 import b64encode
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlsplit
+from unittest import skipUnless
+from urllib.parse import quote, urlencode, urlsplit
 
 import orjson
+import pika
+from django.conf import settings
+from django.db import connection
 from django.test import LiveServerTestCase
 
 from zerver.actions.saved_snippets import do_create_saved_snippet
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
-from zerver.models import SavedSnippet, UserProfile
+from zerver.models import RealmAuditLog, SavedSnippet, UserProfile
+from zerver.models.realm_audit_logs import AuditLogEventType
 
 
 class SavedSnippetTests(ZulipTestCase):
@@ -258,3 +263,216 @@ class SavedSnippetReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                 django[3]
                             )
                             self.assertLessEqual(abs(drift.total_seconds()), 5)
+
+
+@skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
+class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_create_saved_snippet_http_and_event_parity(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        username, password = settings.RABBITMQ_USERNAME, settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(username, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        environment = {"ZULIP_RUST_AMQP_URL": amqp_url, "ZULIP_RUST_SAVED_SNIPPET_WRITES": "1"}
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        user = self.example_user("hamlet")
+        snippets = SavedSnippet.objects.filter(user_profile=user)
+        audits = RealmAuditLog.objects.filter(
+            acting_user=user, event_type=AuditLogEventType.SAVED_SNIPPET_CREATED
+        )
+        initial_snippet_ids = list(snippets.values_list("id", flat=True))
+        initial_audit_ids = list(audits.values_list("id", flat=True))
+        service = (
+            rust_http_service(environment)
+            if os.environ.get("ZULIP_RUST_HTTP_BIN")
+            else nullcontext(None)
+        )
+        with (
+            self.settings(USING_RABBITMQ=True, RABBITMQ_VHOST=vhost, TORNADO_PROCESSES=1),
+            pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+            service as rust_port,
+        ):
+            channel = broker.channel()
+            channel.queue_declare("notify_tornado", durable=True)
+            channel.queue_declare("user_activity", durable=True)
+            channel.queue_purge("notify_tornado")
+            channel.queue_purge("user_activity")
+            try:
+                django = self.check_create_cases(django_port, user, channel)
+                if rust_port is not None:
+                    rust = self.check_create_cases(rust_port, user, channel)
+                    self.assertEqual(rust, django)
+                    self.check_failed_insert(rust_port, user, channel)
+                    self.check_unroutable_event(rust_port, user, channel)
+            finally:
+                channel.queue_purge("notify_tornado")
+                channel.queue_purge("user_activity")
+                audits.exclude(id__in=initial_audit_ids).delete()
+                snippets.exclude(id__in=initial_snippet_ids).delete()
+
+    def post_snippet(
+        self,
+        port: int,
+        user: UserProfile,
+        fields: str | bytes,
+        *,
+        query: str = "",
+        content_type: str = "application/x-www-form-urlencoded",
+        authenticated: bool = True,
+        language: str = "en",
+    ) -> tuple[int, bytes, dict[str, str | None], str | None]:
+        headers = {"Content-Type": content_type, "Accept-Language": language}
+        if authenticated:
+            credentials = f"{user.delivery_email}:{user.api_key}".encode()
+            headers["Authorization"] = "Basic " + b64encode(credentials).decode()
+        return request_test_http(
+            port, "POST", user.realm.host, headers, "/api/v1/saved_snippets" + query, body=fields
+        )
+
+    def check_create_cases(
+        self,
+        port: int,
+        user: UserProfile,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> list[tuple[int, bytes, dict[str, str | None]]]:
+        responses = []
+        baseline_count = SavedSnippet.objects.filter(user_profile=user).count()
+        for fields, auth, language, status in (
+            ("title=x&content=y", False, "en", 401),
+            ("title=x", True, "en", 400),
+            ("content=x", True, "en", 400),
+            ("title=+&content=x", True, "fr", 400),
+            ("title=x&content=+", True, "en", 400),
+            (urlencode({"title": "☃" * 61, "content": "x"}), True, "en", 400),
+            (urlencode({"title": "x", "content": "x" * 10001}), True, "en", 400),
+            ("method=DELETE", True, "en", 405),
+            ("method=GET", True, "en", 200),
+        ):
+            result = self.post_snippet(port, user, fields, authenticated=auth, language=language)
+            self.assertEqual(result[0], status)
+            if fields == "method=GET":
+                self.assert_length(orjson.loads(result[1])["saved_snippets"], baseline_count)
+            else:
+                responses.append(result[:3])
+        self.assertEqual(SavedSnippet.objects.filter(user_profile=user).count(), baseline_count)
+        self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+
+        for body, mime, expected_query, title, content, ignored in (
+            (
+                urlencode(
+                    [
+                        ("title", "wrong"),
+                        ("title", "  سلام ☃  "),
+                        ("extra", "z"),
+                        ("client", "ZulipMobile"),
+                    ]
+                ),
+                "application/x-www-form-urlencoded",
+                "?title=ignored&content=%2A%2Ax%2A%2A%0Az&another=1",
+                "سلام ☃",
+                "**x**\nz",
+                ["another", "extra"],
+            ),
+            (
+                (
+                    b'--boundary\r\nContent-Disposition: form-data; name="title"\r\n\r\nMultipart\r\n'
+                    b'--boundary\r\nContent-Disposition: form-data; name="content"\r\n\r\nSaved\r\n--boundary--\r\n'
+                ),
+                "multipart/form-data; boundary=boundary",
+                "",
+                "Multipart",
+                "Saved",
+                [],
+            ),
+        ):
+            status, response, headers, _ = self.post_snippet(
+                port, user, body, query=expected_query, content_type=mime
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(headers["Content-Length"], str(len(response)))
+            result = orjson.loads(response)
+            snippet_id = result.pop("saved_snippet_id")
+            expected: dict[str, str | list[str]] = {"result": "success", "msg": ""}
+            if ignored:
+                expected["ignored_parameters_unsupported"] = ignored
+            self.assertEqual(result, expected)
+            headers.pop("Content-Length")
+            responses.append((status, orjson.dumps(result), headers))
+            saved = SavedSnippet.objects.get(id=snippet_id)
+            self.assertEqual(
+                (saved.title, saved.content, saved.user_profile_id, saved.realm_id),
+                (title, content, user.id, user.realm_id),
+            )
+            audit = RealmAuditLog.objects.get(
+                event_type=AuditLogEventType.SAVED_SNIPPET_CREATED,
+                extra_data={"saved_snippet_id": snippet_id},
+            )
+            self.assertEqual(
+                (audit.realm_id, audit.acting_user_id, audit.modified_user_id, audit.backfilled),
+                (user.realm_id, user.id, user.id, False),
+            )
+            self.assertGreaterEqual(audit.event_time, saved.date_created)
+            delivery, properties, event_body = channel.basic_get("notify_tornado", auto_ack=True)
+            assert delivery is not None and properties is not None and event_body is not None
+            self.assertEqual(properties.delivery_mode, 2)
+            self.assertEqual(
+                orjson.loads(event_body),
+                {
+                    "users": [user.id],
+                    "event": {
+                        "type": "saved_snippets",
+                        "op": "add",
+                        "saved_snippet": saved.to_api_dict(),
+                    },
+                },
+            )
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+        return responses
+
+    def check_failed_insert(
+        self,
+        port: int,
+        user: UserProfile,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> None:
+        before = SavedSnippet.objects.filter(user_profile=user).count()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE zulip.zerver_realmauditlog ADD CONSTRAINT test_snippet_audit_failure "
+                "CHECK (event_type <> 800) NOT VALID"
+            )
+        try:
+            status, _, _, _ = self.post_snippet(port, user, "title=Will+roll+back&content=x")
+            self.assertEqual(status, 503)
+            self.assertEqual(SavedSnippet.objects.filter(user_profile=user).count(), before)
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "ALTER TABLE zulip.zerver_realmauditlog DROP CONSTRAINT test_snippet_audit_failure"
+                )
+
+    def check_unroutable_event(
+        self,
+        port: int,
+        user: UserProfile,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> None:
+        channel.queue_delete("notify_tornado")
+        try:
+            status, body, _, _ = self.post_snippet(port, user, "title=Committed&content=Stored")
+            self.assertEqual(status, 503)
+            self.assertEqual(orjson.loads(body)["msg"], "Notification service unavailable")
+            saved = SavedSnippet.objects.get(user_profile=user, title="Committed")
+            self.assertTrue(
+                RealmAuditLog.objects.filter(
+                    event_type=AuditLogEventType.SAVED_SNIPPET_CREATED,
+                    extra_data={"saved_snippet_id": saved.id},
+                ).exists()
+            )
+        finally:
+            channel.queue_declare("notify_tornado", durable=True)

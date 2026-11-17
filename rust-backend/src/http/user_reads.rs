@@ -8,7 +8,7 @@ use std::{
 
 use axum::{
     Extension,
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header, uri::Authority},
     response::{IntoResponse, Response},
 };
@@ -118,6 +118,7 @@ pub(super) struct UserReads {
     rate_limiter: Option<RateLimiter>,
     activity: Option<ActivityPublisher>,
     sessions: Option<Arc<Sessions>>,
+    saved_snippet_max_content_length: Option<usize>,
 }
 
 impl UserReads {
@@ -138,8 +139,12 @@ impl UserReads {
             Some(config) => Some(RateLimiter::connect(config).await?),
             None => None,
         };
+        let saved_snippet_writes = settings.saved_snippet_max_content_length.is_some();
         let activity = match settings.activity {
-            Some(config) => Some(ActivityPublisher::connect(config).await?),
+            Some(config) => Some(ActivityPublisher::connect(config, saved_snippet_writes).await?),
+            None if saved_snippet_writes => {
+                return Err("Saved snippet writes require ZULIP_RUST_AMQP_URL".into());
+            }
             None => None,
         };
         Ok(Self {
@@ -149,6 +154,7 @@ impl UserReads {
             rate_limiter,
             activity,
             sessions,
+            saved_snippet_max_content_length: settings.saved_snippet_max_content_length,
         })
     }
 
@@ -165,7 +171,7 @@ impl UserReads {
             .map_err(ApiError::database_unavailable)?;
         let user = database
             .query_opt(
-                "SELECT u.id, u.delivery_email, u.is_active, u.bot_type, u.rate_limits,
+                "SELECT u.id, u.realm_id, u.delivery_email, u.is_active, u.bot_type, u.rate_limits,
                         r.string_id, r.deactivated
                  FROM zulip.zerver_userprofile AS u
                  JOIN zulip.zerver_realm AS r ON r.id = u.realm_id
@@ -199,6 +205,7 @@ impl UserReads {
 
         let user = AuthenticatedUser {
             id: user.try_get("id")?,
+            realm_id: user.try_get("realm_id")?,
             rate_limits: user.try_get("rate_limits")?,
         };
         Ok((database, user))
@@ -240,12 +247,12 @@ impl UserReads {
         &self,
         database: &Client,
         user_id: i32,
-        endpoint: Endpoint,
+        activity_name: &str,
         client: &str,
     ) -> Result<(), ApiError> {
         if let Some(activity) = &self.activity {
             activity
-                .record(database, user_id, endpoint.activity_name(), client)
+                .record(database, user_id, activity_name, client)
                 .await
                 .map_err(|error| {
                     eprintln!("User read activity failed: {error}");
@@ -258,6 +265,7 @@ impl UserReads {
 
 struct AuthenticatedUser {
     id: i32,
+    realm_id: i32,
     rate_limits: String,
 }
 
@@ -341,6 +349,9 @@ enum ApiError {
     DatabaseUnavailable,
     RateLimiterUnavailable,
     ActivityUnavailable,
+    NotificationUnavailable,
+    Form(saved_snippets::FormError),
+    UnsupportedMethodOverride,
     RateLimited(f64),
 }
 
@@ -404,6 +415,26 @@ pub(super) async fn get(
     uri: Uri,
     headers: HeaderMap,
 ) -> Response {
+    respond(state, peer, uri, headers, Ok(None)).await
+}
+
+pub(super) async fn create_saved_snippet(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    let (uri, headers) = (request.uri().clone(), request.headers().clone());
+    let form = saved_snippets::CreateForm::parse(request).await.map(Some);
+    respond(state, peer, uri, headers, form).await
+}
+
+async fn respond(
+    state: UserReads,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    uri: Uri,
+    headers: HeaderMap,
+    form: Result<Option<saved_snippets::CreateForm>, saved_snippets::FormError>,
+) -> Response {
     let language = Locales::for_request(&headers);
     let endpoint = if uri.path() == saved_snippets::PATH {
         Endpoint::SavedSnippets
@@ -419,7 +450,21 @@ pub(super) async fn get(
     let mut clear_session_cookie = false;
     let mut rate_limit = None;
     let data = async {
-        let (database, user_id) = if let Some(sessions) = browser_session {
+        let form = form.map_err(ApiError::Form)?;
+        let create = match form
+            .as_ref()
+            .and_then(saved_snippets::CreateForm::method_override)
+        {
+            None | Some("POST") => form.as_ref(),
+            Some("GET" | "HEAD") => None,
+            Some(_) => return Err(ApiError::UnsupportedMethodOverride),
+        };
+        let activity_name = if create.is_some() {
+            "create_saved_snippet"
+        } else {
+            endpoint.activity_name()
+        };
+        let (database, user_id, realm_id) = if let Some(sessions) = browser_session {
             let subdomain =
                 subdomain(&headers, &state.external_host).ok_or(ApiError::InvalidHost)?;
             let (user, database) = match sessions
@@ -453,22 +498,26 @@ pub(super) async fn get(
                     "Webhook bots can only access webhooks",
                 ));
             }
-            let client = client_name(uri.query(), &headers);
+            let client = client_name(None, uri.query(), &headers);
             let client = if client.starts_with("Zulip") {
                 &client
             } else {
                 "website"
             };
             state
-                .record_activity(&database, user.id, endpoint, client)
+                .record_activity(&database, user.id, activity_name, client)
                 .await?;
-            (database, user.id)
+            (database, user.id, None)
         } else {
             let (database, user) = state.authenticate(&headers).await?;
-            let client = client_name(uri.query(), &headers);
+            let client = client_name(
+                form.as_ref().and_then(|form| form.value("client")),
+                uri.query(),
+                &headers,
+            );
             // Basic Auth records activity before the quota check.
             state
-                .record_activity(&database, user.id, endpoint, &client)
+                .record_activity(&database, user.id, activity_name, &client)
                 .await?;
             if !state.rate_limiter.as_ref().is_some_and(|limiter| {
                 limiter.exempts_internal_client(
@@ -481,13 +530,59 @@ pub(super) async fn get(
                     .limit(user.id, &user.rate_limits, &mut rate_limit)
                     .await?;
             }
-            (database, user.id)
+            (database, user.id, Some(user.realm_id))
         };
-        endpoint.read(&database, user_id).await
+        if let Some(form) = create {
+            let max = state
+                .saved_snippet_max_content_length
+                .expect("write route configured");
+            let (title, content) = form.values(max).map_err(ApiError::Form)?;
+            let activity = state
+                .activity
+                .as_ref()
+                .expect("saved snippet writes require RabbitMQ");
+            if !activity.connected() {
+                return Err(ApiError::NotificationUnavailable);
+            }
+            let snippet = saved_snippets::create(
+                &database,
+                user_id,
+                realm_id.expect("Basic Auth supplies realm"),
+                title,
+                content,
+            )
+            .await?;
+            activity
+                .saved_snippet_added(user_id, &snippet)
+                .await
+                .map_err(|error| {
+                    eprintln!(
+                        "Could not confirm notification for saved snippet {}: {error}",
+                        snippet.id
+                    );
+                    ApiError::NotificationUnavailable
+                })?;
+            let ignored = form.ignored_parameters();
+            let extra = if ignored.is_empty() {
+                String::new()
+            } else {
+                let names =
+                    serde_json::to_string(&ignored).expect("parameter names serialize to JSON");
+                format!(",\"ignored_parameters_unsupported\":{names}")
+            };
+            return Ok(format!(
+                "{{\"result\":\"success\",\"msg\":\"\",\"saved_snippet_id\":{}{extra}}}\n",
+                snippet.id
+            ));
+        }
+        let (field, value) = endpoint.read(&database, user_id).await?;
+        Ok(format!(
+            "{{\"result\":\"success\",\"msg\":\"\",\"{field}\":{value}}}\n"
+        ))
     }
     .await;
     let mut response = match data {
-        Ok((field, value)) => (
+        Ok(body) => (
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "application/json"),
@@ -497,7 +592,7 @@ pub(super) async fn get(
                 ),
                 (header::VARY, "Accept-Language"),
             ],
-            format!("{{\"result\":\"success\",\"msg\":\"\",\"{field}\":{value}}}\n"),
+            body,
         )
             .into_response(),
         Err(error) => error_response(
@@ -544,6 +639,18 @@ fn error_response(
     path: &str,
     browser: bool,
 ) -> Response {
+    if matches!(error, ApiError::UnsupportedMethodOverride) {
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [
+                (header::ALLOW, "GET, POST, HEAD"),
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (header::VARY, "Accept-Language, Cookie"),
+                (header::CACHE_CONTROL, "max-age=0, no-cache, no-store, must-revalidate, private"),
+            ],
+            "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",
+        ).into_response();
+    }
     if matches!(error, ApiError::MissingAuthentication) && prefers_html(headers) {
         let query = form_urlencoded::Serializer::new(String::new())
             .append_pair("next", path)
@@ -594,18 +701,57 @@ fn error_response(
             "SERVICE_UNAVAILABLE",
             "Activity service unavailable",
         ),
+        ApiError::NotificationUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+            "Notification service unavailable",
+        ),
+        ApiError::Form(saved_snippets::FormError::Missing(_)) => (
+            StatusCode::BAD_REQUEST,
+            "REQUEST_VARIABLE_MISSING",
+            "Missing '{var_name}' argument",
+        ),
+        ApiError::Form(saved_snippets::FormError::Blank(_)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} cannot be blank",
+        ),
+        ApiError::Form(saved_snippets::FormError::TooLong(..)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} is too long (limit: {max_length} characters)",
+        ),
+        ApiError::Form(saved_snippets::FormError::Malformed) => {
+            (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Malformed payload")
+        }
+        ApiError::UnsupportedMethodOverride => unreachable!("override handled above"),
         ApiError::RateLimited(_) => (
             StatusCode::TOO_MANY_REQUESTS,
             "RATE_LIMIT_HIT",
             "API usage exceeded rate limit; see https://zulip.com/api/http-headers#rate-limiting-response-headers",
         ),
     };
-    let message = serde_json::to_string(locales.gettext(language, message))
-        .expect("strings can serialize to JSON");
+    let translated = locales.gettext(language, message);
+    let message = match error {
+        ApiError::Form(
+            saved_snippets::FormError::Missing(name) | saved_snippets::FormError::Blank(name),
+        ) => translated.replace("{var_name}", name),
+        ApiError::Form(saved_snippets::FormError::TooLong(name, length)) => translated
+            .replace("{var_name}", name)
+            .replace("{max_length}", &length.to_string()),
+        _ => translated.to_owned(),
+    };
+    let message = serde_json::to_string(&message).expect("strings can serialize to JSON");
+    let details = if let ApiError::Form(saved_snippets::FormError::Missing(name)) = error {
+        format!(",\"var_name\":\"{name}\"")
+    } else {
+        String::new()
+    };
     let (extra, vary) = match error {
         ApiError::RateLimited(seconds) => {
             (format!(",\"retry-after\":{seconds:?}"), "Accept-Language")
         }
+        ApiError::Form(_) => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };
     let mut response = (
@@ -614,7 +760,7 @@ fn error_response(
             (header::CONTENT_TYPE, "application/json"),
             (header::VARY, vary),
         ],
-        format!("{{\"result\":\"error\",\"msg\":{message},\"code\":\"{code}\"{extra}}}\n"),
+        format!("{{\"result\":\"error\",\"msg\":{message}{details},\"code\":\"{code}\"{extra}}}\n"),
     )
         .into_response();
     if matches!(

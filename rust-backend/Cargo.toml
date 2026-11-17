@@ -24,7 +24,7 @@ path = "src/bin/zulip-http.rs"
 required-features = ["http"]
 
 [dependencies]
-axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"], optional = true }
+axum = { version = "0.8.9", default-features = false, features = ["http1", "multipart", "tokio"], optional = true }
 base64 = { version = "0.22", optional = true }
 flate2 = { version = "1", optional = true }
 form_urlencoded = { version = "1", optional = true }
