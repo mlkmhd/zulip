@@ -78,6 +78,26 @@ ZULIP_RUST_BOT_STORAGE=0 ./tools/test-backend zerver.tests.test_embedded_bot_sys
 ZULIP_RUST_BOT_STORAGE=1 ./tools/test-backend zerver.tests.test_embedded_bot_system
 ```
 
+### Invalidate alert-word caches through Rust
+
+Reinstall the extension and set `ZULIP_RUST_ALERT_WORD_CACHE=1` in Django.
+The flag requires Zulip's default Memcached backend with one unauthenticated
+server accepting the text protocol on a numeric loopback IP and port. This flag is independent
+of `ZULIP_RUST_ALERT_WORDS`. Unset it to use Django's Memcached client.
+
+Django resolves the active deployment prefixes and applies its cache key
+version and any configured key function. Rust deletes the alert-word list
+and matching automaton entries for each prefix and waits for a reply for
+each delete. An unavailable cache or unrecognized reply raises a connection
+error to the surrounding transaction. The standalone Rust HTTP listener
+still serves alert-word reads.
+
+For the real Memcached comparison, use a dedicated loopback server and set
+`ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS` to its IP and port. Run
+`./tools/test-backend zerver.tests.test_alert_words.AlertWordMemcachedTest`
+with the cache flag off and on. The connection failure case runs with the
+Rust cache flag on.
+
 ## Run the mobile compatibility API over HTTP
 
 `zulip-http` serves `GET /compatibility` and `HEAD /compatibility` directly in
