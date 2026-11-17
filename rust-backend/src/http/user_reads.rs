@@ -20,7 +20,7 @@ use tokio_postgres::Client;
 use super::{
     UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
-    alert_word_cache, alert_words,
+    alert_word_cache, alert_words, custom_profile_fields,
     database::Database,
     drafts,
     form::{Form, FormError},
@@ -45,6 +45,7 @@ enum Endpoint {
     Drafts,
     Linkifiers,
     RealmDomains,
+    CustomProfileFields,
 }
 
 #[derive(Clone, Copy)]
@@ -71,6 +72,7 @@ impl Endpoint {
             Self::Drafts => "fetch_drafts",
             Self::Linkifiers => "list_linkifiers",
             Self::RealmDomains => "list_realm_domains",
+            Self::CustomProfileFields => "list_realm_custom_profile_fields",
         }
     }
 
@@ -96,6 +98,10 @@ impl Endpoint {
             Self::RealmDomains => (
                 "domains",
                 serde_json::to_string(&realm_domains::list(database, realm_id).await?),
+            ),
+            Self::CustomProfileFields => (
+                "custom_fields",
+                serde_json::to_string(&custom_profile_fields::list(database, realm_id).await?),
             ),
             Self::Drafts => {
                 require_draft_synchronization(database, user_id).await?;
@@ -648,6 +654,9 @@ async fn respond(
         drafts::PATH | drafts::SESSION_PATH => Endpoint::Drafts,
         linkifiers::PATH | linkifiers::SESSION_PATH => Endpoint::Linkifiers,
         realm_domains::PATH | realm_domains::SESSION_PATH => Endpoint::RealmDomains,
+        custom_profile_fields::PATH | custom_profile_fields::SESSION_PATH => {
+            Endpoint::CustomProfileFields
+        }
         _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
@@ -981,7 +990,10 @@ fn error_response(
                 "GET, POST, DELETE, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"DELETE\",\"HEAD\"]}",
             ),
-            Endpoint::Drafts | Endpoint::Linkifiers | Endpoint::RealmDomains => {
+            Endpoint::Drafts
+            | Endpoint::Linkifiers
+            | Endpoint::RealmDomains
+            | Endpoint::CustomProfileFields => {
                 unreachable!("endpoints without a Rust POST do not override methods")
             }
             Endpoint::SavedSnippets => (

@@ -1,8 +1,17 @@
+import os
+from base64 import b64encode
 from collections.abc import Iterable
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest import mock
+from urllib.parse import urlsplit
 
 import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase
 from typing_extensions import override
 
 from zerver.actions.custom_profile_fields import (
@@ -14,11 +23,127 @@ from zerver.actions.custom_profile_fields import (
 from zerver.actions.user_settings import do_change_user_setting
 from zerver.lib.external_accounts import DEFAULT_EXTERNAL_ACCOUNTS
 from zerver.lib.markdown import markdown_convert
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.types import ProfileDataElementUpdateDict, ProfileDataElementValue
 from zerver.models import CustomProfileField, CustomProfileFieldValue, UserProfile
 from zerver.models.custom_profile_fields import custom_profile_fields_for_realm
 from zerver.models.realms import get_realm
+
+
+class CustomProfileFieldReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_list_custom_profile_fields_parity_with_rust(self) -> None:
+        user = self.example_user("hamlet")
+        other_user = self.mit_user("sipbtest")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+
+        def api_auth(profile: UserProfile) -> dict[str, str]:
+            token = b64encode(f"{profile.delivery_email}:{profile.api_key}".encode()).decode()
+            return {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            dropdown = CustomProfileField.objects.create(
+                realm=user.realm,
+                name="زبان",
+                field_type=CustomProfileField.DROPDOWN,
+                field_data='{"0": {"text": "فارسی", "order": "1"}}',
+                order=-10,
+                display_in_profile_summary=True,
+            )
+            cleanup.callback(dropdown.delete)
+            text_field = CustomProfileField.objects.create(
+                realm=user.realm,
+                name="Preferred name",
+                hint="Include pronunciation",
+                field_type=CustomProfileField.SHORT_TEXT,
+                order=-20,
+                required=True,
+                editable_by_user=False,
+                use_for_user_matching=True,
+            )
+            cleanup.callback(text_field.delete)
+            other_field = CustomProfileField.objects.create(
+                realm=other_user.realm, name="Other organization field", order=-10
+            )
+            cleanup.callback(other_field.delete)
+            value = CustomProfileFieldValue.objects.create(
+                field=text_field, user_profile=user, value="Personal profile data"
+            )
+            cleanup.callback(value.delete)
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(user.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": user.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            service = (
+                rust_http_service(
+                    {
+                        "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                        "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                            settings.AUTHENTICATION_BACKENDS
+                        ).decode(),
+                    }
+                )
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with service as rust_port:
+
+                def check(
+                    method: str, path: str, host: str, headers: dict[str, str], status: int
+                ) -> bytes:
+                    django = request_test_http(django_port, method, host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        rust = request_test_http(rust_port, method, host, headers, path)
+                        self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                        if method == "GET":
+                            self.assertEqual(orjson.loads(rust[1]), orjson.loads(django[1]))
+                        else:
+                            self.assertEqual(rust[1], django[1])
+                    return django[1]
+
+                api = "/api/v1/realm/profile_fields"
+                web = "/json/realm/profile_fields"
+                cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+                expected = [
+                    field.as_dict() for field in custom_profile_fields_for_realm(user.realm_id)
+                ]
+                for path, credentials in ((api, api_auth(user)), (web, cookie)):
+                    with self.subTest(path=path):
+                        body = check("GET", path, user.realm.host, credentials, 200)
+                        self.assertEqual(orjson.loads(body)["custom_fields"], expected)
+                        self.assertEqual(expected[:2], [text_field.as_dict(), dropdown.as_dict()])
+                        self.assertNotIn(value.value.encode(), body)
+                        self.assertEqual(
+                            check("HEAD", path, user.realm.host, credentials, 200), b""
+                        )
+                        check("GET", path, user.realm.host, {}, 401)
+
+                check("GET", api, other_user.realm.host, api_auth(user), 401)
+                other_body = check("GET", api, other_user.realm.host, api_auth(other_user), 200)
+                self.assertEqual(
+                    orjson.loads(other_body)["custom_fields"],
+                    [
+                        field.as_dict()
+                        for field in custom_profile_fields_for_realm(other_user.realm_id)
+                    ],
+                )
+
+                dropdown.order = -30
+                dropdown.display_in_profile_summary = False
+                dropdown.save(update_fields=["order", "display_in_profile_summary"])
+                body = check("GET", web, user.realm.host, cookie, 200)
+                self.assertEqual(orjson.loads(body)["custom_fields"][0], dropdown.as_dict())
 
 
 class CustomProfileFieldTestCase(ZulipTestCase):

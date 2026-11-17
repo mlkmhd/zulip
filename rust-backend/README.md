@@ -620,6 +620,29 @@ organization in both services. Domain creation, editing, and deletion
 use Django. To roll back reads, remove the development option or the
 `realm-domains-routes.conf` include and reload nginx after validation.
 
+## Read custom profile field definitions through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/realm/profile_fields` with
+Basic Auth and on `/json/realm/profile_fields` with the
+[Django session settings](#read-alert-words-with-a-django-session). The Rust
+database role needs `SELECT` on `zulip.zerver_customprofilefield`. The
+response contains the authenticated organization's field definitions in
+display order. The existing Redis quota and RabbitMQ activity settings
+apply to these reads.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_custom_profile_data
+./tools/run-dev --rust-http-port 9997 --rust-profile-field-reads
+```
+
+For nginx staging, include `profile-fields-map.conf` in the HTTP context
+and `profile-fields-routes.conf` in `app.d/`. Confirm that the allowlisted
+host and port resolve to the same organization in both services. `POST`,
+`PATCH`, `OPTIONS` and field-specific URLs use Django. To roll back the
+reads, remove the development option or the `profile-fields-routes.conf`
+include and reload nginx after validation.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,
