@@ -34,6 +34,7 @@ def rust_http_service(
     env.pop("ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST", None)
     env.pop("ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE", None)
     env.pop("ZULIP_RUST_ALERT_WORD_POSTS", None)
+    env.pop("ZULIP_RUST_DRAFT_DELETES", None)
     env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)
     env.pop("ZULIP_RUST_CLIENT_IP_SOURCE", None)
     env.pop("ZULIP_RUST_DEBUG_RATE_LIMITING", None)

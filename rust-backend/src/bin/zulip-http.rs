@@ -25,11 +25,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         env::var_os("ZULIP_LOCALE_DIR").map_or_else(|| PathBuf::from("locale"), PathBuf::from);
     let cache_manifest = env::var_os("ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST").map(PathBuf::from);
     let lowercase_file = env::var_os("ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE").map(PathBuf::from);
-    let alert_word_posts = match optional_env("ZULIP_RUST_ALERT_WORD_POSTS")?.as_deref() {
-        None | Some("0") => false,
-        Some("1") => true,
-        Some(_) => return Err("ZULIP_RUST_ALERT_WORD_POSTS must be 0 or 1".into()),
-    };
+    let alert_word_posts = enabled("ZULIP_RUST_ALERT_WORD_POSTS")?;
+    let draft_deletes = enabled("ZULIP_RUST_DRAFT_DELETES")?;
     let app = match env::var("ZULIP_RUST_DATABASE_URL") {
         Ok(database) => {
             user_read_router(
@@ -38,10 +35,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 cache_manifest.as_deref(),
                 lowercase_file.as_deref(),
                 alert_word_posts,
+                draft_deletes,
             )
             .await?
         }
         Err(env::VarError::NotPresent) => {
+            if draft_deletes {
+                return Err("Draft DELETE requires ZULIP_RUST_DATABASE_URL".into());
+            }
             if lowercase_file.is_some() || alert_word_posts {
                 return Err("Alert-word writes require ZULIP_RUST_DATABASE_URL".into());
             }
@@ -71,6 +72,7 @@ async fn user_read_router(
     alert_word_cache_manifest: Option<&Path>,
     alert_word_lowercase_file: Option<&Path>,
     alert_word_posts: bool,
+    draft_deletes: bool,
 ) -> Result<Router, Box<dyn Error>> {
     let external_host = env::var("ZULIP_RUST_EXTERNAL_HOST")?;
     let redis_url = optional_env("ZULIP_RUST_REDIS_URL")?;
@@ -128,6 +130,7 @@ async fn user_read_router(
             alert_word_cache_manifest,
             alert_word_lowercase_file,
             alert_word_posts,
+            draft_deletes,
             web_post_scheme,
             saved_snippet_max_content_length,
             external_host: &external_host,
@@ -159,5 +162,13 @@ fn optional_env(name: &str) -> Result<Option<String>, env::VarError> {
         Ok(value) => Ok(Some(value)),
         Err(env::VarError::NotPresent) => Ok(None),
         Err(error) => Err(error),
+    }
+}
+
+fn enabled(name: &str) -> Result<bool, Box<dyn Error>> {
+    match optional_env(name)?.as_deref() {
+        None | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(_) => Err(format!("{name} must be 0 or 1").into()),
     }
 }

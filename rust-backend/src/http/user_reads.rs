@@ -50,6 +50,7 @@ enum WriteOperation {
     DeleteSnippet(Option<i64>),
     AddAlertWords,
     RemoveAlertWords,
+    DeleteDraft(Option<i64>),
 }
 
 impl WriteOperation {
@@ -78,9 +79,7 @@ impl Endpoint {
                 serde_json::to_string(&saved_snippets::list(database, user_id).await?),
             ),
             Self::Drafts => {
-                if !drafts::synchronization_enabled(database, user_id).await? {
-                    return Err(ApiError::DraftSyncDisabled);
-                }
+                require_draft_synchronization(database, user_id).await?;
                 let drafts = drafts::list(database, user_id).await?;
                 let list =
                     serde_json::to_string(&drafts).expect("database fields can serialize to JSON");
@@ -89,6 +88,14 @@ impl Endpoint {
         };
         let value = serialized.expect("database fields can serialize to JSON");
         Ok(format!("\"{field}\":{value}"))
+    }
+}
+
+async fn require_draft_synchronization(database: &Client, user_id: i32) -> Result<(), ApiError> {
+    if drafts::synchronization_enabled(database, user_id).await? {
+        Ok(())
+    } else {
+        Err(ApiError::DraftSyncDisabled)
     }
 }
 
@@ -187,7 +194,9 @@ impl UserReads {
             Some(config) => Some(
                 ActivityPublisher::connect(
                     config,
-                    saved_snippet_writes || alert_word_lowercase.is_some(),
+                    saved_snippet_writes
+                        || settings.draft_deletes
+                        || alert_word_lowercase.is_some(),
                 )
                 .await?,
             ),
@@ -196,6 +205,9 @@ impl UserReads {
             }
             None if saved_snippet_writes => {
                 return Err("Saved snippet writes require ZULIP_RUST_AMQP_URL".into());
+            }
+            None if settings.draft_deletes => {
+                return Err("Draft DELETE requires ZULIP_RUST_AMQP_URL".into());
             }
             None => None,
         };
@@ -464,6 +476,7 @@ enum ApiError {
     UnsupportedMethodOverride(Endpoint),
     SnippetNotFound,
     DraftSyncDisabled,
+    DraftNotFound,
     RateLimited(f64),
 }
 
@@ -554,6 +567,24 @@ pub(super) async fn create_saved_snippet(
     respond_write(state, peer, request, WriteOperation::CreateSnippet).await
 }
 
+pub(super) async fn delete_draft(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    Path(id): Path<String>,
+    request: Request,
+) -> Response {
+    if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    respond_write(
+        state,
+        peer,
+        request,
+        WriteOperation::DeleteDraft(id.parse().ok()),
+    )
+    .await
+}
+
 pub(super) async fn write_saved_snippet_detail(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -629,6 +660,7 @@ async fn respond(
             Some(WriteOperation::DeleteSnippet(_)) => "delete_saved_snippet",
             Some(WriteOperation::AddAlertWords) => "add_alert_words",
             Some(WriteOperation::RemoveAlertWords) => "remove_alert_words",
+            Some(WriteOperation::DeleteDraft(_)) => "delete_draft",
             None => endpoint.activity_name(),
         };
         let form_client = if requested_write.is_some_and(WriteOperation::is_post) {
@@ -713,6 +745,34 @@ async fn respond(
             (database, user.id, user.realm_id)
         };
         if let (Some(write), Some(form)) = (write, form) {
+            if let WriteOperation::DeleteDraft(id) = write {
+                require_draft_synchronization(&database, user_id).await?;
+                let id = id.ok_or(ApiError::DraftNotFound)?;
+                let activity = state
+                    .activity
+                    .as_ref()
+                    .expect("draft deletion requires RabbitMQ");
+                let queue = activity
+                    .notification_queue(realm_id, user_id)
+                    .ok_or(ApiError::NotificationUnavailable)?;
+                if !drafts::delete(&database, user_id, id).await? {
+                    return Err(ApiError::DraftNotFound);
+                }
+                activity
+                    .notify_user(
+                        queue,
+                        user_id,
+                        serde_json::json!({
+                            "type": "drafts", "op": "remove", "draft_id": id,
+                        }),
+                    )
+                    .await
+                    .map_err(|error| {
+                        eprintln!("Could not confirm notification for draft {id}: {error}");
+                        ApiError::NotificationUnavailable
+                    })?;
+                return Ok("{\"result\":\"success\",\"msg\":\"\"}\n".to_owned());
+            }
             if matches!(
                 write,
                 WriteOperation::AddAlertWords | WriteOperation::RemoveAlertWords
@@ -782,7 +842,9 @@ async fn respond(
                     }
                     Some(SnippetEvent::Removed(id))
                 }
-                WriteOperation::AddAlertWords | WriteOperation::RemoveAlertWords => {
+                WriteOperation::AddAlertWords
+                | WriteOperation::RemoveAlertWords
+                | WriteOperation::DeleteDraft(_) => {
                     unreachable!("handled above")
                 }
             };
@@ -1012,6 +1074,7 @@ fn error_response(
             "BAD_REQUEST",
             "User has disabled synchronizing drafts.",
         ),
+        ApiError::DraftNotFound => (StatusCode::NOT_FOUND, "BAD_REQUEST", "Draft does not exist"),
         ApiError::SnippetNotFound => (
             StatusCode::NOT_FOUND,
             "BAD_REQUEST",
@@ -1058,9 +1121,10 @@ fn error_response(
         ApiError::RateLimited(seconds) => {
             (format!(",\"retry-after\":{seconds:?}"), "Accept-Language")
         }
-        ApiError::Form(_) | ApiError::SnippetNotFound | ApiError::DraftSyncDisabled => {
-            (String::new(), "Accept-Language")
-        }
+        ApiError::Form(_)
+        | ApiError::SnippetNotFound
+        | ApiError::DraftSyncDisabled
+        | ApiError::DraftNotFound => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };
     let mut response = (

@@ -1,15 +1,18 @@
 import os
 import time
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-from urllib.parse import urlsplit
+from unittest import skipUnless
+from urllib.parse import quote, urlsplit
 
 import orjson
+import pika
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.test import LiveServerTestCase
@@ -794,4 +797,188 @@ class DraftReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 assert recipient_id is not None
                 created_group.delete()
                 Recipient.objects.filter(id=recipient_id).delete()
+            session.delete()
+
+
+@skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
+class DraftDeleteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_delete_event_and_ownership_parity(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(settings.RABBITMQ_USERNAME, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        victim = Draft.objects.create(user_profile=user, content="delete me", last_edit_time=stamp)
+        private = Draft.objects.create(
+            user_profile=other, content="other draft", last_edit_time=stamp
+        )
+        original_sync = user.enable_drafts_synchronization
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        token = "a" * 32
+        basic = {
+            "Authorization": "Basic "
+            + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        }
+        cookie = {
+            "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; {settings.CSRF_COOKIE_NAME}={token}"
+        }
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        use_rust = os.environ.get("ZULIP_RUST_HTTP_BIN")
+        api = "/api/v1/drafts"
+        web = "/json/drafts"
+        try:
+            with (
+                self.settings(
+                    USING_RABBITMQ=True,
+                    RABBITMQ_VHOST=vhost,
+                    TORNADO_PROCESSES=1,
+                    SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
+                ),
+                pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+                TemporaryDirectory() as directory,
+            ):
+                secret = Path(directory) / "secret"
+                secret.write_text(settings.SECRET_KEY)
+                environment = {
+                    "ZULIP_RUST_DRAFT_DELETES": "1",
+                    "ZULIP_RUST_AMQP_URL": amqp_url,
+                    "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                    "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                        settings.AUTHENTICATION_BACKENDS
+                    ).decode(),
+                }
+                channel = broker.channel()
+                for queue in ("notify_tornado", "user_activity"):
+                    channel.queue_declare(queue, durable=True)
+                    channel.queue_purge(queue)
+                notification = {
+                    "event": {"type": "drafts", "op": "remove", "draft_id": victim.id},
+                    "users": [user.id],
+                }
+
+                def reset_victim() -> None:
+                    Draft.objects.get_or_create(
+                        id=victim.id,
+                        defaults={
+                            "user_profile": user,
+                            "content": victim.content,
+                            "last_edit_time": stamp,
+                        },
+                    )
+
+                def check_port(
+                    port: int, prefix: str, headers: dict[str, str], secure: bool
+                ) -> list[tuple[int, bytes, dict[str, str | None]]]:
+                    reset_victim()
+                    outcomes = []
+
+                    def send(draft_id: int, status: int, auth: dict[str, str] = headers) -> None:
+                        result = request_test_http(
+                            port, "DELETE", user.realm.host, auth, f"{prefix}/{draft_id}"
+                        )
+                        self.assertEqual(result[0], status, result[1])
+                        outcomes.append(result[:3])
+                        _, _, event = channel.basic_get("notify_tornado", auto_ack=True)
+                        if status == 200:
+                            self.assertFalse(Draft.objects.filter(id=victim.id).exists())
+                            assert event is not None
+                            self.assertEqual(orjson.loads(event), notification)
+                            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                        else:
+                            self.assertIsNone(event)
+                        self.assertTrue(
+                            Draft.objects.filter(id=private.id, user_profile=other).exists()
+                        )
+
+                    send(private.id, 404)
+                    send(2**63, 404)
+                    if prefix == web:
+                        send(
+                            victim.id,
+                            403,
+                            {key: value for key, value in headers.items() if key != "X-CSRFToken"},
+                        )
+                        if secure:
+                            send(
+                                victim.id,
+                                403,
+                                {key: value for key, value in headers.items() if key != "Referer"},
+                            )
+                    user.enable_drafts_synchronization = False
+                    user.save(update_fields=["enable_drafts_synchronization"])
+                    send(victim.id, 400)
+                    self.assertTrue(Draft.objects.filter(id=victim.id).exists())
+                    user.enable_drafts_synchronization = True
+                    user.save(update_fields=["enable_drafts_synchronization"])
+                    send(victim.id, 200)
+                    send(victim.id, 404)
+                    return outcomes
+
+                for scheme in ("http", "https"):
+                    secure = scheme == "https"
+                    web_auth = {**cookie, "X-CSRFToken": token}
+                    if secure:
+                        web_auth.update(
+                            {"X-Forwarded-Proto": "https", "Referer": f"https://{user.realm.host}/"}
+                        )
+                    else:
+                        web_auth["Origin"] = f"http://{user.realm.host}"
+                    routes = [(web, web_auth)] if secure else [(api, basic), (web, web_auth)]
+                    service = (
+                        rust_http_service({**environment, "ZULIP_RUST_WEB_POST_SCHEME": scheme})
+                        if use_rust
+                        else nullcontext(None)
+                    )
+                    with service as rust_port:
+                        for prefix, headers in routes:
+                            with self.subTest(scheme=scheme, path=prefix):
+                                django = check_port(django_port, prefix, headers, secure)
+                                if rust_port is not None:
+                                    self.assertEqual(
+                                        check_port(rust_port, prefix, headers, secure), django
+                                    )
+                        if rust_port is not None and not secure:
+                            reset_victim()
+                            target = f"{api}/{victim.id}"
+                            with ThreadPoolExecutor(max_workers=2) as requests:
+                                pending = [
+                                    requests.submit(
+                                        request_test_http,
+                                        rust_port,
+                                        "DELETE",
+                                        user.realm.host,
+                                        basic,
+                                        target,
+                                    )
+                                    for _ in range(2)
+                                ]
+                                self.assertCountEqual(
+                                    [response.result()[0] for response in pending], [200, 404]
+                                )
+                            self.assertFalse(Draft.objects.filter(id=victim.id).exists())
+                            _, _, event = channel.basic_get("notify_tornado", auto_ack=True)
+                            assert event is not None
+                            self.assertEqual(orjson.loads(event), notification)
+                            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                for queue in ("notify_tornado", "user_activity"):
+                    channel.queue_purge(queue)
+        finally:
+            user.enable_drafts_synchronization = original_sync
+            user.save(update_fields=["enable_drafts_synchronization"])
+            Draft.objects.filter(id__in=[victim.id, private.id]).delete()
             session.delete()

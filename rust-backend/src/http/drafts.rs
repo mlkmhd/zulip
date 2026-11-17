@@ -3,6 +3,8 @@ use tokio_postgres::{Client, Error, Row};
 
 pub(super) const PATH: &str = "/api/v1/drafts";
 pub(super) const SESSION_PATH: &str = "/json/drafts";
+pub(super) const DETAIL_PATH: &str = "/api/v1/drafts/{id}";
+pub(super) const SESSION_DETAIL_PATH: &str = "/json/drafts/{id}";
 const STREAM: i16 = 2;
 
 #[derive(Serialize)]
@@ -72,4 +74,14 @@ pub(super) async fn list(database: &Client, user_id: i32) -> Result<Vec<Draft>, 
         .iter()
         .map(|row| Draft::from_row(row, user_id))
         .collect()
+}
+
+pub(super) async fn delete(database: &Client, user_id: i32, draft_id: i64) -> Result<bool, Error> {
+    let deleted = database
+        .execute(
+            "DELETE FROM zulip.zerver_draft WHERE id = $1 AND user_profile_id = $2",
+            &[&draft_id, &user_id],
+        )
+        .await?;
+    Ok(deleted == 1)
 }

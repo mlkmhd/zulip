@@ -497,6 +497,22 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ./tools/test-backend zerver.tests.test_drafts
 ```
 
+## Delete drafts through Rust
+
+Set `ZULIP_RUST_DRAFT_DELETES=1` and `ZULIP_RUST_AMQP_URL` before starting
+the listener. The database role needs `DELETE` on `zulip.zerver_draft`.
+Use the Django session settings and `ZULIP_RUST_WEB_POST_SCHEME` for web
+deletion. Web `DELETE` uses the `X-CSRFToken` header.
+
+The operation requires draft synchronization for the authenticated account.
+Only a successfully deleted row produces a `drafts/remove` event, published
+to its owner's Tornado queue after commit. Missing drafts and drafts owned by
+a different account return the same `404` response.
+
+With a dedicated `ZULIP_RUST_ACTIVITY_TEST_VHOST`, the drafts test suite
+compares both DELETE routes and checks concurrent requests. Remove the
+`ZULIP_RUST_DRAFT_DELETES` setting and restart to disable direct deletion.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,

@@ -3,7 +3,7 @@ use std::{error::Error, path::Path};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    routing::{get, patch},
+    routing::{delete, get, patch},
 };
 pub use csrf::WebPostScheme;
 pub use rate_limit::ClientIpSource;
@@ -37,6 +37,7 @@ pub struct UserReadConfig<'a> {
     pub alert_word_cache_manifest: Option<&'a Path>,
     pub alert_word_lowercase_file: Option<&'a Path>,
     pub alert_word_posts: bool,
+    pub draft_deletes: bool,
     pub session: Option<SessionConfig<'a>>,
     pub web_post_scheme: Option<WebPostScheme>,
     pub saved_snippet_max_content_length: Option<usize>,
@@ -72,11 +73,14 @@ pub async fn router_with_user_reads(
     let saved_snippet_writes = config.saved_snippet_max_content_length.is_some();
     let alert_word_writes = config.alert_word_lowercase_file.is_some();
     let alert_word_posts = config.alert_word_posts;
+    let draft_deletes = config.draft_deletes;
     if alert_word_posts && !alert_word_writes {
         return Err("Alert-word POST requires ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE".into());
     }
     let web_writes_enabled = config.web_post_scheme.is_some();
-    if web_writes_enabled && !(browser_enabled && (saved_snippet_writes || alert_word_writes)) {
+    if web_writes_enabled
+        && !(browser_enabled && (saved_snippet_writes || alert_word_writes || draft_deletes))
+    {
         return Err("Web writes require Django sessions and an enabled write route".into());
     }
     let user_reads = user_reads::UserReads::connect(config, locales.clone()).await?;
@@ -111,6 +115,11 @@ pub async fn router_with_user_reads(
     if saved_snippet_writes {
         routes = routes.route(saved_snippets::DETAIL_PATH, snippet_detail_route.clone());
     }
+    let draft_detail_route =
+        delete(user_reads::delete_draft).layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
+    if draft_deletes {
+        routes = routes.route(drafts::DETAIL_PATH, draft_detail_route.clone());
+    }
     if browser_enabled {
         let mut web_snippet_route = get(user_reads::get);
         if web_writes_enabled && saved_snippet_writes {
@@ -118,6 +127,9 @@ pub async fn router_with_user_reads(
                 .post(user_reads::create_saved_snippet)
                 .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
             routes = routes.route(saved_snippets::SESSION_DETAIL_PATH, snippet_detail_route);
+        }
+        if web_writes_enabled && draft_deletes {
+            routes = routes.route(drafts::SESSION_DETAIL_PATH, draft_detail_route);
         }
         routes = routes
             .route(
