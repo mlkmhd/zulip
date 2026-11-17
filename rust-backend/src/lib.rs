@@ -7,4 +7,7 @@ pub mod user_status;
 pub mod http;
 
 #[cfg(feature = "python")]
+mod memcached;
+
+#[cfg(feature = "python")]
 mod python;

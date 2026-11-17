@@ -1,10 +1,11 @@
 import os
 import re
+import socket
 import time
 from base64 import b64encode
 from collections import Counter
 from email.utils import parsedate_to_datetime
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from unittest import skipUnless
 from unittest.mock import patch
 from urllib.parse import quote, urlencode, urlsplit
@@ -14,11 +15,13 @@ import pika
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
+from django.core.cache import cache
 from django.db import connection, transaction
 from django.test import LiveServerTestCase
 from django.utils.timezone import now as timezone_now
 
 from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
+from zerver.lib import cache as zulip_cache
 from zerver.lib import redis_utils
 from zerver.lib.alert_words import alert_words_in_realm, get_alert_word_automaton, user_alert_words
 from zerver.lib.rate_limiter import RateLimitedUser, RedisRateLimiterBackend
@@ -345,6 +348,90 @@ class AlertWordTests(ZulipTestCase):
         user_message = most_recent_usermessage(user)
         self.assertEqual(user_message.message.content, "sorry false alarm")
         self.assertNotIn("has_alert_word", user_message.flags_list())
+
+
+@skipUnless(
+    os.environ.get("ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS"),
+    "Dedicated Memcached test instance is unavailable",
+)
+class AlertWordMemcachedTest(ZulipTestCase):
+    def test_invalidate_alert_words_across_deployment_prefixes(self) -> None:
+        user = self.example_user("hamlet")
+        other_realm = Realm.objects.get(string_id="zephyr")
+        address = os.environ["ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS"]
+        cache_settings = {
+            **settings.CACHES,
+            "default": {
+                "BACKEND": "zerver.lib.singleton_bmemcached.SingletonBMemcached",
+                "LOCATION": address,
+                "KEY_PREFIX": "django-test",
+                "VERSION": 7,
+                "OPTIONS": {},
+            },
+        }
+        with (
+            self.settings(CACHES=cache_settings, PRODUCTION=True),
+            TemporaryDirectory() as deployments_dir,
+            patch("zerver.lib.cache.DEPLOYMENTS_DIR", deployments_dir),
+        ):
+            current_prefix = zulip_cache.KEY_PREFIX
+            previous_prefix = f"{current_prefix}previous:"
+            cache.set("cache_key_prefixes", [current_prefix, previous_prefix])
+            list_key = zulip_cache.realm_alert_words_cache_key(user.realm_id)
+            automaton_key = zulip_cache.realm_alert_words_automaton_cache_key(user.realm_id)
+            other_realm_key = zulip_cache.realm_alert_words_cache_key(other_realm.id)
+            other_realm_entry = f"{previous_prefix}{other_realm_key}"
+            entries = [
+                f"{prefix}{key}"
+                for prefix in (current_prefix, previous_prefix)
+                for key in (list_key, automaton_key)
+            ]
+            try:
+                for entry in [*entries, other_realm_entry]:
+                    cache.set(entry, "cached")
+                    self.assertEqual(cache.get(entry), "cached")
+                AlertWord.objects.bulk_create(
+                    [AlertWord(user_profile=user, realm=user.realm, word="remove me")]
+                )
+                with self.capture_send_event_calls(expected_num_events=1):
+                    do_remove_alert_words(user, ["REMOVE ME"])
+                self.assertFalse(
+                    AlertWord.objects.filter(user_profile=user, word="remove me").exists()
+                )
+                for entry in entries:
+                    self.assertIsNone(cache.get(entry))
+                with self.capture_send_event_calls(expected_num_events=1):
+                    do_remove_alert_words(user, ["REMOVE ME"])
+                self.assertEqual(cache.get(other_realm_entry), "cached")
+                self.assertEqual(cache.get("cache_key_prefixes"), [current_prefix, previous_prefix])
+            finally:
+                cache.delete_many([*entries, other_realm_entry, "cache_key_prefixes"])
+
+    @skipUnless(os.environ.get("ZULIP_RUST_ALERT_WORD_CACHE") == "1", "Rust cache is disabled")
+    def test_memcached_connection_failure_rolls_back_alert_word_deletion(self) -> None:
+        user = self.example_user("hamlet")
+        AlertWord.objects.bulk_create(
+            [AlertWord(user_profile=user, realm=user.realm, word="keep on cache failure")]
+        )
+        with socket.socket() as unused_port:
+            unused_port.bind(("127.0.0.1", 0))
+            address = f"127.0.0.1:{unused_port.getsockname()[1]}"
+            cache_settings = {
+                **settings.CACHES,
+                "default": {
+                    "BACKEND": "zerver.lib.singleton_bmemcached.SingletonBMemcached",
+                    "LOCATION": address,
+                    "OPTIONS": {},
+                },
+            }
+            with (
+                self.settings(CACHES=cache_settings),
+                self.capture_send_event_calls(expected_num_events=0),
+                self.assertRaises(ConnectionError),
+            ):
+                do_remove_alert_words(user, ["KEEP ON CACHE FAILURE"])
+
+        self.assertIn("keep on cache failure", user_alert_words(user))
 
 
 @skipUnless(os.environ.get("ZULIP_RUST_HTTP_BIN"), "Rust HTTP service binary is unavailable")

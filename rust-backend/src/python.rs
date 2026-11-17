@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::{io, net::SocketAddr};
 
+use pyo3::exceptions::{PyConnectionError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
-use crate::{alert_words, bot_storage, stream_color, user_status};
+use crate::{alert_words, bot_storage, memcached, stream_color, user_status};
 
 #[pymodule]
 mod _zulip_backend {
@@ -114,6 +116,18 @@ mod _zulip_backend {
             ),
         )?;
         Ok(())
+    }
+
+    #[pyfunction]
+    fn delete_memcached_keys(py: Python<'_>, address: &str, keys: Vec<String>) -> PyResult<()> {
+        let address: SocketAddr = address
+            .parse()
+            .map_err(|_| PyValueError::new_err("Expected an IP address and Memcached port"))?;
+        py.detach(|| memcached::delete_keys(address, &keys))
+            .map_err(|error| match error.kind() {
+                io::ErrorKind::InvalidInput => PyValueError::new_err(error.to_string()),
+                _ => PyConnectionError::new_err(error.to_string()),
+            })
     }
 
     #[pyfunction]
