@@ -1,10 +1,13 @@
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from functools import wraps
-from typing import Annotated, Concatenate, Literal
+from importlib import import_module
+from typing import Annotated, Concatenate, Literal, cast
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse
@@ -24,9 +27,43 @@ from zerver.lib.streams import access_stream_by_id
 from zerver.lib.timestamp import timestamp_to_datetime
 from zerver.lib.typed_endpoint import RequiredStringConstraint
 from zerver.models import Draft, UserProfile
+from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
 from zerver.tornado.django_api import send_event_on_commit
 
 ParamT = ParamSpec("ParamT")
+
+_rust_draft_text = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_TEXT") == "1" else None
+)
+
+
+def normalize_draft_body(content: str) -> str:
+    if _rust_draft_text is None or settings.MAX_MESSAGE_LENGTH < 0:
+        return normalize_body(content)
+    normalized, error = cast(
+        tuple[str | None, Literal["empty", "null_byte"] | None],
+        _rust_draft_text.normalize_draft_body(content, settings.MAX_MESSAGE_LENGTH),
+    )
+    if error == "empty":
+        raise JsonableError(_("Message must not be empty"))
+    if error == "null_byte":
+        raise JsonableError(_("Message must not contain null bytes"))
+    assert normalized is not None
+    return normalized
+
+
+def normalize_draft_topic(topic: str) -> str:
+    if _rust_draft_text is None:
+        truncated = truncate_topic(topic)
+        if "\0" not in truncated:
+            return truncated
+    else:
+        normalized = cast(
+            str | None, _rust_draft_text.normalize_draft_topic(topic, MAX_TOPIC_NAME_LENGTH)
+        )
+        if normalized is not None:
+            return normalized
+    raise JsonableError(_("Topic must not contain null bytes"))
 
 
 @dataclass
@@ -56,7 +93,7 @@ def further_validated_draft_dict(
     It will have a slightly different set of keys the values
     for which can be used to directly create a Draft object."""
 
-    content = normalize_body(draft_dict.content)
+    content = normalize_draft_body(draft_dict.content)
 
     timestamp = draft_dict.timestamp
     if timestamp is None:
@@ -72,9 +109,7 @@ def further_validated_draft_dict(
     recipient_id = None
     to = draft_dict.to
     if draft_dict.type == "stream":
-        topic_name = truncate_topic(draft_dict.topic)
-        if "\0" in topic_name:
-            raise JsonableError(_("Topic must not contain null bytes"))
+        topic_name = normalize_draft_topic(draft_dict.topic)
         if len(to) != 1:
             raise JsonableError(_("Must specify exactly 1 channel ID for channel messages"))
         stream, _sub = access_stream_by_id(user_profile, to[0])

@@ -5,7 +5,7 @@ use pyo3::exceptions::{PyConnectionError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
-use crate::{alert_words, bot_storage, memcached, stream_color, user_status};
+use crate::{alert_words, bot_storage, draft_text, memcached, stream_color, user_status};
 
 #[pymodule]
 mod _zulip_backend {
@@ -14,6 +14,23 @@ mod _zulip_backend {
     #[pyfunction]
     fn storage_size_difference(entries: Vec<(String, String, u64)>) -> i128 {
         bot_storage::storage_size_difference(&entries)
+    }
+
+    #[pyfunction]
+    fn normalize_draft_body(
+        body: &str,
+        max_length: usize,
+    ) -> (Option<String>, Option<&'static str>) {
+        match draft_text::normalize_body(body, max_length) {
+            Ok(body) => (Some(body.into_owned()), None),
+            Err(draft_text::BodyError::Empty) => (None, Some("empty")),
+            Err(draft_text::BodyError::NullByte) => (None, Some("null_byte")),
+        }
+    }
+
+    #[pyfunction]
+    fn normalize_draft_topic(topic: &str, max_length: usize) -> Option<String> {
+        draft_text::normalize_topic(topic, max_length).map(std::borrow::Cow::into_owned)
     }
 
     #[pyfunction]

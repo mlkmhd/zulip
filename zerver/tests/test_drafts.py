@@ -21,6 +21,7 @@ from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.users import check_can_access_user
 from zerver.models import DirectMessageGroup, Draft, Realm, Recipient, Stream, UserProfile
+from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
 from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
 
 
@@ -357,6 +358,29 @@ class DraftCreationTests(ZulipTestCase):
             }
         ]
         self.create_and_check_drafts_for_error(draft_dicts, "Topic must not contain null bytes")
+
+    def test_create_draft_truncates_unicode_body_and_topic(self) -> None:
+        stream = self.make_stream("Unicode drafts")
+        suffix = "\n[message truncated]"
+        body_prefix = "پیام📝"
+        limit = len(body_prefix) + len(suffix)
+        topic_prefix = "ز" * (MAX_TOPIC_NAME_LENGTH - 4) + "📝"
+        content = "\n" + body_prefix + "🟢" * limit + "\x1f"
+        draft = {
+            "type": "stream",
+            "to": [stream.id],
+            "topic": topic_prefix + "ب\x00" * 4,
+            "content": content,
+            "timestamp": 1595479019,
+        }
+        with self.settings(MAX_MESSAGE_LENGTH=limit):
+            self.create_and_check_drafts_for_success(
+                [draft], [{**draft, "topic": topic_prefix + "...", "content": body_prefix + suffix}]
+            )
+            self.create_and_check_drafts_for_error(
+                [{**draft, "content": content + "\x00"}],
+                "Message must not contain null bytes",
+            )
 
 
 class DraftEditTests(ZulipTestCase):
