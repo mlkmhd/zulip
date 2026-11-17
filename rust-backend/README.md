@@ -78,6 +78,17 @@ ZULIP_RUST_BOT_STORAGE=0 ./tools/test-backend zerver.tests.test_embedded_bot_sys
 ZULIP_RUST_BOT_STORAGE=1 ./tools/test-backend zerver.tests.test_embedded_bot_system
 ```
 
+`ZULIP_RUST_DRAFT_TEXT=1` selects Rust for normalizing bodies and channel
+topics during draft creation and editing. The extension enforces the Django
+character limits and NUL validation order, including for Unicode text.
+Django handles recipient permissions, timestamps, database writes, and
+events. Reinstall the extension before enabling the flag.
+
+```sh
+ZULIP_RUST_DRAFT_TEXT=0 ./tools/test-backend zerver.tests.test_drafts
+ZULIP_RUST_DRAFT_TEXT=1 ./tools/test-backend zerver.tests.test_drafts
+```
+
 ### Invalidate alert-word caches through Rust
 
 Reinstall the extension and set `ZULIP_RUST_ALERT_WORD_CACHE=1` in Django.
