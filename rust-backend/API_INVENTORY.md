@@ -17,8 +17,8 @@
   [REST dispatcher](../zerver/lib/rest.py)
 - ستون «مسیریابی» اجرای پیش‌فرض هر عملیات OpenAPI را نشان می‌دهد. ادغام‌های
   جزئی PyO3 و اجرای توسعهٔ `/compatibility` در بخش وضعیت مهاجرت آمده‌اند.
-  برای مسیرهای پوشش‌داده‌شده در این برش، تنها خانوادهٔ واژه‌های هشدار ممیزی
-  وابستگی به تفکیک عملیات دارد.
+  ممیزی وابستگی برای واژه‌های هشدار و خواندن متن‌های ذخیره‌شده
+  در بخش‌های قرارداد آمده است.
 - صفحات HTML، مسیرهای locale، افزونه‌های اختصاصی هر استقرار، SCIM و callbackهای
   SSO همچنان برای موجودی بعدی باقی‌اند.
 
@@ -28,6 +28,7 @@
 | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
 | `GET /api/v1/users/me/alert_words` و `HEAD` متناظر                                      | Basic Auth، خواندن PostgreSQL، سهمیهٔ مشترک Redis و صف فعالیت RabbitMQ | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `GET /json/users/me/alert_words` و `HEAD` متناظر                                        | نشست امضاشدهٔ Django، CSRF روش‌های امن، سهمیه و فعالیت                 | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست        | Django               |
+| `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم یا پروکسی توسعه با `--rust-saved-snippets`          | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
@@ -69,6 +70,23 @@
 تست نشست وب، اعتبار امضا و هش نشست، هدرهای کوکی و رفتار CSRF برای `GET` و `HEAD` پاس شد. `OPTIONS` و عملیات نوشتن در Django هستند.
 [نتیجهٔ مقایسه](MIGRATION_HANDOFF.md#آخرین-برش)
 [خطاهای API](../api_docs/rest-error-handling.md)، [middleware](../zerver/middleware.py)
+
+## قرارداد متن‌های ذخیره‌شده
+
+`GET /api/v1/saved_snippets` با Basic Auth فقط متن‌های کاربر احرازشده
+را از `zerver_savedsnippet` برمی‌گرداند. نتیجه شامل `id`، `title`،
+`content` و `date_created` برحسب ثانیهٔ صحیح UTC است. ترتیب صریحی
+در کوئری Django و Rust وجود ندارد. view خواندنی دادهٔ متن‌ها را تغییر
+نمی‌دهد، کش متن‌ها را استفاده نمی‌کند و رویداد `saved_snippets` منتشر نمی‌کند.
+در صورت پیکربندی Redis و RabbitMQ، ثبت فعالیت با نام `get_saved_snippets`
+پیش از بررسی سهمیهٔ `api_by_user` انجام می‌شود. معافیت کلاینت داخلی در
+سهمیهٔ Rust برای استقرار مقصد باقی است.
+[view](../zerver/views/saved_snippets.py)، [مدل](../zerver/models/saved_snippets.py)،
+[تست HTTP](../zerver/tests/test_saved_snippets.py)
+
+`HEAD` همان هدرها و بدنهٔ خالی دارد. Rust این دو روش را مستقیم یا از
+پروکسی توسعه سرو می‌کند. Django `/json/saved_snippets`، `OPTIONS` و
+عملیات تغییردهندهٔ داده را سرو می‌کند. [راهنمای اجرا](README.md#read-saved-snippets-through-rust)
 
 ## فهرست OpenAPI
 
