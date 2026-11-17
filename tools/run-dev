@@ -72,6 +72,11 @@ parser.add_argument(
     help="Forward alert-word GET and HEAD requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-saved-snippets",
+    action="store_true",
+    help="Forward saved-snippet API GET and HEAD requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--behind-https-proxy",
     action="store_true",
     help="Start app server in HTTPS mode, using reverse proxy",
@@ -160,6 +165,8 @@ if options.rust_http_port is not None and (
     parser.error("--rust-http-port must be a valid port outside the development server port range")
 if options.rust_alert_words and options.rust_http_port is None:
     parser.error("--rust-alert-words requires --rust-http-port")
+if options.rust_saved_snippets and options.rust_http_port is None:
+    parser.error("--rust-saved-snippets requires --rust-http-port")
 
 for mime_type, extension in EXTRA_MIME_TYPES:
     aiohttp.web_fileresponse.CONTENT_TYPES.add_type(mime_type, extension)
@@ -425,8 +432,13 @@ build step and rerun `run-dev`.""")
 
         app.router.add_get("/compatibility", forward_compatibility)
 
+        rust_read_paths: list[str] = []
         if options.rust_alert_words:
-            add_rust_alert_word_routes(rust_http_port)
+            rust_read_paths.extend(("/api/v1/users/me/alert_words", "/json/users/me/alert_words"))
+        if options.rust_saved_snippets:
+            rust_read_paths.append("/api/v1/saved_snippets")
+        if rust_read_paths:
+            add_rust_read_routes(rust_http_port, rust_read_paths)
 
     app.add_routes(
         [
@@ -440,7 +452,7 @@ build step and rerun `run-dev`.""")
     )
 
 
-def add_rust_alert_word_routes(rust_port: int) -> None:
+def add_rust_read_routes(rust_port: int, paths: list[str]) -> None:
     import django
     from django.conf import settings
 
@@ -463,13 +475,13 @@ def add_rust_alert_word_routes(rust_port: int) -> None:
         # Preserve Django's realm selection for custom hosts and aliases.
         return get_subdomain_from_hostname(host) == rust_subdomain
 
-    async def forward_alert_words(request: web.Request) -> web.StreamResponse:
+    async def forward_read(request: web.Request) -> web.StreamResponse:
         if request.method in (hdrs.METH_GET, hdrs.METH_HEAD) and supports_rust_host(request.host):
             return await forward(rust_port, request)
         return await forward(django_port, request)
 
-    for prefix in ("/api/v1", "/json"):
-        app.router.add_route(hdrs.METH_ANY, f"{prefix}/users/me/alert_words", forward_alert_words)
+    for path in paths:
+        app.router.add_route(hdrs.METH_ANY, path, forward_read)
 
 
 def print_listeners(external_host_url: str) -> None:

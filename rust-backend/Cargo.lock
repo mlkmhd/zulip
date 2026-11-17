@@ -2470,6 +2470,7 @@ dependencies = [
  "rand",
  "redis",
  "regex",
+ "serde",
  "serde_json",
  "sha2",
  "tokio",

@@ -74,6 +74,7 @@ impl ActivityPublisher {
         &self,
         db: &Client,
         user_id: i32,
+        endpoint: &str,
         query: Option<&str>,
         headers: &HeaderMap,
         browser: bool,
@@ -86,7 +87,7 @@ impl ActivityPublisher {
         };
         let client_id = resolve_client(db, name).await?;
         let event = serde_json::json!({
-            "query": "list_alert_words",
+            "query": endpoint,
             "user_profile_id": user_id,
             "time": SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
             "client_id": client_id,

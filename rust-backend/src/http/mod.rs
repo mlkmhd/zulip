@@ -7,6 +7,7 @@ mod compatibility;
 mod database;
 mod locale;
 mod rate_limit;
+mod saved_snippets;
 mod session;
 mod user_agent;
 mod user_reads;
@@ -49,7 +50,8 @@ pub async fn router_with_user_reads(
     let browser_enabled = config.session.is_some();
     let user_reads = user_reads::UserReads::connect(config, locales.clone()).await?;
     let mut routes = Router::new()
-        .route(user_reads::PATH, get(user_reads::get))
+        .route(user_reads::ALERT_WORDS_PATH, get(user_reads::get))
+        .route(saved_snippets::PATH, get(user_reads::get))
         .route("/health/rust-alert-words", get(user_reads::ready));
     if browser_enabled {
         routes = routes.route(user_reads::SESSION_PATH, get(user_reads::get));

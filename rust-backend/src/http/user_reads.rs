@@ -19,12 +19,49 @@ use super::{
     database::Database,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
+    saved_snippets,
     session::{SessionLookup, Sessions},
 };
 
-pub(super) const PATH: &str = "/api/v1/users/me/alert_words";
+pub(super) const ALERT_WORDS_PATH: &str = "/api/v1/users/me/alert_words";
 pub(super) const SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
+
+#[derive(Clone, Copy)]
+enum Endpoint {
+    AlertWords,
+    SavedSnippets,
+}
+
+impl Endpoint {
+    fn activity_name(self) -> &'static str {
+        match self {
+            Self::AlertWords => "list_alert_words",
+            Self::SavedSnippets => "get_saved_snippets",
+        }
+    }
+
+    async fn read(
+        self,
+        database: &Client,
+        user_id: i32,
+    ) -> Result<(&'static str, String), ApiError> {
+        let (field, serialized) = match self {
+            Self::AlertWords => (
+                "alert_words",
+                serde_json::to_string(&UserReads::words(database, user_id).await?),
+            ),
+            Self::SavedSnippets => (
+                "saved_snippets",
+                serde_json::to_string(&saved_snippets::list(database, user_id).await?),
+            ),
+        };
+        Ok((
+            field,
+            serialized.expect("database fields can serialize to JSON"),
+        ))
+    }
+}
 
 pub(super) async fn ready(State(state): State<UserReads>) -> Response {
     let ready = state.sessions.is_some()
@@ -185,7 +222,7 @@ impl UserReads {
     ) -> Result<(), ApiError> {
         if let Some(limiter) = &self.rate_limiter {
             let limit = limiter.check(user_id, rules).await.map_err(|error| {
-                eprintln!("Alert-word rate limit check failed: {error}");
+                eprintln!("User read rate limit check failed: {error}");
                 ApiError::RateLimiterUnavailable
             })?;
             let retry = limit.retry_after;
@@ -201,16 +238,24 @@ impl UserReads {
         &self,
         database: &Client,
         user_id: i32,
+        endpoint: Endpoint,
         query: Option<&str>,
         headers: &HeaderMap,
         browser: bool,
     ) -> Result<(), ApiError> {
         if let Some(activity) = &self.activity {
             activity
-                .record(database, user_id, query, headers, browser)
+                .record(
+                    database,
+                    user_id,
+                    endpoint.activity_name(),
+                    query,
+                    headers,
+                    browser,
+                )
                 .await
                 .map_err(|error| {
-                    eprintln!("Alert-word activity failed: {error}");
+                    eprintln!("User read activity failed: {error}");
                     ApiError::ActivityUnavailable
                 })?;
         }
@@ -314,7 +359,7 @@ impl From<tokio_postgres::Error> for ApiError {
 
 impl ApiError {
     fn database_unavailable(error: impl Display) -> Self {
-        eprintln!("Alert-word PostgreSQL request failed: {error}");
+        eprintln!("User read PostgreSQL request failed: {error}");
         Self::DatabaseUnavailable
     }
 }
@@ -362,6 +407,11 @@ fn prefers_html(headers: &HeaderMap) -> bool {
 
 pub(super) async fn get(State(state): State<UserReads>, uri: Uri, headers: HeaderMap) -> Response {
     let language = Locales::for_request(&headers);
+    let endpoint = if uri.path() == saved_snippets::PATH {
+        Endpoint::SavedSnippets
+    } else {
+        Endpoint::AlertWords
+    };
     let browser_session = if uri.path() == SESSION_PATH {
         state.sessions.as_deref()
     } else {
@@ -370,7 +420,7 @@ pub(super) async fn get(State(state): State<UserReads>, uri: Uri, headers: Heade
     let browser = browser_session.is_some();
     let mut clear_session_cookie = false;
     let mut rate_limit = None;
-    let words = async {
+    let data = async {
         let (database, user_id) = if let Some(sessions) = browser_session {
             let subdomain =
                 subdomain(&headers, &state.external_host).ok_or(ApiError::InvalidHost)?;
@@ -406,41 +456,45 @@ pub(super) async fn get(State(state): State<UserReads>, uri: Uri, headers: Heade
                 ));
             }
             state
-                .record_activity(&database, user.id, uri.query(), &headers, true)
+                .record_activity(&database, user.id, endpoint, uri.query(), &headers, true)
                 .await?;
             (database, user.id)
         } else {
             let (database, user) = state.authenticate(&headers).await?;
             // Basic Auth records activity before the quota check.
             state
-                .record_activity(&database, user.id, uri.query(), &headers, false)
+                .record_activity(&database, user.id, endpoint, uri.query(), &headers, false)
                 .await?;
             state
                 .limit(user.id, &user.rate_limits, &mut rate_limit)
                 .await?;
             (database, user.id)
         };
-        UserReads::words(&database, user_id).await
+        endpoint.read(&database, user_id).await
     }
     .await;
-    let mut response = match words {
-        Ok(words) => {
-            let words = serde_json::to_string(&words).expect("strings can serialize to JSON");
-            (
-                StatusCode::OK,
-                [
-                    (header::CONTENT_TYPE, "application/json"),
-                    (
-                        header::CACHE_CONTROL,
-                        "max-age=0, no-cache, no-store, must-revalidate, private",
-                    ),
-                    (header::VARY, "Accept-Language"),
-                ],
-                format!("{{\"result\":\"success\",\"msg\":\"\",\"alert_words\":{words}}}\n"),
-            )
-                .into_response()
-        }
-        Err(error) => error_response(error, &state.locales, language, &headers, browser),
+    let mut response = match data {
+        Ok((field, value)) => (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (
+                    header::CACHE_CONTROL,
+                    "max-age=0, no-cache, no-store, must-revalidate, private",
+                ),
+                (header::VARY, "Accept-Language"),
+            ],
+            format!("{{\"result\":\"success\",\"msg\":\"\",\"{field}\":{value}}}\n"),
+        )
+            .into_response(),
+        Err(error) => error_response(
+            error,
+            &state.locales,
+            language,
+            &headers,
+            uri.path(),
+            browser,
+        ),
     };
     let response_headers = response.headers_mut();
     response_headers.insert(header::CONTENT_LANGUAGE, HeaderValue::from_static(language));
@@ -474,21 +528,19 @@ fn error_response(
     locales: &Locales,
     language: &str,
     headers: &HeaderMap,
+    path: &str,
     browser: bool,
 ) -> Response {
     if matches!(error, ApiError::MissingAuthentication) && prefers_html(headers) {
+        let query = form_urlencoded::Serializer::new(String::new())
+            .append_pair("next", path)
+            .finish();
+        let location = format!("/login/?{query}");
         return (
             StatusCode::FOUND,
             [
                 (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-                (
-                    header::LOCATION,
-                    if browser {
-                        "/login/?next=%2Fjson%2Fusers%2Fme%2Falert_words"
-                    } else {
-                        "/login/?next=%2Fapi%2Fv1%2Fusers%2Fme%2Falert_words"
-                    },
-                ),
+                (header::LOCATION, location.as_str()),
                 (header::VARY, "Accept-Language, Cookie"),
             ],
             "",

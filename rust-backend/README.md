@@ -237,6 +237,34 @@ DJANGO_SETTINGS_MODULE=zproject.test_settings ZULIP_RUST_PROXY_EXPECT_RUST=1 \
 Restart the proxy without `--rust-alert-words` and repeat with
 `ZULIP_RUST_PROXY_EXPECT_RUST=0`, leaving the Rust service running.
 
+## Read saved snippets through Rust
+
+Start `zulip-http` with the PostgreSQL and host settings used for the
+alert-word API. The database role also needs `SELECT` on
+`zulip.zerver_savedsnippet`. `GET /api/v1/saved_snippets` and its `HEAD`
+variant use the same Basic authentication, Redis quota and RabbitMQ activity
+configuration as alert-word reads. The activity query is `get_saved_snippets`.
+
+To use this API through the development proxy, start it with:
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-saved-snippets
+```
+
+The proxy sends `GET` and `HEAD` to Rust for hostnames that select the same
+realm in Django and Rust. Django serves `/json/saved_snippets`, `OPTIONS`,
+writes and `POST` with a `method=GET` override. Restart the proxy without
+`--rust-saved-snippets` to return API reads to Django.
+
+With the same test binary and database setup as above, run the HTTP comparison:
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_saved_snippets
+```
+
+Omit `ZULIP_RUST_HTTP_BIN` to run the same cases on Django alone.
+
 ## Stage alert-word reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with PostgreSQL, session settings, and

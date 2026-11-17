@@ -762,18 +762,23 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             self.assertIsNone(headers["X-RateLimit-Limit"])
 
         def request(
-            port: int, profile: UserProfile, method: str = "GET", **query: str
+            port: int,
+            profile: UserProfile,
+            method: str = "GET",
+            *,
+            endpoint: str = "users/me/alert_words",
+            **query: str,
         ) -> tuple[int, bytes, dict[str, str | None], str | None]:
             authorization = (
                 "Basic "
                 + b64encode(f"{profile.delivery_email}:{profile.api_key}".encode()).decode()
             )
-            return self.request_words(
+            return request_test_http(
                 port,
                 method,
                 profile.realm.host,
                 {"Authorization": authorization},
-                query=urlencode(query),
+                f"/api/v1/{endpoint}?{urlencode(query)}",
             )
 
         django = request(django_port, user)
@@ -794,7 +799,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         def assert_limited_pair() -> None:
             errors = []
             for port in (django_port, rust_port):
-                status, body, headers, _ = request(port, user)
+                status, body, headers, _ = request(port, user, endpoint="saved_snippets")
                 self.assertEqual(status, 429)
                 self.assertEqual(headers["X-RateLimit-Limit"], "3")
                 self.assertEqual(headers["X-RateLimit-Remaining"], "0")
@@ -826,8 +831,8 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         self.assertEqual(redis.hgetall(gcra), snapshot)
 
         client = "Rust+parity café " * 3
-        rust = request(rust_port, custom_user, "HEAD", client=client)
-        django = request(django_port, custom_user, client=client)
+        rust = request(rust_port, custom_user, "HEAD", endpoint="saved_snippets", client=client)
+        django = request(django_port, custom_user, endpoint="saved_snippets", client=client)
         self.assertEqual(rust[:2], (200, b""))
         self.assertEqual(django[0], 429)
         self.assertEqual(rust[2]["X-RateLimit-Limit"], "2")
@@ -846,7 +851,12 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         custom = Client.objects.get(name=custom_name)
         website = Client.objects.get(name="website")
         expected = Counter(
-            {(user.id, mobile.id): 6, (custom_user.id, custom.id): 2, (user.id, website.id): 2}
+            {
+                ("list_alert_words", user.id, mobile.id): 2,
+                ("get_saved_snippets", user.id, mobile.id): 4,
+                ("get_saved_snippets", custom_user.id, custom.id): 2,
+                ("list_alert_words", user.id, website.id): 2,
+            }
         )
         events = []
         for shard in range(1, shards + 1):
@@ -859,22 +869,25 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 event = orjson.loads(body)
                 self.assertEqual(properties.delivery_mode, 2)
                 self.assertEqual(set(event), {"query", "user_profile_id", "time", "client_id"})
-                self.assertEqual(event["query"], "list_alert_words")
                 self.assertEqual(event["user_profile_id"] % shards + 1, shard)
                 self.assertIs(type(event["time"]), int)
                 self.assertLessEqual(abs(event["time"] - int(time.time())), 10)
                 events.append(event)
         self.assertEqual(
-            Counter((event["user_profile_id"], event["client_id"]) for event in events), expected
+            Counter(
+                (event["query"], event["user_profile_id"], event["client_id"]) for event in events
+            ),
+            expected,
         )
 
-        def activity_counts() -> Counter[tuple[int, int]]:
+        def activity_counts() -> Counter[tuple[str, int, int]]:
             return Counter(
                 {
-                    (user_id, client_id): count
-                    for user_id, client_id, count in UserActivity.objects.filter(
-                        user_profile_id__in=[user.id, custom_user.id], query="list_alert_words"
-                    ).values_list("user_profile_id", "client_id", "count")
+                    (query, user_id, client_id): count
+                    for query, user_id, client_id, count in UserActivity.objects.filter(
+                        user_profile_id__in=[user.id, custom_user.id],
+                        query__in=["list_alert_words", "get_saved_snippets"],
+                    ).values_list("query", "user_profile_id", "client_id", "count")
                 }
             )
 
