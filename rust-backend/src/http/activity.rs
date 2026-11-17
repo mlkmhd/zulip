@@ -11,7 +11,10 @@ use lapin::{
     options::{BasicPublishOptions, ConfirmSelectOptions, QueueDeclareOptions},
     types::FieldTable,
 };
-use tokio::time::timeout;
+use tokio::{
+    sync::Mutex,
+    time::{Instant, timeout},
+};
 use tokio_postgres::Client;
 
 use super::{
@@ -23,20 +26,55 @@ use super::{
 pub(super) struct ActivityPublisher(Arc<Publisher>);
 
 struct Publisher {
-    connection: Connection,
-    channel: Channel,
+    url: String,
+    queues: BTreeSet<String>,
+    broker: Mutex<BrokerState>,
     shards: u32,
     tornado_routing: Option<TornadoRouting>,
 }
 
+struct BrokerState {
+    connection: Arc<BrokerConnection>,
+    retry_at: Instant,
+}
+
+struct BrokerConnection {
+    connection: Connection,
+    channel: Channel,
+}
+
 type ActivityError = Box<dyn Error + Send + Sync>;
 const BROKER_TIMEOUT: Duration = Duration::from_secs(5);
+const RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
-impl ActivityPublisher {
-    pub(super) fn connected(&self) -> bool {
-        self.0.connection.status().connected() && self.0.channel.status().connected()
+impl BrokerConnection {
+    async fn open(url: &str, queues: &BTreeSet<String>) -> Result<Self, lapin::Error> {
+        let connection = Connection::connect(url, ConnectionProperties::default()).await?;
+        let channel = connection.create_channel().await?;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await?;
+        for queue in queues {
+            channel
+                .queue_declare(
+                    queue.as_str().into(),
+                    QueueDeclareOptions::durable(),
+                    FieldTable::default(),
+                )
+                .await?;
+        }
+        Ok(Self {
+            connection,
+            channel,
+        })
     }
 
+    fn connected(&self) -> bool {
+        self.connection.status().connected() && self.channel.status().connected()
+    }
+}
+
+impl ActivityPublisher {
     pub(super) async fn connect(
         settings: super::ActivityConfig<'_>,
         publishes_events: bool,
@@ -48,20 +86,6 @@ impl ActivityPublisher {
             .tornado_routing_file
             .map(TornadoRouting::load)
             .transpose()?;
-        let connection = timeout(
-            BROKER_TIMEOUT,
-            Connection::connect(
-                settings.url,
-                ConnectionProperties::default().enable_auto_recover(),
-            ),
-        )
-        .await??;
-        let channel = timeout(BROKER_TIMEOUT, connection.create_channel()).await??;
-        timeout(
-            BROKER_TIMEOUT,
-            channel.confirm_select(ConfirmSelectOptions::default()),
-        )
-        .await??;
         let mut queues = (0..settings.shards)
             .map(|shard| queue_name(shard, settings.shards))
             .collect::<BTreeSet<_>>();
@@ -72,23 +96,43 @@ impl ActivityPublisher {
                 queues.insert(DEFAULT_QUEUE.to_owned());
             }
         }
-        for queue in queues {
-            timeout(
-                BROKER_TIMEOUT,
-                channel.queue_declare(
-                    queue.into(),
-                    QueueDeclareOptions::durable(),
-                    FieldTable::default(),
-                ),
-            )
-            .await??;
-        }
+        let connection = timeout(
+            BROKER_TIMEOUT,
+            BrokerConnection::open(settings.url, &queues),
+        )
+        .await??;
         Ok(Self(Arc::new(Publisher {
-            connection,
-            channel,
+            url: settings.url.to_owned(),
+            queues,
+            broker: Mutex::new(BrokerState {
+                connection: Arc::new(connection),
+                retry_at: Instant::now(),
+            }),
             shards: settings.shards,
             tornado_routing,
         })))
+    }
+
+    async fn connection(&self) -> Result<Arc<BrokerConnection>, ActivityError> {
+        let mut state = timeout(BROKER_TIMEOUT, self.0.broker.lock()).await?;
+        if !state.connection.connected() {
+            if Instant::now() < state.retry_at {
+                return Err("RabbitMQ reconnection is temporarily unavailable".into());
+            }
+            // Replace a failed connection without resending an unconfirmed publication.
+            let result = timeout(
+                BROKER_TIMEOUT,
+                BrokerConnection::open(&self.0.url, &self.0.queues),
+            )
+            .await;
+            state.retry_at = Instant::now() + RETRY_INTERVAL;
+            state.connection = Arc::new(result??);
+        }
+        Ok(Arc::clone(&state.connection))
+    }
+
+    pub(super) async fn ready(&self) -> bool {
+        self.connection().await.is_ok()
     }
 
     pub(super) async fn record(
@@ -109,14 +153,13 @@ impl ActivityPublisher {
         self.publish(&queue, event).await
     }
 
-    pub(super) fn notification_queue(&self, realm_id: i32, user_id: i32) -> Option<&str> {
-        if !self.connected() {
-            return None;
-        }
-        match &self.0.tornado_routing {
+    pub(super) async fn notification_queue(&self, realm_id: i32, user_id: i32) -> Option<&str> {
+        let queue = match &self.0.tornado_routing {
             Some(routing) => routing.queue_for_user(realm_id, user_id),
             None => Some(DEFAULT_QUEUE),
-        }
+        }?;
+        self.connection().await.ok()?;
+        Some(queue)
     }
 
     pub(super) async fn notify_user(
@@ -137,8 +180,9 @@ impl ActivityPublisher {
 
     async fn publish(&self, queue: &str, event: serde_json::Value) -> Result<(), ActivityError> {
         let body = serde_json::to_vec(&event)?;
+        let connection = self.connection().await?;
         let confirmation = timeout(BROKER_TIMEOUT, async {
-            self.0
+            connection
                 .channel
                 .basic_publish(
                     "".into(),

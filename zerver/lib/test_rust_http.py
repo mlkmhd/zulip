@@ -76,8 +76,9 @@ def request_test_http(
     path: str,
     *,
     body: bytes | str | None = None,
+    timeout: float = 5,
 ) -> tuple[int, bytes, dict[str, str | None], str | None]:
-    client = HTTPConnection("127.0.0.1", port, timeout=5)
+    client = HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
         client.request(
             method,

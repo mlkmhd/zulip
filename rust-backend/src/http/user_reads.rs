@@ -126,10 +126,10 @@ pub(super) async fn ready(State(state): State<UserReads>) -> Response {
             {
                 return false;
             }
-            state
-                .activity
-                .as_ref()
-                .is_none_or(ActivityPublisher::connected)
+            if let Some(activity) = &state.activity {
+                return activity.ready().await;
+            }
+            true
         })
         .await
         .unwrap_or(false);
@@ -306,6 +306,7 @@ impl UserReads {
             .expect("alert-word writes require RabbitMQ");
         let queue = activity
             .notification_queue(realm_id, user_id)
+            .await
             .ok_or(ApiError::NotificationUnavailable)?;
 
         let remaining = {
@@ -754,6 +755,7 @@ async fn respond(
                     .expect("draft deletion requires RabbitMQ");
                 let queue = activity
                     .notification_queue(realm_id, user_id)
+                    .await
                     .ok_or(ApiError::NotificationUnavailable)?;
                 if !drafts::delete(&database, user_id, id).await? {
                     return Err(ApiError::DraftNotFound);
@@ -803,7 +805,7 @@ async fn respond(
                 .activity
                 .as_ref()
                 .expect("saved snippet writes require RabbitMQ");
-            let queue = activity.notification_queue(realm_id, user_id);
+            let queue = activity.notification_queue(realm_id, user_id).await;
             let mut result_fields = String::new();
             let change = match write {
                 WriteOperation::CreateSnippet => {
