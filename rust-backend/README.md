@@ -382,7 +382,7 @@ The PostgreSQL role needs `SELECT` on `zulip.django_session` and
 `zulip.zerver_savedsnippet`. Rust reads the signed session from PostgreSQL
 and returns the authenticated user's snippets. GET and HEAD use the usual
 Django behavior for safe methods, including replacement of a malformed
-CSRF cookie. Django handles the write methods and `OPTIONS`.
+CSRF cookie. The read-only map sends writes and `OPTIONS` to Django.
 
 For nginx staging, include `saved-snippets-web-map.conf` in the HTTP
 context and add `saved-snippets-web-routes.conf` to `zulip-include/app.d/`.
@@ -394,6 +394,43 @@ of the API routes.
 For the development proxy, pass `--rust-http-port 9997 --rust-saved-snippets-web`.
 The HTTP comparison in `zerver.tests.test_saved_snippets` also checks
 session authentication, requester isolation, and CSRF cookie behavior.
+
+### Enable saved-snippet web creation
+
+Configure [Django sessions](#read-alert-words-with-a-django-session) and the
+[write settings and database grants](#enable-saved-snippet-creation) for
+`zulip-http`. Set `ZULIP_RUST_WEB_POST_SCHEME` to the scheme browsers use
+to reach this listener through the proxy. Use `https` for a TLS-terminating
+proxy and `http` for local HTTP development. Use one public scheme per
+listener and redirect HTTP to HTTPS at the proxy for a TLS deployment.
+
+This route targets Zulip's cookie-based CSRF settings, the default
+`X-CSRFToken` header, and same-origin requests. Keep POST on Django for
+deployments that use cross-origin CSRF trust, a custom CSRF header,
+session-backed CSRF, or a shared CSRF cookie domain. Rust checks the Django
+session before comparing the CSRF cookie with the form or header token.
+It requires a matching Origin when present and a same-host HTTPS Referer
+when Origin is absent on HTTPS. The configured scheme controls this check.
+
+Replace `saved-snippets-web-map.conf` with
+`saved-snippets-web-write-map.conf` in the nginx HTTP context. Keep the
+same verified host and port and the same `saved-snippets-web-routes.conf`
+include. Run `nginx -t` and reload. Django serves `OPTIONS` and the web
+item routes. To return only POST to Django, restore the read-only map and
+reload. nginx returns its JSON upstream error if Rust is unavailable.
+
+With the development proxy, add `--rust-saved-snippets-web-writes` to
+`--rust-http-port 9997`. Use `--rust-saved-snippets-web` for web reads.
+Remove the write flag to return POST to Django.
+
+Compare session and CSRF handling, the committed rows, and the
+owner-only notification with the dedicated RabbitMQ test vhost.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
+    ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest.test_saved_snippet_web_post_http_and_event_parity
+```
 
 ## Stage alert-word reads in nginx
 
