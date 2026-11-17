@@ -98,6 +98,33 @@ For the real Memcached comparison, use a dedicated loopback server and set
 with the cache flag off and on. The connection failure case runs with the
 Rust cache flag on.
 
+### Share Django's alert-word cache namespace with zulip-http
+
+On the same host as the Rust service, export the namespace using the
+running deployment's Django settings:
+
+```sh
+./manage.py export_rust_alert_word_cache "$PWD/var/rust-alert-word-cache.json"
+export ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST="$PWD/var/rust-alert-word-cache.json"
+```
+
+The command uses the active deployment prefixes and Django's default key
+function, including its configured prefix and version. It writes the JSON
+with an atomic replacement. Publish it again when deployment prefixes or
+Memcached settings change. The destination directory must already exist and
+the service user needs read access to the file.
+
+With the manifest configured and the usual [session settings](#read-alert-words-with-a-django-session)
+in place, `/health/rust-alert-words` checks the current file and the
+unauthenticated loopback Memcached connection. A missing or invalid file or
+an unreachable server gives `503`. Republish the file or restore Memcached
+to recover in the same Rust process. This check supports the preparation of
+alert-word writes. Django continues to serve those requests.
+
+Use the dedicated Memcached test address from the preceding section and
+`ZULIP_RUST_HTTP_BIN` to run
+`zerver.tests.test_alert_words.AlertWordsRustHTTPTest.test_alert_word_cache_manifest_readiness`.
+
 ## Run the mobile compatibility API over HTTP
 
 `zulip-http` serves `GET /compatibility` and `HEAD /compatibility` directly in

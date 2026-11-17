@@ -83,6 +83,12 @@
 فعال می‌شود. خطای اتصال یا پاسخ نامعتبر به تراکنش برمی‌گردد.
 [راهنمای پرچم کش](README.md#invalidate-alert-word-caches-through-rust)
 
+فرمان `export_rust_alert_word_cache` از تنظیمات Django پیشوندهای فیزیکی
+و آدرس Memcached را در یک فایل منتشر می‌کند. در صورت تنظیم
+`ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST`، بررسی آمادگی Rust فایل جاری و
+اتصال Memcached را اعتبارسنجی می‌کند. Django مسیرهای نوشتن را سرو می‌کند.
+[راهنمای انتشار فایل](README.md#share-djangos-alert-word-cache-namespace-with-zulip-http)
+
 تست HTTP با دادهٔ commit‌شده در Django و Rust، رفتار فهرست خالی، واژهٔ Unicode،
 کلید نامعتبر، سازمان نادرست، حساب غیرفعال و ربات webhook را برای مسیر API
 بررسی کرد. در حالت بدون اعتبارنامه،
