@@ -81,19 +81,23 @@ ZULIP_RUST_BOT_STORAGE=1 ./tools/test-backend zerver.tests.test_embedded_bot_sys
 `ZULIP_RUST_DRAFT_TEXT=1` selects Rust for normalizing bodies and channel
 topics during draft creation and editing. The extension enforces the Django
 character limits and NUL validation order, including for Unicode text.
-Django handles recipient permissions, timestamps, database writes, and
-events. Reinstall the extension before enabling the flag.
+Reinstall the extension before enabling the flag.
 
 ```sh
 ZULIP_RUST_DRAFT_TEXT=0 ./tools/test-backend zerver.tests.test_drafts
 ZULIP_RUST_DRAFT_TEXT=1 ./tools/test-backend zerver.tests.test_drafts
 ```
 
+Set `ZULIP_RUST_DRAFT_TIMESTAMP=1` to round draft creation and edit
+timestamps in Rust. Rust preserves microsecond precision and rejects
+negative values after rounding. Django supplies the current time for
+omitted timestamps and handles values outside Python's datetime range.
+
 `ZULIP_RUST_DRAFT_CREATION=1` enables Rust bulk insertion for draft creation
 through both the API and web endpoints. Rust uses the PostgreSQL cursor from
 the existing Django transaction and returns IDs in request order. Django
-validates recipients and timestamps, then schedules the owner-only event for
-delivery after commit. This flag is independent of `ZULIP_RUST_DRAFT_TEXT`.
+validates recipients and schedules the owner-only event for delivery
+after commit. This flag is independent of `ZULIP_RUST_DRAFT_TEXT`.
 Reinstall the extension before enabling it. Unset it and restart Django to
 restore ORM insertion.
 
@@ -117,18 +121,30 @@ for mode in 0 1; do
 done
 ```
 
-Reinstall the extension and set `ZULIP_RUST_DRAFT_GROUPS=1` to initialize new
-direct-message recipients and subscriptions in Rust during draft creation
-and editing. Django resolves recipient permissions and obtains the unique
-group row before Rust runs on its transaction cursor. A valid earlier draft
-can create a group before a later draft in the same request fails validation.
-The failed batch saves no drafts and emits no draft event. Unset the flag
-and restart Django to restore the ORM path.
+Reinstall the extension and set `ZULIP_RUST_DRAFT_GROUPS=1` to look up and
+create direct-message groups in Rust during draft creation and editing.
+Django checks recipient permissions before Rust uses its transaction cursor
+to find or create the group, recipient, and subscriptions. PostgreSQL
+enforces the same group uniqueness for both writers. A valid earlier draft
+can create a group before a later draft in the batch fails validation.
+The failed batch saves no drafts and emits no draft event.
+
+Set `ZULIP_RUST_DRAFT_SERIALIZATION=1` to use the Rust draft response
+fields in Django's draft listing, initial event state, and add and update
+events. Django supplies the recipients from its existing lookup and cache.
+The standalone Rust draft reader uses the same serializer.
+
+Reinstall the extension before enabling the timestamp and serialization
+flags. Unset the corresponding flag and restart Django to roll back each
+bridge independently. Compare the Django paths with and without these
+three bridges using the same tests.
 
 ```sh
 for mode in 0 1; do
-    ZULIP_RUST_DRAFT_GROUPS=$mode ./tools/test-backend \
-        zerver.tests.test_drafts zerver.tests.test_events.DraftActionTest
+    ZULIP_RUST_DRAFT_GROUPS=$mode ZULIP_RUST_DRAFT_TIMESTAMP=$mode \
+        ZULIP_RUST_DRAFT_SERIALIZATION=$mode ./tools/test-backend \
+        zerver.tests.test_drafts zerver.tests.test_events.DraftActionTest \
+        zerver.tests.test_home.HomeTest.test_limit_drafts
 done
 ```
 

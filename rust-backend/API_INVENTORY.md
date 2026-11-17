@@ -40,8 +40,8 @@
 | `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/drafts` و alias وب با `HEAD` متناظر                                        | شرط همگام‌سازی حساب، خواندن PostgreSQL و ارائهٔ گیرنده                | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `DELETE /api/v1/drafts/{draft_id}` و alias وب                                          | حذف محدود به مالک و رویداد بعد از commit                              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
-| `POST /api/v1/drafts` و alias وب | درج گروهی با `ZULIP_RUST_DRAFT_CREATION` و عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT` | Django با افزونهٔ اختیاری Rust | Django |
-| `PATCH /api/v1/drafts/{draft_id}` و alias وب | عادی‌سازی متن و عنوان با `ZULIP_RUST_DRAFT_TEXT` و ثبت ویرایش با `ZULIP_RUST_DRAFT_EDIT` | Django با افزونهٔ اختیاری Rust | Django |
+| `POST /api/v1/drafts` و alias وب | عادی‌سازی متن و زمان، یافتن یا ساخت گروه پیام مستقیم، درج گروهی و قالب رویداد | Django با افزونهٔ اختیاری Rust | Django |
+| `PATCH /api/v1/drafts/{draft_id}` و alias وب | عادی‌سازی متن و زمان، یافتن یا ساخت گروه پیام مستقیم، ثبت ویرایش و قالب رویداد | Django با افزونهٔ اختیاری Rust | Django |
 | `GET /api/v1/realm/linkifiers` و alias وب با `HEAD` متناظر                              | خواندن لینک‌سازهای سازمان با ترتیب اولویت از PostgreSQL              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/domains` و alias وب با `HEAD` متناظر                                 | خواندن دامنه‌های مجاز ایمیل سازمان از PostgreSQL                     | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/profile_fields` و alias وب با `HEAD` متناظر | تعاریف مرتب‌شدهٔ فیلدهای پروفایل سازمان از PostgreSQL | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
@@ -56,7 +56,7 @@
 | `DELETE /api/v1/scheduled_messages/{scheduled_message_id}` و alias وب | حذف پیام زمان‌بندی‌شدهٔ مالک و پیوندهای پیوست در یک تراکنش | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `DELETE /api/v1/reminders/{reminder_id}` و alias وب | حذف یادآوری مالک و پیوندهای پیوست در یک تراکنش | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
-| `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
+| `POST /api/v1/register` و alias وب | قالب‌بندی وضعیت کاربران با `ZULIP_RUST_USER_STATUS` و پیش‌نویس‌ها با `ZULIP_RUST_DRAFT_SERIALIZATION` | Django | Django |
 | `GET /api/v1/bot_storage` و alias وب با `HEAD` متناظر | خواندن همهٔ کلیدها یا کلیدهای درخواست‌شده برای ربات احرازشده | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `DELETE /api/v1/bot_storage` و alias وب | حذف اتمیک کلیدهای ربات احرازشده با `ZULIP_RUST_BOT_STORAGE_DELETES` | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `PUT /api/v1/bot_storage` و alias وب | درج یا به‌روزرسانی گروهی با سهمیهٔ اتمیک و پرچم `ZULIP_RUST_BOT_STORAGE_UPDATES` | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
@@ -69,8 +69,9 @@
 ## قرارداد ایجاد پیش‌نویس
 
 `POST /api/v1/drafts` از Basic Auth و `POST /json/drafts` از نشست و CSRF
-استفاده می‌کند. Django تنظیم همگام‌سازی، شکل ورودی گروهی، timestamp و
-دسترسی به گیرندهٔ کانال یا پیام مستقیم را بررسی می‌کند. در حالت پرچم
+استفاده می‌کند. Django تنظیم همگام‌سازی، شکل کل بسته و دسترسی به گیرندهٔ
+کانال یا پیام مستقیم را بررسی می‌کند. با `ZULIP_RUST_DRAFT_TIMESTAMP=1`،
+Rust زمان هر پیش‌نویس را با دقت میکروثانیه گرد می‌کند. در حالت پرچم
 `ZULIP_RUST_DRAFT_CREATION=1`، Rust پیش‌نویس‌های بررسی‌شده را با cursor
 همان تراکنش در `zerver_draft` درج می‌کند و شناسه‌ها را به ترتیب درخواست
 برمی‌گرداند. Django رویداد `drafts/add` را پس از commit فقط برای مالک
@@ -79,13 +80,17 @@
 [test_drafts.py](../zerver/tests/test_drafts.py) و
 [DraftActionTest](../zerver/tests/test_events.py) هستند.
 
-در ایجاد و ویرایش، `ZULIP_RUST_DRAFT_GROUPS=1` ثبت `Recipient` و عضویت‌های
-گروه تازهٔ پیام مستقیم را به Rust می‌سپارد. Django دسترسی را پیش از
-جست‌وجو یا ایجاد سطر گروه بررسی می‌کند. Rust روی همان cursor تراکنش،
-گیرنده را به گروه وصل می‌کند و عضویت‌های متمایز، شامل فرستنده، را می‌نویسد.
-تراکنش ساخت گروه پیش از تراکنش درج پیش‌نویس است. اگر پس از ساخت گروه،
-اعتبارسنجی یکی از پیش‌نویس‌های بعدی شکست بخورد، گروه باقی می‌ماند و سطر
-یا رویداد پیش‌نویس ایجاد نمی‌شود.
+در ایجاد و ویرایش، `ZULIP_RUST_DRAFT_GROUPS=1` جست‌وجو یا ایجاد گروه پیام
+مستقیم، گیرنده و عضویت‌های آن را به Rust می‌سپارد. Django پیش از این
+کار دسترسی را بررسی می‌کند. Rust هش اعضای متمایز، شامل فرستنده، و
+قید یکتایی سطر گروه را با نویسندهٔ Django مشترک دارد. تراکنش ساخت گروه
+پیش از تراکنش درج پیش‌نویس است. شکست اعتبارسنجی شکل کل بسته پیش از
+ایجاد گروه رخ می‌دهد. خطای معنایی در پیش‌نویس بعدی می‌تواند گروه قبلی
+را باقی بگذارد و در آن حالت سطر یا رویداد پیش‌نویس ایجاد نمی‌شود.
+
+با `ZULIP_RUST_DRAFT_SERIALIZATION=1`، قالب پیش‌نویس در پاسخ فهرست، وضعیت
+اولیه و رویدادهای Django از همان کد Rust استفاده می‌کند که خواندن مستقل
+به کار می‌برد. Django اعضای پیام مستقیم را از کش فعلی می‌گیرد.
 
 ## قرارداد ویرایش پیش‌نویس
 
