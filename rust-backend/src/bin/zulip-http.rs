@@ -56,6 +56,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if draft_deletes {
                 return Err("Draft DELETE requires ZULIP_RUST_DATABASE_URL".into());
             }
+            if enabled("ZULIP_RUST_BOT_STORAGE_DELETES")? {
+                return Err("Bot storage DELETE requires ZULIP_RUST_DATABASE_URL".into());
+            }
             if navigation_view_writes.posts || navigation_view_writes.details {
                 return Err("Navigation view writes require ZULIP_RUST_DATABASE_URL".into());
             }
@@ -149,6 +152,7 @@ async fn user_read_router(
             alert_word_lowercase_file,
             alert_word_posts,
             draft_deletes,
+            bot_storage_deletes: enabled("ZULIP_RUST_BOT_STORAGE_DELETES")?,
             navigation_view_posts: navigation_view_writes.posts,
             navigation_view_details: navigation_view_writes.details,
             web_post_scheme,

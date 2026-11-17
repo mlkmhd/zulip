@@ -9,7 +9,7 @@ pub(super) const PATH: &str = "/api/v1/bot_storage";
 pub(super) const SESSION_PATH: &str = "/json/bot_storage";
 pub(super) const KEYS: &str = "keys";
 
-pub(super) fn keys(form: &Form) -> Result<Option<BTreeSet<String>>, FormError> {
+pub(super) fn keys(form: &Form) -> Result<Option<Vec<String>>, FormError> {
     let Some(value) = form.value(KEYS) else {
         return Ok(None);
     };
@@ -31,8 +31,9 @@ pub(super) fn keys(form: &Form) -> Result<Option<BTreeSet<String>>, FormError> {
 pub(super) async fn read(
     database: &Client,
     user_id: i32,
-    keys: Option<BTreeSet<String>>,
+    keys: Option<Vec<String>>,
 ) -> Result<Option<BTreeMap<String, String>>, Error> {
+    let keys = keys.map(|keys| keys.into_iter().collect::<BTreeSet<_>>());
     let rows = database
         .query(
             "SELECT key, value FROM zulip.zerver_botstoragedata WHERE bot_profile_id = $1",
@@ -51,4 +52,44 @@ pub(super) async fn read(
         return Ok(None);
     }
     Ok(Some(storage))
+}
+
+pub(super) async fn delete(
+    database: &Client,
+    user_id: i32,
+    keys: Option<Vec<String>>,
+) -> Result<bool, Error> {
+    let Some(keys) = keys else {
+        database
+            .execute(
+                "DELETE FROM zulip.zerver_botstoragedata WHERE bot_profile_id = $1",
+                &[&user_id],
+            )
+            .await?;
+        return Ok(true);
+    };
+    if keys.is_empty() {
+        return Ok(true);
+    }
+    if keys.iter().any(|key| key.contains('\0')) {
+        return Ok(false);
+    }
+
+    // Lock matching rows in a consistent order before checking whether the
+    // full request can succeed, including when two requests overlap.
+    let deleted = database
+        .execute(
+            "WITH matching AS MATERIALIZED (
+                 SELECT id
+                 FROM zulip.zerver_botstoragedata
+                 WHERE bot_profile_id = $1 AND key = ANY($2::text[])
+                 ORDER BY id FOR UPDATE
+             )
+             DELETE FROM zulip.zerver_botstoragedata AS storage USING matching
+             WHERE storage.id = matching.id
+                 AND (SELECT count(*) FROM matching) = cardinality($2)",
+            &[&user_id, &keys],
+        )
+        .await?;
+    Ok(deleted == keys.len() as u64)
 }

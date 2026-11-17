@@ -1,5 +1,6 @@
 import os
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -9,6 +10,7 @@ from urllib.parse import urlencode, urlsplit
 import orjson
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
+from django.middleware.csrf import _get_new_csrf_string
 from django.test import LiveServerTestCase, override_settings
 from typing_extensions import override
 
@@ -33,7 +35,7 @@ from zerver.models.users import get_user
 
 
 class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
-    def test_get_storage_parity_with_rust(self) -> None:
+    def test_storage_parity_with_rust(self) -> None:
         bot = self.example_user("default_bot")
         other = self.example_user("outgoing_webhook_bot")
         human = self.example_user("hamlet")
@@ -62,13 +64,19 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             )
             session.create()
             cleanup.callback(session.delete)
-            cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+            csrf = _get_new_csrf_string()
+            cookie = {
+                "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; "
+                f"{settings.CSRF_COOKIE_NAME}={csrf}"
+            }
             secret = Path(directory) / "secret"
             secret.write_text(settings.SECRET_KEY)
             service = (
                 rust_http_service(
                     {
                         "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                        "ZULIP_RUST_BOT_STORAGE_DELETES": "1",
+                        "ZULIP_RUST_WEB_POST_SCHEME": "http",
                         "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
                             settings.AUTHENTICATION_BACKENDS
                         ).decode(),
@@ -124,6 +132,110 @@ class BotStorageReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 result = orjson.loads(check("GET", path, basic(human), 400))
                 self.assertEqual(result["code"], "PERMISSION_DENIED")
                 self.assertEqual(result["msg"], "Must be a bot user")
+
+                def check_deletes(
+                    port: int, path: str, headers: dict[str, str]
+                ) -> list[tuple[int, dict[str, object], dict[str, str | None]]]:
+                    def stored() -> dict[str, str]:
+                        return dict(
+                            BotStorageData.objects.filter(bot_profile=bot).values_list(
+                                "key", "value"
+                            )
+                        )
+
+                    def remove(
+                        keys: str | None, expected: int, *, include_csrf: bool = True
+                    ) -> dict[str, object]:
+                        body = (
+                            urlencode({"keys": keys, "unsupported": "1"})
+                            if keys is not None
+                            else None
+                        )
+                        credentials = {
+                            **headers,
+                            "Content-Type": "application/x-www-form-urlencoded",
+                        }
+                        if include_csrf and path.startswith("/json/"):
+                            credentials["X-CSRFToken"] = csrf
+                        status, payload, response_headers, _ = request_test_http(
+                            port, "DELETE", bot.realm.host, credentials, path, body=body
+                        )
+                        self.assertEqual(status, expected, payload)
+                        result = orjson.loads(payload)
+                        responses.append((status, result, response_headers))
+                        return result
+
+                    responses: list[tuple[int, dict[str, object], dict[str, str | None]]] = []
+                    original = stored()
+                    try:
+                        if path.startswith("/json/"):
+                            remove('["plain"]', 403, include_csrf=False)
+                            self.assertEqual(stored(), original)
+                        for raw in ('["plain","secret"]', '["plain","plain"]'):
+                            result = remove(raw, 400)
+                            self.assertEqual(result["msg"], "Key does not exist.")
+                            self.assertEqual(stored(), original)
+                        result = remove("[]", 200)
+                        self.assertEqual(result["ignored_parameters_unsupported"], ["unsupported"])
+                        self.assertEqual(stored(), original)
+                        remove('["درود"]', 200)
+                        self.assertEqual(stored(), {"plain": "text"})
+                        remove('["درود"]', 400)
+                        remove("null", 200)
+                        self.assertEqual(stored(), {})
+                        remove(None, 200)
+                        self.assertTrue(
+                            BotStorageData.objects.filter(bot_profile=other, key="secret").exists()
+                        )
+                    finally:
+                        for key, value in original.items():
+                            row, created = BotStorageData.objects.get_or_create(
+                                bot_profile=bot, key=key, defaults={"value": value}
+                            )
+                            if created:
+                                cleanup.callback(row.delete)
+                    return responses
+
+                for path, headers in (
+                    ("/api/v1/bot_storage", basic(bot)),
+                    ("/json/bot_storage", cookie),
+                ):
+                    with self.subTest(delete=path):
+                        baseline = check_deletes(django_port, path, headers)
+                        if rust_port is not None:
+                            self.assertEqual(check_deletes(rust_port, path, headers), baseline)
+
+                if rust_port is not None:
+                    path = "/api/v1/bot_storage"
+                    auth = {
+                        **basic(bot),
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    }
+
+                    def remove_concurrently(port: int, keys: str) -> int:
+                        return request_test_http(
+                            port,
+                            "DELETE",
+                            bot.realm.host,
+                            auth,
+                            path,
+                            body=urlencode({"keys": keys}),
+                        )[0]
+
+                    with (
+                        rust_http_service({"ZULIP_RUST_BOT_STORAGE_DELETES": "1"}) as second_port,
+                        ThreadPoolExecutor(max_workers=2) as executor,
+                    ):
+                        first = executor.submit(remove_concurrently, rust_port, '["درود","plain"]')
+                        second = executor.submit(remove_concurrently, second_port, '["درود"]')
+                        self.assertCountEqual([first.result(), second.result()], [200, 400])
+                        self.assertFalse(
+                            BotStorageData.objects.filter(bot_profile=bot, key="درود").exists()
+                        )
+                        self.assertEqual(
+                            BotStorageData.objects.filter(bot_profile=bot, key="plain").exists(),
+                            first.result() == 400,
+                        )
 
 
 class TestEmbeddedBotMessaging(ZulipTestCase):

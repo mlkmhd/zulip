@@ -102,6 +102,11 @@ parser.add_argument(
     help="Forward bot storage GET and HEAD requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-bot-storage-deletes",
+    action="store_true",
+    help="Forward bot storage DELETE requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--rust-linkifier-reads",
     action="store_true",
     help="Forward linkifier GET and HEAD requests to the Rust HTTP server",
@@ -292,6 +297,8 @@ if options.rust_attachment_reads and options.rust_http_port is None:
     parser.error("--rust-attachment-reads requires --rust-http-port")
 if options.rust_bot_storage_reads and options.rust_http_port is None:
     parser.error("--rust-bot-storage-reads requires --rust-http-port")
+if options.rust_bot_storage_deletes and options.rust_http_port is None:
+    parser.error("--rust-bot-storage-deletes requires --rust-http-port")
 if options.rust_linkifier_reads and options.rust_http_port is None:
     parser.error("--rust-linkifier-reads requires --rust-http-port")
 if options.rust_realm_domain_reads and options.rust_http_port is None:
@@ -638,9 +645,12 @@ build step and rerun `run-dev`.""")
         if options.rust_attachment_reads:
             rust_routes["/api/v1/attachments"] = read_methods
             rust_routes["/json/attachments"] = read_methods
-        if options.rust_bot_storage_reads:
-            rust_routes["/api/v1/bot_storage"] = read_methods
-            rust_routes["/json/bot_storage"] = read_methods
+        if options.rust_bot_storage_reads or options.rust_bot_storage_deletes:
+            bot_storage_methods = read_methods.copy() if options.rust_bot_storage_reads else set()
+            if options.rust_bot_storage_deletes:
+                bot_storage_methods.add(hdrs.METH_DELETE)
+            rust_routes["/api/v1/bot_storage"] = bot_storage_methods
+            rust_routes["/json/bot_storage"] = bot_storage_methods
         if options.rust_linkifier_reads:
             rust_routes["/api/v1/realm/linkifiers"] = read_methods
             rust_routes["/json/realm/linkifiers"] = read_methods

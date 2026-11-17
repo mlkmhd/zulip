@@ -70,6 +70,7 @@ enum WriteOperation<'a> {
     AddAlertWords,
     RemoveAlertWords,
     DeleteDraft(Option<i64>),
+    DeleteBotStorage,
 }
 
 impl WriteOperation<'_> {
@@ -306,7 +307,8 @@ impl UserReads {
         if alert_word_lowercase.is_some() && settings.alert_word_cache_manifest.is_none() {
             return Err("Alert-word DELETE requires ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST".into());
         }
-        let database = Database::connect(settings.database, settings.activity.is_none()).await?;
+        let read_only = settings.activity.is_none() && !settings.bot_storage_deletes;
+        let database = Database::connect(settings.database, read_only).await?;
         let rate_limiter = match settings.rate_limit {
             Some(config) => Some(RateLimiter::connect(config).await?),
             None => None,
@@ -724,6 +726,14 @@ pub(super) async fn write_navigation_view_detail(
     respond_write(state, peer, request, write).await
 }
 
+pub(super) async fn delete_bot_storage(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    respond_write(state, peer, request, WriteOperation::DeleteBotStorage).await
+}
+
 pub(super) async fn delete_draft(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -835,6 +845,7 @@ async fn respond(
             Some(WriteOperation::AddAlertWords) => "add_alert_words",
             Some(WriteOperation::RemoveAlertWords) => "remove_alert_words",
             Some(WriteOperation::DeleteDraft(_)) => "delete_draft",
+            Some(WriteOperation::DeleteBotStorage) => "remove_storage",
             None => endpoint.activity_name(),
         };
         let form_client = if requested_write.is_some_and(WriteOperation::is_post) {
@@ -922,6 +933,19 @@ async fn respond(
             return Err(ApiError::BotRequired);
         }
         if let (Some(write), Some(form)) = (write, form) {
+            if matches!(write, WriteOperation::DeleteBotStorage) {
+                let keys = bot_storage::keys(&form).map_err(ApiError::Form)?;
+                if !bot_storage::delete(&database, user_id, keys).await? {
+                    return Err(ApiError::BotStorageKeyNotFound);
+                }
+                let processed: &[_] = if form.has_query_client() {
+                    &[bot_storage::KEYS, "client"]
+                } else {
+                    &[bot_storage::KEYS]
+                };
+                let extra = ignored_parameters(&form, processed);
+                return Ok(format!("{{\"result\":\"success\",\"msg\":\"\"{extra}}}\n"));
+            }
             if let WriteOperation::EditNavigationView(fragment)
             | WriteOperation::DeleteNavigationView(fragment) = write
             {
@@ -1107,7 +1131,8 @@ async fn respond(
                 | WriteOperation::CreateNavigationView
                 | WriteOperation::EditNavigationView(_)
                 | WriteOperation::DeleteNavigationView(_)
-                | WriteOperation::DeleteDraft(_) => {
+                | WriteOperation::DeleteDraft(_)
+                | WriteOperation::DeleteBotStorage => {
                     unreachable!("handled above")
                 }
             };

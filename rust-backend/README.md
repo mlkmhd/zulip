@@ -805,9 +805,30 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
 
 For nginx staging, install `bot-storage-map.conf` in the HTTP context and
 `bot-storage-routes.conf` in `app.d/` for the verified organization host
-and port. Validate and reload. `PUT`, `DELETE`, and `OPTIONS` use Django.
+and port. Validate and reload. With this map, `PUT`, `DELETE`, and `OPTIONS`
+use Django.
 Remove the development option or the nginx routes include and reload after
 validation to return reads to Django.
+
+### Delete bot storage through Rust
+
+Set `ZULIP_RUST_BOT_STORAGE_DELETES=1` for the listener. Web deletes also
+require Django sessions and `ZULIP_RUST_WEB_POST_SCHEME=http` or `https`
+to match the public origin. The database role needs `DELETE` and `UPDATE`
+on `zulip.zerver_botstoragedata`. PostgreSQL requires the latter for
+locking the requested rows before deletion.
+
+Omit `keys` or pass JSON `null` to clear the authenticated bot's storage.
+A list with a missing or repeated key fails without deleting any entries.
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-bot-storage-reads --rust-bot-storage-deletes
+```
+
+For nginx staging, use `bot-storage-with-deletes-map.conf` in place of
+`bot-storage-map.conf` with the same routes include. Restore the read-only
+map, or remove `--rust-bot-storage-deletes` from the development proxy, to
+return deletion to Django while keeping Rust reads active.
 
 ## Read channel folders through Rust
 
