@@ -125,6 +125,31 @@ Use the dedicated Memcached test address from the preceding section and
 `ZULIP_RUST_HTTP_BIN` to run
 `zerver.tests.test_alert_words.AlertWordsRustHTTPTest.test_alert_word_cache_manifest_readiness`.
 
+### Test the Rust alert-word removal transaction
+
+`http::alert_words::remove` takes exclusive access to a writable PostgreSQL
+client, the cache manifest path, the authenticated user's ID and realm ID, and
+words already lowercased with Python's rules. It deletes matching rows, clears
+both realm caches using the current manifest, and returns the remaining words
+after commit. A cache error rolls back the deletion. An empty list still clears
+the caches and returns the current words. HTTP routing and event delivery for
+alert-word removal use Django.
+
+Run the opt-in integration test with an empty disposable PostgreSQL database
+and a dedicated loopback Memcached instance. The test creates a `zulip` schema
+and seeds both services. Use a new database for each run. Set the database DSN
+and the Memcached address to those fixtures:
+
+```sh
+export ZULIP_RUST_ALERT_WORD_TEST_DATABASE='host=/var/run/postgresql dbname=zulip_rust_alert_word_test'
+export ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS=127.0.0.1:11212
+export ZULIP_RUST_ALERT_WORD_TEST_DIR="$(mktemp -d)"
+cargo test --manifest-path rust-backend/Cargo.toml --locked --features http \
+    --test alert_word_removal -- --ignored
+```
+
+Remove the temporary directory and discard both service fixtures after the test.
+
 ## Run the mobile compatibility API over HTTP
 
 `zulip-http` serves `GET /compatibility` and `HEAD /compatibility` directly in

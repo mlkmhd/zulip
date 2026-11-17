@@ -54,6 +54,16 @@ pub(super) async fn ready(path: Arc<Path>) -> bool {
     .unwrap_or(false)
 }
 
+pub(super) async fn invalidate(path: &Path, realm_id: i32) -> io::Result<()> {
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let manifest = Manifest::load(&path)?;
+        let keys = manifest.keys_for_realm(realm_id).collect::<Vec<_>>();
+        memcached::delete_keys(manifest.address, &keys)
+    })
+    .await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::Manifest;

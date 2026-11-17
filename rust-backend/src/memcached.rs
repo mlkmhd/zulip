@@ -6,7 +6,6 @@ use std::{
 
 const TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_KEY_BYTES: usize = 250;
-#[cfg(feature = "python")]
 const MAX_REPLY_BYTES: u64 = b"NOT_FOUND\r\n".len() as u64;
 
 fn validate_address(address: SocketAddr) -> io::Result<()> {
@@ -51,7 +50,6 @@ pub(crate) fn ping(address: SocketAddr) -> io::Result<bool> {
     Ok(reply.starts_with(b"VERSION ") && reply.ends_with(b"\r\n"))
 }
 
-#[cfg(feature = "python")]
 pub(crate) fn delete_keys(address: SocketAddr, keys: &[String]) -> io::Result<()> {
     validate_address(address)?;
     if keys.is_empty() {
