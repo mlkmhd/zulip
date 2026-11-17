@@ -14,6 +14,7 @@ pub mod alert_words;
 mod compatibility;
 mod csrf;
 mod database;
+mod drafts;
 mod form;
 mod locale;
 mod rate_limit;
@@ -102,6 +103,7 @@ pub async fn router_with_user_reads(
             },
         )
         .route(saved_snippets::PATH, snippet_route)
+        .route(drafts::PATH, get(user_reads::get))
         .route("/health/rust-alert-words", get(user_reads::ready));
     let snippet_detail_route = patch(user_reads::write_saved_snippet_detail)
         .delete(user_reads::write_saved_snippet_detail)
@@ -126,6 +128,7 @@ pub async fn router_with_user_reads(
                     alert_word_route
                 },
             )
+            .route(drafts::SESSION_PATH, get(user_reads::get))
             .route(saved_snippets::SESSION_PATH, web_snippet_route);
     }
     Ok(compatibility_router(locales).merge(routes.with_state(user_reads)))

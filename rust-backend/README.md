@@ -479,6 +479,24 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
 
 Omit `ZULIP_RUST_HTTP_BIN` to run the same cases on Django alone.
 
+## Read drafts through Rust
+
+The direct listener serves `GET` and `HEAD` on `/api/v1/drafts` with Basic
+Auth and on `/json/drafts` with the [Django session settings](#read-alert-words-with-a-django-session).
+Use the same PostgreSQL, Redis and activity configuration as the other read
+routes. The database role also needs `SELECT` on `zulip.zerver_draft`,
+`zulip.zerver_recipient`, and `zulip.zerver_subscription`.
+
+Rust checks the account's draft synchronization preference and returns only
+its drafts. The response uses Django's ascending edit-time order, including
+the same recipient IDs for channels, direct messages and drafts without a
+recipient. The development and staging proxies still send drafts to Django.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_drafts
+```
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,

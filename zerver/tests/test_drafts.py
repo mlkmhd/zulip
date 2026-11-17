@@ -1,12 +1,24 @@
+import os
 import time
+from base64 import b64encode
+from contextlib import nullcontext
 from copy import deepcopy
+from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import urlsplit
 
 import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase
 
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.lib.users import check_can_access_user
-from zerver.models import Draft
+from zerver.models import DirectMessageGroup, Draft, Realm, Recipient, Stream, UserProfile
+from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
 
 
 class DraftCreationTests(ZulipTestCase):
@@ -639,3 +651,147 @@ class DraftFetchTest(ZulipTestCase):
         ]
 
         self.assertEqual(data["drafts"], expected_draft_contents)
+
+
+class DraftReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_fetch_parity_with_rust(self) -> None:
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        third = self.example_user("ZOE")
+        stream = Stream.objects.get(realm=user.realm, name="Denmark")
+        created_groups: list[DirectMessageGroup] = []
+
+        def group_recipient(users: list[UserProfile]) -> Recipient:
+            ids = [member.id for member in users]
+            group = get_direct_message_group(ids)
+            if group is None:
+                group = get_or_create_direct_message_group(ids)
+                created_groups.append(group)
+            assert group.recipient is not None
+            return group.recipient
+
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        api_headers = {
+            "Authorization": "Basic "
+            + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        }
+        web_headers = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+        api = "/api/v1/drafts"
+        web = "/json/drafts"
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        original_sync = user.enable_drafts_synchronization
+        created_drafts: list[Draft] = []
+        try:
+            group = group_recipient([user, other, third])
+            self_dm = group_recipient([user])
+            one_to_one = group_recipient([user, other])
+            items = [
+                (user, group, "", "group", datetime(2025, 1, 1, tzinfo=timezone.utc)),
+                (
+                    user,
+                    None,
+                    "old topic",
+                    "missing recipient",
+                    datetime(1969, 12, 31, 23, 59, 59, 500000, tzinfo=timezone.utc),
+                ),
+                (
+                    user,
+                    stream.recipient,
+                    "سلام",
+                    "stream ☃",
+                    datetime(2024, 1, 1, tzinfo=timezone.utc),
+                ),
+                (user, self_dm, "", "self", datetime(2025, 2, 1, tzinfo=timezone.utc)),
+                (other, group, "", "other user's draft", datetime(2025, 3, 1, tzinfo=timezone.utc)),
+                (user, one_to_one, "", "direct", datetime(2025, 4, 1, tzinfo=timezone.utc)),
+            ]
+            created_drafts = Draft.objects.bulk_create(
+                [
+                    Draft(
+                        user_profile=owner,
+                        recipient=recipient,
+                        topic=topic,
+                        content=content,
+                        last_edit_time=timestamp,
+                    )
+                    for owner, recipient, topic, content, timestamp in items
+                ]
+            )
+            with TemporaryDirectory() as directory:
+                secret = Path(directory) / "secret"
+                secret.write_text(settings.SECRET_KEY)
+                env = {
+                    "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                    "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                        settings.AUTHENTICATION_BACKENDS
+                    ).decode(),
+                }
+                service = (
+                    rust_http_service(env)
+                    if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                    else nullcontext(None)
+                )
+                with service as rust_port:
+
+                    def check_request(
+                        method: str,
+                        path: str,
+                        headers: dict[str, str],
+                        status: int,
+                        host: str = user.realm.host,
+                    ) -> bytes:
+                        django = request_test_http(django_port, method, host, headers, path)
+                        self.assertEqual(django[0], status, django[1])
+                        if rust_port is not None:
+                            rust = request_test_http(rust_port, method, host, headers, path)
+                            self.assertEqual(rust[:3], django[:3])
+                        return django[1]
+
+                    for path, headers in ((api, api_headers), (web, web_headers)):
+                        with self.subTest(path=path):
+                            data = orjson.loads(check_request("GET", path, headers, 200))
+                            self.assertEqual(data["count"], 5)
+                            self.assertEqual(
+                                [
+                                    (item["content"], item["type"], item["to"])
+                                    for item in data["drafts"]
+                                ],
+                                [
+                                    ("missing recipient", "", []),
+                                    ("stream ☃", "stream", [stream.id]),
+                                    ("group", "private", sorted([other.id, third.id])),
+                                    ("self", "private", [user.id]),
+                                    ("direct", "private", [other.id]),
+                                ],
+                            )
+                            self.assertEqual(data["drafts"][0]["timestamp"], 0)
+                            self.assertEqual(check_request("HEAD", path, headers, 200), b"")
+                            check_request("GET", path, {}, 401)
+                    other_host = Realm.objects.get(string_id="zephyr").host
+                    check_request("GET", api, api_headers, 401, other_host)
+                    user.enable_drafts_synchronization = False
+                    user.save(update_fields=["enable_drafts_synchronization"])
+                    for path, headers in ((api, api_headers), (web, web_headers)):
+                        data = orjson.loads(check_request("GET", path, headers, 400))
+                        self.assertEqual(data["msg"], "User has disabled synchronizing drafts.")
+                    ids = [draft.id for draft in created_drafts]
+                    self.assertEqual(Draft.objects.filter(id__in=ids).count(), len(ids))
+        finally:
+            user.enable_drafts_synchronization = original_sync
+            user.save(update_fields=["enable_drafts_synchronization"])
+            Draft.objects.filter(id__in=[draft.id for draft in created_drafts]).delete()
+            for created_group in created_groups:
+                recipient_id = created_group.recipient_id
+                assert recipient_id is not None
+                created_group.delete()
+                Recipient.objects.filter(id=recipient_id).delete()
+            session.delete()

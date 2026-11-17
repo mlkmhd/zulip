@@ -22,6 +22,7 @@ use super::{
     activity::{ActivityPublisher, client_name},
     alert_word_cache, alert_words,
     database::Database,
+    drafts,
     form::{Form, FormError},
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
@@ -39,6 +40,7 @@ const NEVER_CACHE: &str = "max-age=0, no-cache, no-store, must-revalidate, priva
 enum Endpoint {
     AlertWords,
     SavedSnippets,
+    Drafts,
 }
 
 #[derive(Clone, Copy)]
@@ -61,14 +63,11 @@ impl Endpoint {
         match self {
             Self::AlertWords => "list_alert_words",
             Self::SavedSnippets => "get_saved_snippets",
+            Self::Drafts => "fetch_drafts",
         }
     }
 
-    async fn read(
-        self,
-        database: &Client,
-        user_id: i32,
-    ) -> Result<(&'static str, String), ApiError> {
+    async fn read(self, database: &Client, user_id: i32) -> Result<String, ApiError> {
         let (field, serialized) = match self {
             Self::AlertWords => (
                 "alert_words",
@@ -78,11 +77,18 @@ impl Endpoint {
                 "saved_snippets",
                 serde_json::to_string(&saved_snippets::list(database, user_id).await?),
             ),
+            Self::Drafts => {
+                if !drafts::synchronization_enabled(database, user_id).await? {
+                    return Err(ApiError::DraftSyncDisabled);
+                }
+                let drafts = drafts::list(database, user_id).await?;
+                let list =
+                    serde_json::to_string(&drafts).expect("database fields can serialize to JSON");
+                return Ok(format!("\"count\":{},\"drafts\":{list}", drafts.len()));
+            }
         };
-        Ok((
-            field,
-            serialized.expect("database fields can serialize to JSON"),
-        ))
+        let value = serialized.expect("database fields can serialize to JSON");
+        Ok(format!("\"{field}\":{value}"))
     }
 }
 
@@ -457,6 +463,7 @@ enum ApiError {
     Form(FormError),
     UnsupportedMethodOverride(Endpoint),
     SnippetNotFound,
+    DraftSyncDisabled,
     RateLimited(f64),
 }
 
@@ -585,13 +592,10 @@ async fn respond(
     form: Option<(WriteOperation, Result<Form, FormError>)>,
 ) -> Response {
     let language = Locales::for_request(&headers);
-    let endpoint = if matches!(
-        uri.path(),
-        saved_snippets::PATH | saved_snippets::SESSION_PATH
-    ) {
-        Endpoint::SavedSnippets
-    } else {
-        Endpoint::AlertWords
+    let endpoint = match uri.path() {
+        saved_snippets::PATH | saved_snippets::SESSION_PATH => Endpoint::SavedSnippets,
+        drafts::PATH | drafts::SESSION_PATH => Endpoint::Drafts,
+        _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
         state.sessions.as_deref()
@@ -718,7 +722,7 @@ async fn respond(
                     .change_alert_words(&form, user_id, realm_id, adding)
                     .await?;
                 // Django reads the current list again after the event has been published.
-                let (field, value) = Endpoint::AlertWords.read(&database, user_id).await?;
+                let fields = Endpoint::AlertWords.read(&database, user_id).await?;
                 let processed: &[_] = if requested_write.is_some_and(WriteOperation::is_post)
                     || form.has_query_client()
                 {
@@ -728,7 +732,7 @@ async fn respond(
                 };
                 let extra = ignored_parameters(&form, processed);
                 return Ok(format!(
-                    "{{\"result\":\"success\",\"msg\":\"\",\"{field}\":{value}{extra}}}\n"
+                    "{{\"result\":\"success\",\"msg\":\"\",{fields}{extra}}}\n"
                 ));
             }
 
@@ -814,9 +818,9 @@ async fn respond(
                 "{{\"result\":\"success\",\"msg\":\"\"{result_fields}{extra}}}\n"
             ));
         }
-        let (field, value) = endpoint.read(&database, user_id).await?;
+        let fields = endpoint.read(&database, user_id).await?;
         Ok(format!(
-            "{{\"result\":\"success\",\"msg\":\"\",\"{field}\":{value}}}\n"
+            "{{\"result\":\"success\",\"msg\":\"\",{fields}}}\n"
         ))
     }
     .await;
@@ -890,6 +894,7 @@ fn error_response(
                 "GET, POST, DELETE, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"DELETE\",\"HEAD\"]}",
             ),
+            Endpoint::Drafts => unreachable!("drafts do not have a Rust write route"),
             Endpoint::SavedSnippets => (
                 "GET, POST, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",
@@ -1002,6 +1007,11 @@ fn error_response(
             (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Malformed payload")
         }
         ApiError::UnsupportedMethodOverride(_) => unreachable!("override handled above"),
+        ApiError::DraftSyncDisabled => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "User has disabled synchronizing drafts.",
+        ),
         ApiError::SnippetNotFound => (
             StatusCode::NOT_FOUND,
             "BAD_REQUEST",
@@ -1048,7 +1058,9 @@ fn error_response(
         ApiError::RateLimited(seconds) => {
             (format!(",\"retry-after\":{seconds:?}"), "Accept-Language")
         }
-        ApiError::Form(_) | ApiError::SnippetNotFound => (String::new(), "Accept-Language"),
+        ApiError::Form(_) | ApiError::SnippetNotFound | ApiError::DraftSyncDisabled => {
+            (String::new(), "Accept-Language")
+        }
         _ => (String::new(), "Accept-Language, Cookie"),
     };
     let mut response = (
