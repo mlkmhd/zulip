@@ -46,7 +46,14 @@ enum WriteOperation {
     CreateSnippet,
     EditSnippet(Option<i64>),
     DeleteSnippet(Option<i64>),
+    AddAlertWords,
     RemoveAlertWords,
+}
+
+impl WriteOperation {
+    fn is_post(self) -> bool {
+        matches!(self, Self::CreateSnippet | Self::AddAlertWords)
+    }
 }
 
 impl Endpoint {
@@ -253,25 +260,32 @@ impl UserReads {
         Ok((database, user))
     }
 
-    async fn remove_alert_words(
+    async fn change_alert_words(
         &self,
         form: &Form,
         user_id: i32,
         realm_id: i32,
+        adding: bool,
     ) -> Result<(), ApiError> {
         let lowercase = self
             .alert_word_lowercase
             .as_deref()
-            .expect("alert-word DELETE configured");
-        let words = alert_words::parse_removals(form, lowercase).map_err(ApiError::Form)?;
+            .expect("alert-word write route configured");
+        let mut words =
+            alert_words::parse_words(form, adding.then_some(100)).map_err(ApiError::Form)?;
+        if !adding {
+            for word in &mut words {
+                *word = lowercase.lower(word);
+            }
+        }
         let manifest = self
             .alert_word_cache_manifest
             .as_deref()
-            .expect("alert-word DELETE requires a cache manifest");
+            .expect("alert-word writes require a cache manifest");
         let activity = self
             .activity
             .as_ref()
-            .expect("alert-word DELETE requires RabbitMQ");
+            .expect("alert-word writes require RabbitMQ");
         if !activity.connected() {
             return Err(ApiError::NotificationUnavailable);
         }
@@ -282,16 +296,19 @@ impl UserReads {
                 .writer()
                 .await
                 .map_err(ApiError::database_unavailable)?;
-            alert_words::remove(&mut writer, manifest, user_id, realm_id, &words)
-                .await
-                .map_err(|error| {
-                    if error.is::<io::Error>() {
-                        eprintln!("Alert-word cache invalidation failed: {error}");
-                        ApiError::AlertWordCacheUnavailable
-                    } else {
-                        ApiError::database_unavailable(error)
-                    }
-                })?
+            let result = if adding {
+                alert_words::add(&mut writer, manifest, user_id, realm_id, &words, lowercase).await
+            } else {
+                alert_words::remove(&mut writer, manifest, user_id, realm_id, &words).await
+            };
+            result.map_err(|error| {
+                if error.is::<io::Error>() {
+                    eprintln!("Alert-word cache invalidation failed: {error}");
+                    ApiError::AlertWordCacheUnavailable
+                } else {
+                    ApiError::database_unavailable(error)
+                }
+            })?
         };
         activity
             .notify_user(
@@ -437,7 +454,7 @@ enum ApiError {
     NotificationUnavailable,
     AlertWordCacheUnavailable,
     Form(FormError),
-    UnsupportedMethodOverride,
+    UnsupportedMethodOverride(Endpoint),
     SnippetNotFound,
     RateLimited(f64),
 }
@@ -503,6 +520,14 @@ pub(super) async fn get(
     headers: HeaderMap,
 ) -> Response {
     respond(state, peer, uri, headers, None).await
+}
+
+pub(super) async fn add_alert_words(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    respond_write(state, peer, request, WriteOperation::AddAlertWords).await
 }
 
 pub(super) async fn remove_alert_words(
@@ -584,9 +609,12 @@ async fn respond(
             requested_write,
             form.as_ref().and_then(|form| form.post_value("method")),
         ) {
-            (Some(WriteOperation::CreateSnippet), Some("GET" | "HEAD")) => None,
-            (Some(WriteOperation::CreateSnippet), Some(method)) if method != "POST" => {
-                return Err(ApiError::UnsupportedMethodOverride);
+            (Some(write), Some("GET" | "HEAD")) if write.is_post() => None,
+            (Some(WriteOperation::AddAlertWords), Some("DELETE")) => {
+                Some(WriteOperation::RemoveAlertWords)
+            }
+            (Some(write), Some(method)) if write.is_post() && method != "POST" => {
+                return Err(ApiError::UnsupportedMethodOverride(endpoint));
             }
             _ => requested_write,
         };
@@ -594,10 +622,11 @@ async fn respond(
             Some(WriteOperation::CreateSnippet) => "create_saved_snippet",
             Some(WriteOperation::EditSnippet(_)) => "edit_saved_snippet",
             Some(WriteOperation::DeleteSnippet(_)) => "delete_saved_snippet",
+            Some(WriteOperation::AddAlertWords) => "add_alert_words",
             Some(WriteOperation::RemoveAlertWords) => "remove_alert_words",
             None => endpoint.activity_name(),
         };
-        let form_client = if matches!(requested_write, Some(WriteOperation::CreateSnippet)) {
+        let form_client = if requested_write.is_some_and(WriteOperation::is_post) {
             form.as_ref().and_then(|form| form.value("client"))
         } else {
             None
@@ -620,7 +649,7 @@ async fn respond(
                 // Django only accepts the form token on a physical POST.
                 let form_token = form
                     .as_ref()
-                    .filter(|_| matches!(requested_write, Some(WriteOperation::CreateSnippet)))
+                    .filter(|_| requested_write.is_some_and(WriteOperation::is_post))
                     .and_then(|form| form.post_value("csrfmiddlewaretoken"));
                 state
                     .web_post_scheme
@@ -679,11 +708,19 @@ async fn respond(
             (database, user.id, user.realm_id)
         };
         if let (Some(write), Some(form)) = (write, form) {
-            if matches!(write, WriteOperation::RemoveAlertWords) {
-                state.remove_alert_words(&form, user_id, realm_id).await?;
+            if matches!(
+                write,
+                WriteOperation::AddAlertWords | WriteOperation::RemoveAlertWords
+            ) {
+                let adding = matches!(write, WriteOperation::AddAlertWords);
+                state
+                    .change_alert_words(&form, user_id, realm_id, adding)
+                    .await?;
                 // Django reads the current list again after the event has been published.
                 let (field, value) = Endpoint::AlertWords.read(&database, user_id).await?;
-                let processed: &[_] = if form.has_query_client() {
+                let processed: &[_] = if requested_write.is_some_and(WriteOperation::is_post)
+                    || form.has_query_client()
+                {
                     &["alert_words", "client"]
                 } else {
                     &["alert_words"]
@@ -739,7 +776,9 @@ async fn respond(
                     }
                     Some(SnippetEvent::Removed(id))
                 }
-                WriteOperation::RemoveAlertWords => unreachable!("handled above"),
+                WriteOperation::AddAlertWords | WriteOperation::RemoveAlertWords => {
+                    unreachable!("handled above")
+                }
             };
             if let Some(event) = change {
                 activity
@@ -839,17 +878,28 @@ fn error_response(
     path: &str,
     browser: bool,
 ) -> Response {
-    if matches!(error, ApiError::UnsupportedMethodOverride) {
+    if let ApiError::UnsupportedMethodOverride(endpoint) = error {
+        let (allow, body) = match endpoint {
+            Endpoint::AlertWords => (
+                "GET, POST, DELETE, HEAD",
+                "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"DELETE\",\"HEAD\"]}",
+            ),
+            Endpoint::SavedSnippets => (
+                "GET, POST, HEAD",
+                "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",
+            ),
+        };
         return (
             StatusCode::METHOD_NOT_ALLOWED,
             [
-                (header::ALLOW, "GET, POST, HEAD"),
+                (header::ALLOW, allow),
                 (header::CONTENT_TYPE, "text/html; charset=utf-8"),
                 (header::VARY, "Accept-Language, Cookie"),
                 (header::CACHE_CONTROL, NEVER_CACHE),
             ],
-            "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",
-        ).into_response();
+            body,
+        )
+            .into_response();
     }
     if matches!(error, ApiError::MissingAuthentication) && prefers_html(headers) {
         let query = form_urlencoded::Serializer::new(String::new())
@@ -937,7 +987,7 @@ fn error_response(
             "BAD_REQUEST",
             "{var_name} cannot be blank",
         ),
-        ApiError::Form(FormError::TooLong(..)) => (
+        ApiError::Form(FormError::TooLong(..) | FormError::ItemTooLong(..)) => (
             StatusCode::BAD_REQUEST,
             "BAD_REQUEST",
             "{var_name} is too long (limit: {max_length} characters)",
@@ -945,7 +995,7 @@ fn error_response(
         ApiError::Form(FormError::Malformed) => {
             (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Malformed payload")
         }
-        ApiError::UnsupportedMethodOverride => unreachable!("override handled above"),
+        ApiError::UnsupportedMethodOverride(_) => unreachable!("override handled above"),
         ApiError::SnippetNotFound => (
             StatusCode::NOT_FOUND,
             "BAD_REQUEST",
@@ -969,6 +1019,9 @@ fn error_response(
         ApiError::Form(FormError::ExpectedString(name, index)) => {
             translated.replace("{var_name}", &format!("{name}[{index}]"))
         }
+        ApiError::Form(FormError::ItemTooLong(name, index, length)) => translated
+            .replace("{var_name}", &format!("{name}[{index}]"))
+            .replace("{max_length}", &length.to_string()),
         ApiError::Form(FormError::TooLong(name, length)) => translated
             .replace("{var_name}", name)
             .replace("{max_length}", &length.to_string()),

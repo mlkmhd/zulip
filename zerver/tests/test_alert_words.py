@@ -8,6 +8,7 @@ from contextlib import nullcontext
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
+from typing import Literal
 from unittest import skipUnless
 from unittest.mock import patch
 from urllib.parse import quote, urlencode, urlsplit
@@ -444,8 +445,15 @@ class AlertWordMemcachedTest(ZulipTestCase):
     and os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"),
     "Dedicated Memcached and RabbitMQ fixtures are unavailable",
 )
-class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+class AlertWordWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
     def test_delete_http_cache_and_event_parity(self) -> None:
+        self.check_write_http_cache_and_event_parity("DELETE")
+
+    def test_post_http_cache_and_event_parity(self) -> None:
+        self.check_write_http_cache_and_event_parity("POST")
+
+    def check_write_http_cache_and_event_parity(self, method: Literal["POST", "DELETE"]) -> None:
+        adding = method == "POST"
         vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
         assert vhost.startswith("zulip-rust-test-")
         password = settings.RABBITMQ_PASSWORD
@@ -474,9 +482,10 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         modern_upper = "\u1c89"
         modern_lower = "\u1c8a"
         initial_words = ["hello", "ος", "οσ'α", "i\u0307", "keep", modern_lower]
-        remaining_words = (
-            ["keep"] if modern_upper.lower() == modern_lower else ["keep", modern_lower]
-        )
+        after_delete = ["keep"] if modern_upper.lower() == modern_lower else ["keep", modern_lower]
+        unicode_limit = "🚀" * 100
+        after_post = [*initial_words, "فوری", "FOO", "σ", unicode_limit]
+        remaining_words = after_post if adding else after_delete
         (shared_word,) = AlertWord.objects.bulk_create(
             [AlertWord(user_profile=other, realm=user.realm, word="hello")]
         )
@@ -505,6 +514,14 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 ).decode()
             }
         )
+        add = urlencode(
+            {
+                "alert_words": orjson.dumps(
+                    ["  HELLO", "\x1fفوری\x1e", " foo", " FOO ", "   ", "Σ", "σ", unicode_limit]
+                ).decode()
+            }
+        )
+        payload = add if adding else remove
         media = {"Content-Type": "application/x-www-form-urlencoded"}
         # Load the URLconf with the usual test settings before enabling deployment cache prefixes.
         get_resolver().resolve("/api/v1/users/me/alert_words")
@@ -547,6 +564,7 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 call_command("export_rust_alert_word_cache", manifest, lowercase_output=lowercase)
             environment = {
                 "ZULIP_RUST_AMQP_URL": amqp_url,
+                "ZULIP_RUST_ALERT_WORD_POSTS": str(int(adding)),
                 "ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST": str(manifest),
                 "ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE": str(lowercase),
                 "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
@@ -574,8 +592,10 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 )
                 for key in [*keys, unrelated]:
                     cache.set(key, "cached")
+                read_override = adding and "method=GET" in body
+                delete_override = adding and "method=DELETE" in body
                 response = request_test_http(
-                    port, "DELETE", user.realm.host, headers, path, body=body
+                    port, method, user.realm.host, headers, path, body=body
                 )
                 self.assertEqual(response[0], status, response[1])
                 self.assertCountEqual(
@@ -587,16 +607,27 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     self.assertEqual(cache.get(key), "cached" if remaining is None else None)
                 _, _, event = channel.basic_get("notify_tornado", auto_ack=True)
                 _, _, activity = channel.basic_get("user_activity", auto_ack=True)
-                if status in (401, 403):
+                if status in (401, 403, 405):
                     self.assertIsNone(activity)
                 else:
                     assert activity is not None
                     activity_data = orjson.loads(activity)
                     self.assertEqual(activity_data["user_profile_id"], user.id)
-                    self.assertEqual(activity_data["query"], "remove_alert_words")
+                    expected_activity = (
+                        "list_alert_words"
+                        if read_override
+                        else "remove_alert_words"
+                        if delete_override or not adding
+                        else "add_alert_words"
+                    )
+                    self.assertEqual(activity_data["query"], expected_activity)
                     self.assertIsNone(channel.basic_get("user_activity", auto_ack=True)[2])
                 if remaining is None:
                     self.assertIsNone(event)
+                    if read_override:
+                        self.assertCountEqual(
+                            orjson.loads(response[1])["alert_words"], initial_words
+                        )
                 else:
                     self.assertCountEqual(orjson.loads(response[1])["alert_words"], remaining)
                     assert event is not None
@@ -605,7 +636,13 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     self.assertEqual(payload["event"]["type"], "alert_words")
                     self.assertCountEqual(payload["event"]["alert_words"], remaining)
                     self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
-                return response[0], response[1], response[2]
+                response_body = response[1]
+                if status == 200:
+                    # Neither query specifies an order for the alert-word list.
+                    data = orjson.loads(response_body)
+                    data["alert_words"].sort()
+                    response_body = orjson.dumps(data)
+                return response[0], response_body, response[2]
 
             api = "/api/v1/users/me/alert_words"
             web = "/json/users/me/alert_words"
@@ -615,24 +652,24 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     browser = {**media, **secure, **cookie, "X-CSRFToken": token}
                     origin = {"Origin": f"{scheme}://{user.realm.host}"}
                     cases = [
-                        ("web valid", web, {**browser, **origin}, remove, 200, remaining_words),
+                        ("web valid", web, {**browser, **origin}, payload, 200, remaining_words),
                         (
                             "web CSRF in body",
                             web,
                             {**media, **secure, **cookie, **origin},
-                            f"{remove}&csrfmiddlewaretoken={token}",
-                            403,
-                            None,
+                            f"{payload}&csrfmiddlewaretoken={token}",
+                            200 if adding else 403,
+                            remaining_words if adding else None,
                         ),
                         (
                             "web other origin",
                             web,
                             {**browser, "Origin": f"{scheme}://other.testserver"},
-                            remove,
+                            payload,
                             403,
                             None,
                         ),
-                        ("web anonymous", web, {**media, **secure}, remove, 401, None),
+                        ("web anonymous", web, {**media, **secure}, payload, 401, None),
                     ]
                     if scheme == "https":
                         cases.extend(
@@ -641,18 +678,18 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                     "secure referer",
                                     web,
                                     {**browser, "Referer": f"https://{user.realm.host}/"},
-                                    remove,
+                                    payload,
                                     200,
                                     remaining_words,
                                 ),
-                                ("missing referer", web, browser, remove, 403, None),
+                                ("missing referer", web, browser, payload, 403, None),
                             ]
                         )
                     else:
                         authorized = {**media, **basic}
                         cases.extend(
                             [
-                                ("API valid", api, authorized, remove, 200, remaining_words),
+                                ("API valid", api, authorized, payload, 200, remaining_words),
                                 (
                                     "API empty",
                                     api,
@@ -665,13 +702,15 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                     "API body overrides query",
                                     f"{api}?alert_words=invalid&extra=1&client=ZulipMobile",
                                     authorized,
-                                    f"{remove}&method=GET&client=ignored",
+                                    f"{payload}&client=website"
+                                    if adding
+                                    else f"{payload}&method=GET&client=ignored",
                                     200,
                                     remaining_words,
                                 ),
                                 (
                                     "API query only",
-                                    f"{api}?{remove}",
+                                    f"{api}?{payload}",
                                     authorized,
                                     "",
                                     200,
@@ -686,7 +725,7 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                     },
                                     '--words\r\nContent-Disposition: form-data; name="alert_words"\r\n\r\n["HELLO"]\r\n--words--\r\n',
                                     200,
-                                    initial_words[1:],
+                                    initial_words if adding else initial_words[1:],
                                 ),
                                 ("API missing", api, authorized, "", 400, None),
                                 ("API malformed", api, authorized, "alert_words=%5B", 400, None),
@@ -699,7 +738,58 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                     400,
                                     None,
                                 ),
-                                ("API anonymous", api, media, remove, 401, None),
+                                ("API anonymous", api, media, payload, 401, None),
+                            ]
+                        )
+                    if adding and scheme == "http":
+                        cases.extend(
+                            [
+                                (
+                                    "API length before trimming",
+                                    api,
+                                    authorized,
+                                    urlencode(
+                                        {
+                                            "alert_words": orjson.dumps(
+                                                ["valid", " " + unicode_limit]
+                                            ).decode()
+                                        }
+                                    ),
+                                    400,
+                                    None,
+                                ),
+                                (
+                                    "API method override GET",
+                                    api,
+                                    authorized,
+                                    "method=GET",
+                                    200,
+                                    None,
+                                ),
+                                (
+                                    "API method override DELETE",
+                                    api,
+                                    authorized,
+                                    f"{remove}&method=DELETE",
+                                    200,
+                                    after_delete,
+                                ),
+                                (
+                                    "API unsupported method override",
+                                    api,
+                                    authorized,
+                                    "method=PATCH",
+                                    405,
+                                    None,
+                                ),
+                                (
+                                    "web form token precedence",
+                                    web,
+                                    {**browser, **origin, "X-CSRFToken": "wrong"},
+                                    f"{add}&csrfmiddlewaretoken={token}",
+                                    200,
+                                    after_post,
+                                ),
                             ]
                         )
                     service = (
@@ -727,10 +817,12 @@ class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                                     "address": f"127.0.0.1:{unused_port.getsockname()[1]}",
                                 }
                                 manifest.write_bytes(orjson.dumps(failed))
-                                check_request(rust_port, api, {**media, **basic}, remove, 503, None)
+                                check_request(
+                                    rust_port, api, {**media, **basic}, payload, 503, None
+                                )
                             manifest.write_bytes(original_manifest)
                             check_request(
-                                rust_port, api, {**media, **basic}, remove, 200, remaining_words
+                                rust_port, api, {**media, **basic}, payload, 200, remaining_words
                             )
             finally:
                 words.delete()

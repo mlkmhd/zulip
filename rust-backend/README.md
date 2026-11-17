@@ -330,12 +330,34 @@ described above. From the provisioned checkout, run:
 
 ```sh
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
-    ./tools/test-backend zerver.tests.test_alert_words.AlertWordRemovalHTTPTest
+    ./tools/test-backend zerver.tests.test_alert_words.AlertWordWriteHTTPTest.test_delete_http_cache_and_event_parity
 ```
 
 Omit `ZULIP_RUST_HTTP_BIN` to run the Django baseline. The test uses a single
 Tornado queue and compares its messages directly with the HTTP responses,
 committed data and Memcached entries.
+
+## Add alert words through Rust
+
+After configuring [deletion](#delete-alert-words-through-rust), set
+`ZULIP_RUST_ALERT_WORD_POSTS=1` and restart `zulip-http`. This enables `POST` on
+the direct alert-word API and, with sessions and the external web scheme set,
+on its web counterpart. The PostgreSQL role also needs `INSERT` on
+`zulip.zerver_alertword` and `USAGE` on its ID sequence.
+
+The handler checks the 100-character limit before trimming whitespace. It
+discards empty words and matches existing words using the exported Python
+lowercase rules. For duplicates within one request, it uses the last spelling
+at the first occurrence's position. Like DELETE, it clears the realm caches
+before commit and sends the updated list to the same user afterward.
+
+A web POST accepts the form CSRF token or the `X-CSRFToken` header. The usual
+POST method overrides for `GET`, `HEAD`, and `DELETE` also check CSRF. Remove
+`ZULIP_RUST_ALERT_WORD_POSTS` and restart to disable direct POST. The current
+development and staging proxy rules send POST to Django.
+
+Use the same fixtures as the DELETE comparison and run
+`zerver.tests.test_alert_words.AlertWordWriteHTTPTest.test_post_http_cache_and_event_parity`.
 
 ## Route alert-word reads through the development proxy
 
