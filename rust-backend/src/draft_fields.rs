@@ -4,7 +4,8 @@ pub(crate) enum Recipients {
     Direct(Vec<i32>),
 }
 
-#[derive(serde::Serialize)]
+#[cfg_attr(feature = "http", derive(serde::Serialize))]
+#[cfg_attr(feature = "python", derive(pyo3::IntoPyObject))]
 pub(crate) struct DraftFields {
     id: i64,
     r#type: &'static str,

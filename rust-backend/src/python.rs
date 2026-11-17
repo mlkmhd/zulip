@@ -5,6 +5,7 @@ use pyo3::exceptions::{PyConnectionError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
+use crate::draft_fields::{DraftFields, Recipients};
 use crate::{
     alert_words, bot_storage, direct_message_group, draft_text, draft_timestamp, memcached,
     stream_color, user_status,
@@ -110,6 +111,24 @@ mod _zulip_backend {
             Err(draft_timestamp::TimestampError::Negative) => (None, true),
             Err(draft_timestamp::TimestampError::OutOfRange) => (None, false),
         }
+    }
+
+    #[pyfunction(signature = (id, owner_id, channel_id, dm_members, topic, content, timestamp))]
+    fn serialize_draft(
+        id: i64,
+        owner_id: i32,
+        channel_id: Option<i32>,
+        dm_members: Option<Vec<i32>>,
+        topic: String,
+        content: String,
+        timestamp: i64,
+    ) -> DraftFields {
+        let recipients = match (channel_id, dm_members) {
+            (Some(id), _) => Recipients::Channel(id),
+            (None, Some(members)) => Recipients::Direct(members),
+            (None, None) => Recipients::Unset,
+        };
+        DraftFields::new(id, owner_id, recipients, topic, content, timestamp)
     }
 
     #[pyfunction]
