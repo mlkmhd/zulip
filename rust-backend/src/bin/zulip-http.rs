@@ -6,8 +6,8 @@ use std::{
 };
 
 use _zulip_backend::http::{
-    ActivityConfig, ClientIpSource, RateLimitConfig, SessionConfig, UserReadConfig, router,
-    router_with_user_reads,
+    ActivityConfig, ClientIpSource, RateLimitConfig, SessionConfig, UserReadConfig, WebPostScheme,
+    router, router_with_user_reads,
 };
 use axum::Router;
 use tokio::net::TcpListener;
@@ -25,7 +25,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         env::var_os("ZULIP_LOCALE_DIR").map_or_else(|| PathBuf::from("locale"), PathBuf::from);
     let app = match env::var("ZULIP_RUST_DATABASE_URL") {
         Ok(database) => user_read_router(&locale_dir, &database).await?,
-        Err(env::VarError::NotPresent) => router(&locale_dir)?,
+        Err(env::VarError::NotPresent) => {
+            if optional_env("ZULIP_RUST_WEB_POST_SCHEME")?.is_some() {
+                return Err("Web POST requires ZULIP_RUST_DATABASE_URL".into());
+            }
+            router(&locale_dir)?
+        }
         Err(error) => return Err(error.into()),
     };
     let listener = TcpListener::bind(address).await?;
@@ -68,6 +73,12 @@ async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, B
             ),
             Some(_) => return Err("ZULIP_RUST_SAVED_SNIPPET_WRITES must be 0 or 1".into()),
         };
+    let web_post_scheme = match optional_env("ZULIP_RUST_WEB_POST_SCHEME")?.as_deref() {
+        None => None,
+        Some("http") => Some(WebPostScheme::Http),
+        Some("https") => Some(WebPostScheme::Https),
+        Some(_) => return Err("ZULIP_RUST_WEB_POST_SCHEME must be http or https".into()),
+    };
     let shards =
         optional_env("ZULIP_RUST_USER_ACTIVITY_SHARDS")?.map_or(Ok(1), |value| value.parse())?;
     let secret_file = env::var_os("ZULIP_RUST_DJANGO_SECRET_KEY_FILE").map(PathBuf::from);
@@ -82,6 +93,7 @@ async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, B
         locale_dir,
         UserReadConfig {
             database,
+            web_post_scheme,
             saved_snippet_max_content_length,
             external_host: &external_host,
             rate_limit: redis_url.as_deref().map(|url| RateLimitConfig {

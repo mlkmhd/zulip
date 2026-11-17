@@ -6,6 +6,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from tempfile import NamedTemporaryFile
+from time import monotonic, sleep
 from unittest import skipUnless
 from urllib.parse import quote, urlencode, urlsplit
 
@@ -15,6 +16,8 @@ from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
 from django.db import connection
+from django.http import HttpRequest
+from django.middleware.csrf import _get_new_csrf_string, get_token
 from django.test import LiveServerTestCase
 from django.utils.timezone import now as timezone_now
 
@@ -424,7 +427,7 @@ class SavedSnippetReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
 
 @skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
 class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
-    def test_saved_snippet_write_http_and_event_parity(self) -> None:
+    def saved_snippet_broker(self) -> tuple[str, str]:
         vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
         assert vhost.startswith("zulip-rust-test-")
         username, password = settings.RABBITMQ_USERNAME, settings.RABBITMQ_PASSWORD
@@ -433,6 +436,10 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             f"amqp://{quote(username, safe='')}:{quote(password, safe='')}"
             f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
         )
+        return vhost, amqp_url
+
+    def test_saved_snippet_write_http_and_event_parity(self) -> None:
+        vhost, amqp_url = self.saved_snippet_broker()
         environment = {"ZULIP_RUST_AMQP_URL": amqp_url, "ZULIP_RUST_SAVED_SNIPPET_WRITES": "1"}
         django_port = urlsplit(self.live_server_url).port
         assert django_port is not None
@@ -478,6 +485,177 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 channel.queue_purge("user_activity")
                 audits.exclude(id__in=initial_audit_ids).delete()
                 snippets.exclude(id__in=initial_snippet_ids).delete()
+
+    def test_saved_snippet_web_post_http_and_event_parity(self) -> None:
+        vhost, amqp_url = self.saved_snippet_broker()
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        user = self.example_user("hamlet")
+        store = SessionStore()
+        store.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        store.create()
+        session = f"{settings.SESSION_COOKIE_NAME}={store.session_key}"
+        with (
+            self.settings(
+                USING_RABBITMQ=True,
+                RABBITMQ_VHOST=vhost,
+                TORNADO_PROCESSES=1,
+                SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
+            ),
+            pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+            NamedTemporaryFile(mode="w", encoding="utf-8") as secret,
+        ):
+            secret.write(settings.SECRET_KEY)
+            secret.flush()
+            environment = {
+                "ZULIP_RUST_AMQP_URL": amqp_url,
+                "ZULIP_RUST_SAVED_SNIPPET_WRITES": "1",
+                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": secret.name,
+                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                    settings.AUTHENTICATION_BACKENDS
+                ).decode(),
+                "ZULIP_RUST_SESSION_COOKIE_NAME": settings.SESSION_COOKIE_NAME,
+                "ZULIP_RUST_CSRF_COOKIE_NAME": settings.CSRF_COOKIE_NAME,
+            }
+            channel = broker.channel()
+            for queue in ("notify_tornado", "user_activity"):
+                channel.queue_declare(queue, durable=True)
+                channel.queue_purge(queue)
+            try:
+                for scheme in ("http", "https"):
+                    with self.subTest(scheme=scheme):
+                        kwargs = {"ZULIP_RUST_WEB_POST_SCHEME": scheme}
+                        service = (
+                            rust_http_service({**environment, **kwargs})
+                            if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                            else nullcontext(None)
+                        )
+                        with service as rust_port:
+                            self.check_web_post_cases(
+                                scheme, django_port, rust_port, user, session, channel
+                            )
+            finally:
+                for queue in ("notify_tornado", "user_activity"):
+                    channel.queue_purge(queue)
+                Session.objects.filter(session_key=store.session_key).delete()
+                RealmAuditLog.objects.filter(
+                    acting_user=user, event_type=AuditLogEventType.SAVED_SNIPPET_CREATED
+                ).delete()
+                SavedSnippet.objects.filter(user_profile=user).delete()
+
+    def check_web_post_cases(
+        self,
+        scheme: str,
+        django_port: int,
+        rust_port: int | None,
+        user: UserProfile,
+        session: str,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> None:
+        host = user.realm.host
+        token = _get_new_csrf_string()
+        browser_request = HttpRequest()
+        browser_request.META["CSRF_COOKIE"] = token
+        masked = get_token(browser_request)
+        wrong_token = _get_new_csrf_string()
+        cookie = f"{session}; {settings.CSRF_COOKIE_NAME}={token}"
+        valid = {"Cookie": cookie, "X-CSRFToken": token}
+        origin = {"Origin": f"{scheme}://{host}"}
+        csrf_headers = {**valid, **origin}
+        fields = {"title": "  سلام ☃  ", "content": " **hello**\nworld "}
+        credentials = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+
+        def post(
+            port: int, headers: dict[str, str], form: dict[str, str], query: str = ""
+        ) -> tuple[int, bytes, dict[str, str | None], str | None]:
+            return request_test_http(
+                port,
+                "POST",
+                host,
+                {
+                    **headers,
+                    "X-Forwarded-Proto": scheme if port == django_port else "http",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                "/json/saved_snippets" + query,
+                body=urlencode(form),
+            )
+
+        cases = [
+            (origin, fields, "", 401),
+            ({**origin, "Authorization": f"Basic {credentials}"}, fields, "", 401),
+            ({**csrf_headers, "Cookie": session}, fields, "", 403),
+            ({**origin, "Cookie": cookie}, fields, f"?csrfmiddlewaretoken={token}", 403),
+            ({**csrf_headers, "X-CSRFToken": wrong_token}, fields, "", 403),
+            ({**csrf_headers, "X-CSRFToken": "a" * 31 + "!"}, fields, "", 403),
+            ({**csrf_headers, "X-CSRFToken": "short"}, fields, "", 403),
+            ({**csrf_headers, "Origin": f"{scheme}://other.testserver"}, fields, "", 403),
+            ({**csrf_headers, "Origin": "null"}, fields, "", 403),
+            ({**csrf_headers, "Origin": f"{scheme}://{host}/"}, fields, "", 403),
+            ({**origin, "Cookie": cookie}, {"method": "GET"}, "", 403),
+            (csrf_headers, {**fields, "csrfmiddlewaretoken": wrong_token}, "", 403),
+            (csrf_headers, {"title": "x"}, "", 400),
+            (csrf_headers, {"method": "GET"}, "", 200),
+        ]
+        if scheme == "https":
+            cases.extend(
+                [
+                    (valid, fields, "", 403),
+                    ({**valid, "Referer": f"http://{host}/"}, fields, "", 403),
+                    ({**valid, "Referer": "https://other.testserver/"}, fields, "", 403),
+                    ({**valid, "Referer": "/relative"}, fields, "", 403),
+                ]
+            )
+        for headers, form, query, expected in cases:
+            django = post(django_port, headers, form, query)
+            self.assertEqual(django[0], expected, django[1])
+            if rust_port is not None:
+                self.assertEqual(post(rust_port, headers, form, query)[:3], django[:3])
+        self.assertFalse(SavedSnippet.objects.filter(user_profile=user).exists())
+        self.assertFalse(
+            RealmAuditLog.objects.filter(
+                acting_user=user, event_type=AuditLogEventType.SAVED_SNIPPET_CREATED
+            ).exists()
+        )
+        self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+
+        success_cases = [
+            (
+                valid if scheme == "http" else {**valid, "Referer": f"https://{host}/#list"},
+                {**fields, "csrfmiddlewaretoken": ""},
+            ),
+            (
+                {
+                    **csrf_headers,
+                    "Cookie": f"{session}; {settings.CSRF_COOKIE_NAME}={masked}",
+                    "X-CSRFToken": wrong_token,
+                },
+                {**fields, "csrfmiddlewaretoken": masked},
+            ),
+        ]
+        for headers, form in success_cases:
+            results = []
+            for port in (django_port, rust_port):
+                if port is None:
+                    continue
+                status, body, response_headers, _ = post(port, headers, form)
+                self.assertEqual(status, 200, body)
+                result = orjson.loads(body)
+                snippet, audit = self.check_created_snippet(
+                    user, channel, result.pop("saved_snippet_id"), "سلام ☃", "**hello**\nworld"
+                )
+                audit.delete()
+                snippet.delete()
+                response_headers.pop("Content-Length")
+                results.append((result, response_headers))
+            if rust_port is not None:
+                self.assertEqual(results[0], results[1])
 
     def post_snippet(
         self,
@@ -567,36 +745,55 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             self.assertEqual(result, expected)
             headers.pop("Content-Length")
             responses.append((status, orjson.dumps(result), headers))
-            saved = SavedSnippet.objects.get(id=snippet_id)
-            self.assertEqual(
-                (saved.title, saved.content, saved.user_profile_id, saved.realm_id),
-                (title, content, user.id, user.realm_id),
-            )
-            audit = RealmAuditLog.objects.get(
-                event_type=AuditLogEventType.SAVED_SNIPPET_CREATED,
-                extra_data={"saved_snippet_id": snippet_id},
-            )
-            self.assertEqual(
-                (audit.realm_id, audit.acting_user_id, audit.modified_user_id, audit.backfilled),
-                (user.realm_id, user.id, user.id, False),
-            )
-            self.assertGreaterEqual(audit.event_time, saved.date_created)
-            delivery, properties, event_body = channel.basic_get("notify_tornado", auto_ack=True)
-            assert delivery is not None and properties is not None and event_body is not None
-            self.assertEqual(properties.delivery_mode, 2)
-            self.assertEqual(
-                orjson.loads(event_body),
-                {
-                    "users": [user.id],
-                    "event": {
-                        "type": "saved_snippets",
-                        "op": "add",
-                        "saved_snippet": saved.to_api_dict(),
-                    },
-                },
-            )
-            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            self.check_created_snippet(user, channel, snippet_id, title, content)
         return responses
+
+    def check_created_snippet(
+        self,
+        user: UserProfile,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+        snippet_id: int,
+        title: str,
+        content: str,
+    ) -> tuple[SavedSnippet, RealmAuditLog]:
+        saved = SavedSnippet.objects.get(id=snippet_id)
+        self.assertEqual(
+            (saved.title, saved.content, saved.user_profile_id, saved.realm_id),
+            (title, content, user.id, user.realm_id),
+        )
+        audit = RealmAuditLog.objects.get(
+            event_type=AuditLogEventType.SAVED_SNIPPET_CREATED,
+            extra_data={"saved_snippet_id": snippet_id},
+        )
+        self.assertEqual(
+            (audit.realm_id, audit.acting_user_id, audit.modified_user_id, audit.backfilled),
+            (user.realm_id, user.id, user.id, False),
+        )
+        self.assertGreaterEqual(audit.event_time, saved.date_created)
+        # Django publishes without waiting for broker confirmation.
+        deadline = monotonic() + 2
+        while True:
+            delivery, properties, event_body = channel.basic_get("notify_tornado", auto_ack=True)
+            if delivery is not None:
+                break
+            if monotonic() >= deadline:
+                self.fail("RabbitMQ did not deliver the created snippet event")
+            sleep(0.01)
+        assert properties is not None and event_body is not None
+        self.assertEqual(properties.delivery_mode, 2)
+        self.assertEqual(
+            orjson.loads(event_body),
+            {
+                "users": [user.id],
+                "event": {
+                    "type": "saved_snippets",
+                    "op": "add",
+                    "saved_snippet": saved.to_api_dict(),
+                },
+            },
+        )
+        self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+        return saved, audit
 
     def check_edit_cases(
         self,

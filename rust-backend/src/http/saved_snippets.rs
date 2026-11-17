@@ -132,7 +132,11 @@ impl SnippetForm {
     }
 
     pub fn method_override(&self) -> Option<&str> {
-        self.fields.get("method").map(String::as_str)
+        self.post_value("method")
+    }
+
+    pub fn post_value(&self, name: &str) -> Option<&str> {
+        self.fields.get(name).map(String::as_str)
     }
 
     pub fn value(&self, name: &str) -> Option<&str> {

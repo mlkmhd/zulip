@@ -16,7 +16,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use tokio_postgres::Client;
 
 use super::{
-    UserReadConfig,
+    UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
     database::Database,
     locale::Locales,
@@ -28,6 +28,7 @@ use super::{
 pub(super) const ALERT_WORDS_PATH: &str = "/api/v1/users/me/alert_words";
 pub(super) const ALERT_WORDS_SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
+const NEVER_CACHE: &str = "max-age=0, no-cache, no-store, must-revalidate, private";
 
 #[derive(Clone, Copy)]
 enum Endpoint {
@@ -125,6 +126,7 @@ pub(super) struct UserReads {
     rate_limiter: Option<RateLimiter>,
     activity: Option<ActivityPublisher>,
     sessions: Option<Arc<Sessions>>,
+    web_post_scheme: Option<WebPostScheme>,
     saved_snippet_max_content_length: Option<usize>,
 }
 
@@ -161,6 +163,7 @@ impl UserReads {
             rate_limiter,
             activity,
             sessions,
+            web_post_scheme: settings.web_post_scheme,
             saved_snippet_max_content_length: settings.saved_snippet_max_content_length,
         })
     }
@@ -317,23 +320,23 @@ fn credentials(headers: &HeaderMap) -> Result<Credentials, ApiError> {
     let Some(header) = values.next() else {
         return Err(ApiError::MissingAuthentication);
     };
-    let malformed = ApiError::Unauthorized("Invalid authorization header for basic auth");
-    let mut fields = header.to_str().map_err(|_| malformed)?.split_whitespace();
+    let malformed = || ApiError::Unauthorized("Invalid authorization header for basic auth");
+    let mut fields = header.to_str().map_err(|_| malformed())?.split_whitespace();
     let (Some(scheme), Some(encoded), None, None) =
         (fields.next(), fields.next(), fields.next(), values.next())
     else {
-        return Err(malformed);
+        return Err(malformed());
     };
     if !scheme.eq_ignore_ascii_case("basic") {
         return Err(ApiError::BadRequest(
             "This endpoint requires HTTP basic authentication.",
         ));
     }
-    let decoded = STANDARD.decode(encoded).map_err(|_| malformed)?;
-    let decoded = std::str::from_utf8(&decoded).map_err(|_| malformed)?;
-    let (email, key) = decoded.split_once(':').ok_or(malformed)?;
+    let decoded = STANDARD.decode(encoded).map_err(|_| malformed())?;
+    let decoded = std::str::from_utf8(&decoded).map_err(|_| malformed())?;
+    let (email, key) = decoded.split_once(':').ok_or_else(malformed)?;
     if key.contains(':') {
-        return Err(malformed);
+        return Err(malformed());
     }
     let key = key.trim();
     if key.len() != 32 || !key.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
@@ -345,9 +348,9 @@ fn credentials(headers: &HeaderMap) -> Result<Credentials, ApiError> {
     })
 }
 
-#[derive(Clone, Copy)]
 enum ApiError {
     MissingAuthentication,
+    Csrf(String),
     Unauthorized(&'static str),
     BadRequest(&'static str),
     DeactivatedUser,
@@ -516,6 +519,11 @@ async fn respond(
             Some(SnippetWrite::Delete(_)) => "delete_saved_snippet",
             None => endpoint.activity_name(),
         };
+        let form_client = if matches!(requested_write, Some(SnippetWrite::Create)) {
+            form.as_ref().and_then(|form| form.value("client"))
+        } else {
+            None
+        };
         let (database, user_id, realm_id) = if let Some(sessions) = browser_session {
             let subdomain =
                 subdomain(&headers, &state.external_host).ok_or(ApiError::InvalidHost)?;
@@ -530,6 +538,17 @@ async fn respond(
                     return Err(ApiError::MissingAuthentication);
                 }
             };
+            // A method override changes the target view, but CSRF uses the physical POST.
+            if matches!(requested_write, Some(SnippetWrite::Create)) {
+                let form_token = form
+                    .as_ref()
+                    .and_then(|form| form.post_value("csrfmiddlewaretoken"));
+                state
+                    .web_post_scheme
+                    .expect("web POST route configured")
+                    .validate(&headers, sessions.csrf_cookie(&headers), form_token)
+                    .map_err(ApiError::Csrf)?;
+            }
             // The browser dispatcher checks the quota before account state and activity.
             state
                 .limit(user.id, &user.rate_limits, &mut rate_limit)
@@ -550,7 +569,7 @@ async fn respond(
                     "Webhook bots can only access webhooks",
                 ));
             }
-            let client = client_name(None, uri.query(), &headers);
+            let client = client_name(form_client, uri.query(), &headers);
             let client = if client.starts_with("Zulip") {
                 &client
             } else {
@@ -559,14 +578,9 @@ async fn respond(
             state
                 .record_activity(&database, user.id, activity_name, client)
                 .await?;
-            (database, user.id, None)
+            (database, user.id, user.realm_id)
         } else {
             let (database, user) = state.authenticate(&headers).await?;
-            let form_client = if matches!(requested_write, Some(SnippetWrite::Create)) {
-                form.as_ref().and_then(|form| form.value("client"))
-            } else {
-                None
-            };
             let client = client_name(form_client, uri.query(), &headers);
             // Basic Auth records activity before the quota check.
             state
@@ -583,7 +597,7 @@ async fn respond(
                     .limit(user.id, &user.rate_limits, &mut rate_limit)
                     .await?;
             }
-            (database, user.id, Some(user.realm_id))
+            (database, user.id, user.realm_id)
         };
         if let (Some(write), Some(form)) = (write, form) {
             let max = state
@@ -600,14 +614,9 @@ async fn respond(
                     if !activity.connected() {
                         return Err(ApiError::NotificationUnavailable);
                     }
-                    let snippet = saved_snippets::create(
-                        &database,
-                        user_id,
-                        realm_id.expect("Basic Auth supplies realm"),
-                        title,
-                        content,
-                    )
-                    .await?;
+                    let snippet =
+                        saved_snippets::create(&database, user_id, realm_id, title, content)
+                            .await?;
                     result_fields = format!(",\"saved_snippet_id\":{}", snippet.id);
                     Some(SnippetEvent::Added(snippet))
                 }
@@ -676,10 +685,7 @@ async fn respond(
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, "application/json"),
-                (
-                    header::CACHE_CONTROL,
-                    "max-age=0, no-cache, no-store, must-revalidate, private",
-                ),
+                (header::CACHE_CONTROL, NEVER_CACHE),
                 (header::VARY, "Accept-Language"),
             ],
             body,
@@ -736,7 +742,7 @@ fn error_response(
                 (header::ALLOW, "GET, POST, HEAD"),
                 (header::CONTENT_TYPE, "text/html; charset=utf-8"),
                 (header::VARY, "Accept-Language, Cookie"),
-                (header::CACHE_CONTROL, "max-age=0, no-cache, no-store, must-revalidate, private"),
+                (header::CACHE_CONTROL, NEVER_CACHE),
             ],
             "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",
         ).into_response();
@@ -758,6 +764,7 @@ fn error_response(
             .into_response();
     }
     let (status, code, message) = match error {
+        ApiError::Csrf(_) => (StatusCode::FORBIDDEN, "CSRF_FAILED", "CSRF error: {reason}"),
         ApiError::MissingAuthentication => (
             StatusCode::UNAUTHORIZED,
             "UNAUTHORIZED",
@@ -827,7 +834,8 @@ fn error_response(
         ),
     };
     let translated = locales.gettext(language, message);
-    let message = match error {
+    let message = match &error {
+        ApiError::Csrf(reason) => translated.replace("{reason}", reason),
         ApiError::Form(
             saved_snippets::FormError::Missing(name) | saved_snippets::FormError::Blank(name),
         ) => translated.replace("{var_name}", name),
@@ -837,10 +845,15 @@ fn error_response(
         _ => translated.to_owned(),
     };
     let message = serde_json::to_string(&message).expect("strings can serialize to JSON");
-    let details = if let ApiError::Form(saved_snippets::FormError::Missing(name)) = error {
-        format!(",\"var_name\":\"{name}\"")
-    } else {
-        String::new()
+    let details = match &error {
+        ApiError::Form(saved_snippets::FormError::Missing(name)) => {
+            format!(",\"var_name\":\"{name}\"")
+        }
+        ApiError::Csrf(reason) => {
+            let reason = serde_json::to_string(reason).expect("strings can serialize to JSON");
+            format!(",\"reason\":{reason}")
+        }
+        _ => String::new(),
     };
     let (extra, vary) = match error {
         ApiError::RateLimited(seconds) => {
@@ -858,6 +871,11 @@ fn error_response(
         format!("{{\"result\":\"error\",\"msg\":{message}{details},\"code\":\"{code}\"{extra}}}\n"),
     )
         .into_response();
+    if matches!(error, ApiError::Csrf(_)) {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static(NEVER_CACHE));
+    }
     if matches!(
         error,
         ApiError::MissingAuthentication | ApiError::Unauthorized(_)

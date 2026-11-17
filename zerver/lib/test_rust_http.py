@@ -34,6 +34,7 @@ def rust_http_service(
     env.pop("ZULIP_RUST_CLIENT_IP_SOURCE", None)
     env.pop("ZULIP_RUST_DEBUG_RATE_LIMITING", None)
     env.pop("ZULIP_RUST_SAVED_SNIPPET_WRITES", None)
+    env.pop("ZULIP_RUST_WEB_POST_SCHEME", None)
     with subprocess.Popen(
         [os.environ["ZULIP_RUST_HTTP_BIN"], "127.0.0.1:0"],
         stderr=subprocess.PIPE,

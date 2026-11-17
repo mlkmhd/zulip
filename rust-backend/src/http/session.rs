@@ -16,7 +16,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio_postgres::Client;
 
-use super::{SessionConfig, database::Database};
+use super::{SessionConfig, csrf, database::Database};
 
 const SESSION_SALT: &[u8] = b"django.contrib.sessions.SessionStoresigner";
 const AUTH_SALT: &[u8] = b"django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash";
@@ -34,6 +34,7 @@ pub(super) struct Sessions {
 
 pub(super) struct SessionUser {
     pub id: i32,
+    pub realm_id: i32,
     pub rate_limits: String,
     pub subdomain: String,
     pub active: bool,
@@ -118,7 +119,7 @@ impl Sessions {
             return Ok(anonymous);
         }
         let Some(row) = db.query_opt(
-            "SELECT u.password, u.is_active, u.bot_type, u.rate_limits, r.string_id, r.deactivated
+            "SELECT u.realm_id, u.password, u.is_active, u.bot_type, u.rate_limits, r.string_id, r.deactivated
              FROM zulip.zerver_userprofile AS u
              JOIN zulip.zerver_realm AS r ON r.id = u.realm_id WHERE u.id = $1",
             &[&id],
@@ -140,6 +141,7 @@ impl Sessions {
         Ok(SessionLookup::User(
             SessionUser {
                 id,
+                realm_id: row.try_get("realm_id")?,
                 rate_limits: row.try_get("rate_limits")?,
                 subdomain: row.try_get("string_id")?,
                 active: row.try_get("is_active")?,
@@ -188,12 +190,15 @@ impl Sessions {
         )).expect("validated session cookie name")
     }
 
-    // Django accepts safe methods before token checking, but replaces a malformed CSRF cookie.
+    pub(super) fn csrf_cookie<'a>(&self, headers: &'a HeaderMap) -> Option<&'a str> {
+        cookie(headers, &self.csrf_cookie_name)
+    }
+
+    // Django replaces a malformed CSRF cookie even on safe methods.
     pub(super) fn refresh_csrf_cookie(&self, headers: &HeaderMap) -> Option<HeaderValue> {
         let name = &self.csrf_cookie_name;
         let value = cookie(headers, name)?;
-        if matches!(value.len(), 32 | 64) && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        {
+        if csrf::token_format(value).is_ok() {
             return None;
         }
         let token = Alphanumeric.sample_string(&mut rand::rng(), 32);
