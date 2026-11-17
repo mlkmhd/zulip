@@ -7,11 +7,8 @@ use axum::{
 };
 use regex::Regex;
 
-use super::locale::Locales;
+use super::{locale::Locales, user_agent};
 
-static USER_AGENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(?P<name>[^/ ]*[^0-9/(]*)(?:/(?P<version>[^/ ]*))?(?:[ /].*)?$").unwrap()
-});
 static ANDROID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\bAndroid\b").unwrap());
 static NUMERALS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([0-9]+(?:\.[0-9]+)*)(.*)").unwrap());
@@ -42,9 +39,8 @@ pub(super) async fn get(State(locales): State<Locales>, headers: HeaderMap) -> R
     let response = match headers.get(header::USER_AGENT) {
         None => error(locales.gettext(language, "User-Agent header missing from request")),
         Some(value) => {
-            // WSGI exposes HTTP header bytes as ISO-8859-1 strings.
-            let user_agent: String = value.as_bytes().iter().copied().map(char::from).collect();
-            let Some(parts) = USER_AGENT.captures(&user_agent) else {
+            let user_agent = user_agent::decode(value);
+            let Some(parts) = user_agent::parse(&user_agent) else {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             };
             match &parts["name"] {

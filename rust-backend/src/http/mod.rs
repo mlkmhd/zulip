@@ -5,6 +5,7 @@ use axum::{Router, routing::get};
 mod alert_words;
 mod compatibility;
 mod locale;
+mod user_agent;
 
 pub fn router(locale_dir: &Path) -> Result<Router, Box<dyn Error>> {
     Ok(compatibility_router(locale::Locales::load(locale_dir)?))
