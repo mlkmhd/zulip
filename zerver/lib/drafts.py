@@ -2,7 +2,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from importlib import import_module
 from typing import Annotated, Concatenate, Literal, cast
@@ -31,9 +31,13 @@ from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
 from zerver.tornado.django_api import send_event_on_commit
 
 ParamT = ParamSpec("ParamT")
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 _rust_draft_text = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_TEXT") == "1" else None
+)
+_rust_draft_timestamp = (
+    import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_TIMESTAMP") == "1" else None
 )
 _rust_draft_creation = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_CREATION") == "1" else None
@@ -73,6 +77,28 @@ def normalize_draft_topic(topic: str) -> str:
     raise JsonableError(_("Topic must not contain null bytes"))
 
 
+def normalize_draft_timestamp(timestamp: float) -> datetime:
+    if _rust_draft_timestamp is not None:
+        try:
+            micros, negative = cast(
+                tuple[int | None, bool], _rust_draft_timestamp.normalize_draft_timestamp(timestamp)
+            )
+        except OverflowError:
+            # An arbitrary-size integer can overflow while crossing into Rust.
+            pass
+        else:
+            if negative:
+                raise JsonableError(_("Timestamp must not be negative."))
+            if micros is not None:
+                return _UNIX_EPOCH + timedelta(microseconds=micros)
+
+    # Preserve datetime's handling of non-finite and out-of-range values.
+    timestamp = round(timestamp, 6)
+    if timestamp < 0:
+        raise JsonableError(_("Timestamp must not be negative."))
+    return timestamp_to_datetime(timestamp)
+
+
 @dataclass
 class ValidatedDraftData:
     recipient_id: int | None
@@ -105,12 +131,7 @@ def further_validated_draft_dict(
     timestamp = draft_dict.timestamp
     if timestamp is None:
         timestamp = time.time()
-    timestamp = round(timestamp, 6)
-    if timestamp < 0:
-        # While it's not exactly an invalid timestamp, it's not something
-        # we want to allow either.
-        raise JsonableError(_("Timestamp must not be negative."))
-    last_edit_time = timestamp_to_datetime(timestamp)
+    last_edit_time = normalize_draft_timestamp(timestamp)
 
     topic_name = ""
     recipient_id = None

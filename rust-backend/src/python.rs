@@ -5,7 +5,9 @@ use pyo3::exceptions::{PyConnectionError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
-use crate::{alert_words, bot_storage, draft_text, memcached, stream_color, user_status};
+use crate::{
+    alert_words, bot_storage, draft_text, draft_timestamp, memcached, stream_color, user_status,
+};
 
 #[pymodule]
 mod _zulip_backend {
@@ -65,6 +67,15 @@ mod _zulip_backend {
     #[pyfunction]
     fn normalize_draft_topic(topic: &str, max_length: usize) -> Option<String> {
         draft_text::normalize_topic(topic, max_length).map(std::borrow::Cow::into_owned)
+    }
+
+    #[pyfunction]
+    fn normalize_draft_timestamp(timestamp: f64) -> (Option<i64>, bool) {
+        match draft_timestamp::unix_microseconds(timestamp) {
+            Ok(micros) => (Some(micros), false),
+            Err(draft_timestamp::TimestampError::Negative) => (None, true),
+            Err(draft_timestamp::TimestampError::OutOfRange) => (None, false),
+        }
     }
 
     #[pyfunction]

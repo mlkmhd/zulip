@@ -4,7 +4,7 @@ from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -196,17 +196,15 @@ class DraftCreationTests(ZulipTestCase):
             "content": "A new group conversation",
             "timestamp": 1595479019,
         }
-        channel_draft = {**direct_draft, "type": "stream", "to": []}
+        invalid_draft = {**direct_draft, "type": "stream", "to": [], "timestamp": -1}
 
         with self.capture_send_event_calls(expected_num_events=0):
             self.create_and_check_drafts_for_error(
-                [channel_draft, direct_draft],
-                "Must specify exactly 1 channel ID for channel messages",
+                [invalid_draft, direct_draft], "Timestamp must not be negative."
             )
             self.assertIsNone(get_direct_message_group(members))
             self.create_and_check_drafts_for_error(
-                [direct_draft, channel_draft],
-                "Must specify exactly 1 channel ID for channel messages",
+                [direct_draft, invalid_draft], "Timestamp must not be negative."
             )
 
         group = get_direct_message_group(members)
@@ -355,6 +353,37 @@ class DraftCreationTests(ZulipTestCase):
             }
         ]
         self.create_and_check_drafts_for_error(draft_dicts, "Timestamp must not be negative.")
+
+    def test_create_drafts_preserves_timestamp_precision(self) -> None:
+        owner = self.example_user("hamlet")
+        timestamps = {
+            -0.0000005: 0,
+            0.0000015: 2,
+            0.0078125: 7812,
+            0.0234375: 23438,
+            1.9999995: 1999999,
+            1595479019.1234565: 1595479019123456,
+            8589934591.999999: 8589934591999999,
+            8589934592.000002: 8589934592000002,
+            253402300799.99997: 253402300799999969,
+        }
+        drafts = [
+            {"type": "", "to": [], "topic": "", "content": "Draft", "timestamp": timestamp}
+            for timestamp in timestamps
+        ]
+        response = self.api_post(
+            owner,
+            "/api/v1/drafts",
+            {"drafts": orjson.dumps(drafts).decode()},
+            intentionally_undocumented=True,
+        )
+        ids = self.assert_json_success(response)["ids"]
+        persisted = Draft.objects.in_bulk(ids)
+        epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        self.assertEqual(
+            [persisted[draft_id].last_edit_time for draft_id in ids],
+            [epoch + timedelta(microseconds=micros) for micros in timestamps.values()],
+        )
 
     def test_create_non_stream_draft_with_no_recipient(self) -> None:
         """When "to" is an empty list, the type should become "" as well."""
@@ -619,6 +648,19 @@ class DraftEditTests(ZulipTestCase):
         new_draft_dict = new_draft.to_dict()
         new_draft_dict.pop("id")
         self.assertEqual(new_draft_dict, draft_dict)
+
+    def test_edit_draft_preserves_timestamp_precision(self) -> None:
+        owner = self.example_user("hamlet")
+        draft = DraftData(type="", to=[], topic="", content="Unsent", timestamp=1595505700)
+        (created,) = do_create_drafts([draft], owner)
+
+        draft.timestamp = 1595505800.1234565
+        do_edit_draft(created.id, draft, owner)
+        created.refresh_from_db()
+        self.assertEqual(
+            created.last_edit_time,
+            datetime(1970, 1, 1, tzinfo=timezone.utc) + timedelta(microseconds=1595505800123456),
+        )
 
     def test_edit_draft_to_add_inaccessible_user(self) -> None:
         self.set_up_db_for_testing_user_access()
