@@ -353,8 +353,9 @@ before commit and sends the updated list to the same user afterward.
 
 A web POST accepts the form CSRF token or the `X-CSRFToken` header. The usual
 POST method overrides for `GET`, `HEAD`, and `DELETE` also check CSRF. Remove
-`ZULIP_RUST_ALERT_WORD_POSTS` and restart to disable direct POST. The current
-development and staging proxy rules send POST to Django.
+`ZULIP_RUST_ALERT_WORD_POSTS` and restart to disable direct POST. For proxy
+routing, see [development](#route-alert-word-post-through-the-development-proxy)
+and [nginx staging](#stage-alert-word-post-in-nginx).
 
 Use the same fixtures as the DELETE comparison and run
 `zerver.tests.test_alert_words.AlertWordWriteHTTPTest.test_post_http_cache_and_event_parity`.
@@ -409,13 +410,23 @@ To send both `GET` and `HEAD` and physical `DELETE` requests to Rust, run:
 ```
 
 The supported host and exact paths are the same as for reads. A physical POST
-using `method=DELETE` follows the Django route. A disconnect during a proxied
-DELETE returns `502`. Restart the proxy without `--rust-alert-word-deletes`
-to restore Django deletion. The read flag can be toggled independently.
+using `method=DELETE` follows the selected POST route. A disconnect during a
+proxied DELETE returns `502`. Restart the proxy without
+`--rust-alert-word-deletes` to restore Django deletion. The read flag can be
+toggled independently.
 
 Run the same proxy smoke test with `ZULIP_RUST_PROXY_EXPECT_DELETE=1` when
 the delete flag is enabled and `0` after rollback. Set
 `ZULIP_RUST_PROXY_EXPECT_RUST` to match the read flag.
+
+### Route alert-word POST through the development proxy
+
+Start Rust with [alert-word POST enabled](#add-alert-words-through-rust) and
+add `--rust-alert-word-posts` to `run-dev` alongside the Rust port. The option
+selects the physical POST method, including requests with a `method` override.
+Restart without the option to restore Django POST. The read and delete options
+can be left enabled. Set `ZULIP_RUST_PROXY_EXPECT_POST` to `1` or `0` when
+running the proxy smoke test.
 
 ## Read saved snippets through Rust
 
@@ -705,6 +716,15 @@ the API error response.
 To restore only DELETE to Django, reinstall `alert-words-map.conf` in place of
 the replacement, run `nginx -t`, and reload. To remove all alert-word routing,
 remove `alert-words-routes.conf` and reload after validation.
+
+### Stage alert-word POST in nginx
+
+Start Rust with [alert-word POST enabled](#add-alert-words-through-rust).
+Replace `alert-words-delete-map.conf` with `alert-words-write-map.conf` using
+the same verified host and port. Validate with `nginx -t` and reload. The map
+sends `GET`, `HEAD`, `DELETE`, and physical POST to Rust. `OPTIONS` continues
+through Django. Reinstall the delete map and reload to roll back POST while
+still serving reads and physical DELETE through Rust.
 
 ## Migration sequence
 
