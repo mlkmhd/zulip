@@ -19,7 +19,7 @@ use tokio_postgres::Client;
 use super::{
     UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
-    alert_word_cache,
+    alert_word_cache, alert_words,
     database::Database,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
@@ -61,7 +61,7 @@ impl Endpoint {
         let (field, serialized) = match self {
             Self::AlertWords => (
                 "alert_words",
-                serde_json::to_string(&UserReads::words(database, user_id).await?),
+                serde_json::to_string(&alert_words::list(database, user_id).await?),
             ),
             Self::SavedSnippets => (
                 "saved_snippets",
@@ -228,18 +228,6 @@ impl UserReads {
             rate_limits: user.try_get("rate_limits")?,
         };
         Ok((database, user))
-    }
-
-    async fn words(database: &Client, user_id: i32) -> Result<Vec<String>, ApiError> {
-        database
-            .query(
-                "SELECT word FROM zulip.zerver_alertword WHERE user_profile_id = $1",
-                &[&user_id],
-            )
-            .await?
-            .iter()
-            .map(|row| row.try_get("word").map_err(ApiError::from))
-            .collect()
     }
 
     async fn limit(

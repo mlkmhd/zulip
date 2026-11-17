@@ -10,6 +10,7 @@ pub use rate_limit::ClientIpSource;
 
 mod activity;
 mod alert_word_cache;
+mod alert_words;
 mod compatibility;
 mod csrf;
 mod database;
