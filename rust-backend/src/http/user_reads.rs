@@ -24,6 +24,7 @@ use super::{
     database::Database,
     drafts,
     form::{Form, FormError},
+    linkifiers,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
     saved_snippets::{self, SnippetEvent},
@@ -41,6 +42,7 @@ enum Endpoint {
     AlertWords,
     SavedSnippets,
     Drafts,
+    Linkifiers,
 }
 
 #[derive(Clone, Copy)]
@@ -65,10 +67,16 @@ impl Endpoint {
             Self::AlertWords => "list_alert_words",
             Self::SavedSnippets => "get_saved_snippets",
             Self::Drafts => "fetch_drafts",
+            Self::Linkifiers => "list_linkifiers",
         }
     }
 
-    async fn read(self, database: &Client, user_id: i32) -> Result<String, ApiError> {
+    async fn read(
+        self,
+        database: &Client,
+        user_id: i32,
+        realm_id: i32,
+    ) -> Result<String, ApiError> {
         let (field, serialized) = match self {
             Self::AlertWords => (
                 "alert_words",
@@ -77,6 +85,10 @@ impl Endpoint {
             Self::SavedSnippets => (
                 "saved_snippets",
                 serde_json::to_string(&saved_snippets::list(database, user_id).await?),
+            ),
+            Self::Linkifiers => (
+                "linkifiers",
+                serde_json::to_string(&linkifiers::list(database, realm_id).await?),
             ),
             Self::Drafts => {
                 require_draft_synchronization(database, user_id).await?;
@@ -627,6 +639,7 @@ async fn respond(
     let endpoint = match uri.path() {
         saved_snippets::PATH | saved_snippets::SESSION_PATH => Endpoint::SavedSnippets,
         drafts::PATH | drafts::SESSION_PATH => Endpoint::Drafts,
+        linkifiers::PATH | linkifiers::SESSION_PATH => Endpoint::Linkifiers,
         _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
@@ -784,7 +797,9 @@ async fn respond(
                     .change_alert_words(&form, user_id, realm_id, adding)
                     .await?;
                 // Django reads the current list again after the event has been published.
-                let fields = Endpoint::AlertWords.read(&database, user_id).await?;
+                let fields = Endpoint::AlertWords
+                    .read(&database, user_id, realm_id)
+                    .await?;
                 let processed: &[_] = if requested_write.is_some_and(WriteOperation::is_post)
                     || form.has_query_client()
                 {
@@ -882,7 +897,7 @@ async fn respond(
                 "{{\"result\":\"success\",\"msg\":\"\"{result_fields}{extra}}}\n"
             ));
         }
-        let fields = endpoint.read(&database, user_id).await?;
+        let fields = endpoint.read(&database, user_id, realm_id).await?;
         Ok(format!(
             "{{\"result\":\"success\",\"msg\":\"\",{fields}}}\n"
         ))
@@ -958,7 +973,9 @@ fn error_response(
                 "GET, POST, DELETE, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"DELETE\",\"HEAD\"]}",
             ),
-            Endpoint::Drafts => unreachable!("drafts do not have a Rust write route"),
+            Endpoint::Drafts | Endpoint::Linkifiers => {
+                unreachable!("endpoints without a Rust POST do not override methods")
+            }
             Endpoint::SavedSnippets => (
                 "GET, POST, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",

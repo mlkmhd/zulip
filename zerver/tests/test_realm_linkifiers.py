@@ -1,13 +1,24 @@
+import os
 import re
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from urllib.parse import urlsplit
 
 import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
 from django.core.exceptions import ValidationError
+from django.test import LiveServerTestCase
 from typing_extensions import override
 
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.models import RealmAuditLog, RealmFilter
 from zerver.models.linkifiers import url_template_validator
 from zerver.models.realm_audit_logs import AuditLogEventType
+from zerver.models.realms import get_realm
 
 
 class RealmFilterTest(ZulipTestCase):
@@ -634,3 +645,127 @@ class RealmFilterTest(ZulipTestCase):
         self.assert_json_error(
             result, "The ordered list must enumerate all existing linkifiers exactly once"
         )
+
+
+class RealmLinkifiersReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_list_linkifiers_parity_with_rust(self) -> None:
+        user = self.mit_user("sipbtest")
+        other_realm = get_realm("zulip")
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        auth = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        routes = [
+            ("/api/v1/realm/linkifiers", {"Authorization": f"Basic {auth}"}),
+            (
+                "/json/realm/linkifiers",
+                {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"},
+            ),
+        ]
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            cleanup.callback(session.delete)
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            environment = {
+                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                    settings.AUTHENTICATION_BACKENDS
+                ).decode(),
+            }
+            listener = (
+                rust_http_service(environment)
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with listener as rust_port:
+
+                def check(
+                    method: str, path: str, host: str, headers: dict[str, str], status: int
+                ) -> bytes:
+                    django = request_test_http(django_port, method, host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        result = request_test_http(rust_port, method, host, headers, path)
+                        self.assertEqual(result[:3], django[:3])
+                    return django[1]
+
+                for path, headers in routes:
+                    self.assertEqual(
+                        orjson.loads(check("GET", path, user.realm.host, headers, 200))[
+                            "linkifiers"
+                        ],
+                        [],
+                    )
+
+                later = RealmFilter.objects.create(
+                    realm=user.realm,
+                    pattern="later",
+                    url_template="https://example.com/later",
+                    order=8,
+                )
+                cleanup.callback(later.delete)
+                earlier = RealmFilter.objects.create(
+                    realm=user.realm,
+                    pattern=r"پیگیری#(?P<id>\d+)",
+                    url_template="https://example.com/issues/{id}",
+                    order=2,
+                    example_input="پیگیری#21",
+                    reverse_template="پیگیری#{id}",
+                    alternative_url_templates=[
+                        "https://example.net/issues/{id}",
+                        "https://example.org/issue/{id}",
+                    ],
+                )
+                cleanup.callback(earlier.delete)
+                other = RealmFilter.objects.create(
+                    realm=other_realm,
+                    pattern="別の組織",
+                    url_template="https://example.com/other",
+                    order=0,
+                )
+                cleanup.callback(other.delete)
+
+                for path, headers in routes:
+                    with self.subTest(path=path):
+                        result = orjson.loads(check("GET", path, user.realm.host, headers, 200))
+                        self.assertEqual(
+                            result["linkifiers"],
+                            [
+                                {
+                                    "pattern": earlier.pattern,
+                                    "url_template": earlier.url_template,
+                                    "id": earlier.id,
+                                    "example_input": earlier.example_input,
+                                    "reverse_template": earlier.reverse_template,
+                                    "alternative_url_templates": earlier.alternative_url_templates,
+                                },
+                                {
+                                    "pattern": later.pattern,
+                                    "url_template": later.url_template,
+                                    "id": later.id,
+                                    "example_input": None,
+                                    "reverse_template": None,
+                                    "alternative_url_templates": [],
+                                },
+                            ],
+                        )
+                        self.assertEqual(check("HEAD", path, user.realm.host, headers, 200), b"")
+                        check("GET", path, user.realm.host, {}, 401)
+                api, basic = routes[0]
+                check("GET", api, other_realm.host, basic, 401)
+
+                earlier.order = 9
+                earlier.save(update_fields=["order"])
+                result = orjson.loads(check("GET", api, user.realm.host, basic, 200))
+                self.assertEqual(
+                    [row["id"] for row in result["linkifiers"]], [later.id, earlier.id]
+                )
