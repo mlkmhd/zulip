@@ -1,8 +1,34 @@
 use std::{error::Error, path::Path};
 
+use jiter::JsonValue;
 use tokio_postgres::{Client, GenericClient};
 
-use super::alert_word_cache;
+use super::{
+    alert_word_cache,
+    form::{Form, FormError},
+    unicode_lowercase::UnicodeLowercase,
+};
+
+pub(super) fn parse_removals(
+    form: &Form,
+    lowercase: &UnicodeLowercase,
+) -> Result<Vec<String>, FormError> {
+    const FIELD: &str = "alert_words";
+    let value = form.value(FIELD).ok_or(FormError::Missing(FIELD))?;
+    let JsonValue::Array(items) =
+        JsonValue::parse(value.as_bytes(), true).map_err(|_| FormError::InvalidJson(FIELD))?
+    else {
+        return Err(FormError::ExpectedList(FIELD));
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, value)| match value {
+            JsonValue::Str(word) => Ok(lowercase.lower(word)),
+            _ => Err(FormError::ExpectedString(FIELD, index)),
+        })
+        .collect()
+}
 
 pub(super) async fn list(
     database: &impl GenericClient,

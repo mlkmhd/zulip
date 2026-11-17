@@ -8,7 +8,6 @@ pub(super) const PATH: &str = "/api/v1/saved_snippets";
 pub(super) const SESSION_PATH: &str = "/json/saved_snippets";
 pub(super) const DETAIL_PATH: &str = "/api/v1/saved_snippets/{id}";
 pub(super) const SESSION_DETAIL_PATH: &str = "/json/saved_snippets/{id}";
-pub(super) const NOTIFICATION_QUEUE: &str = "notify_tornado";
 const AUDIT_EVENT_CREATED: i16 = 800;
 const MAX_TITLE_LENGTH: usize = 60;
 

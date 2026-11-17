@@ -1,6 +1,6 @@
 use std::{error::Error, io, net::IpAddr, sync::Arc, time::Duration};
 
-use tokio::sync::Mutex;
+use tokio::sync::{MappedMutexGuard, Mutex, MutexGuard};
 use tokio_postgres::{Client, Config, NoTls, config::Host};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -9,6 +9,7 @@ pub(super) struct Database {
     config: Config,
     read_only: bool,
     client: Mutex<Arc<Client>>,
+    writer: Mutex<Option<Client>>,
 }
 
 impl Database {
@@ -31,6 +32,7 @@ impl Database {
             config,
             read_only,
             client: Mutex::new(Arc::new(client)),
+            writer: Mutex::new(None),
         })
     }
 
@@ -40,6 +42,18 @@ impl Database {
             *client = Arc::new(Self::open(&self.config, self.read_only).await?);
         }
         Ok(Arc::clone(&client))
+    }
+
+    pub(super) async fn writer(&self) -> io::Result<MappedMutexGuard<'_, Client>> {
+        debug_assert!(!self.read_only);
+        // An open transaction must own its connection until commit or rollback.
+        let mut writer = tokio::time::timeout(CONNECT_TIMEOUT, self.writer.lock()).await?;
+        if writer.as_ref().is_none_or(Client::is_closed) {
+            *writer = Some(Self::open(&self.config, false).await?);
+        }
+        Ok(MutexGuard::map(writer, |client| {
+            client.as_mut().expect("writer connection was initialized")
+        }))
     }
 
     async fn open(config: &Config, read_only: bool) -> io::Result<Client> {

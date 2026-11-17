@@ -1,6 +1,7 @@
 use std::{
     error::Error,
     fmt::Display,
+    io,
     net::SocketAddr,
     path::Path as FsPath,
     sync::Arc,
@@ -26,6 +27,7 @@ use super::{
     rate_limit::{RateLimit, RateLimiter},
     saved_snippets::{self, SnippetEvent},
     session::{SessionLookup, Sessions},
+    unicode_lowercase::UnicodeLowercase,
 };
 
 pub(super) const ALERT_WORDS_PATH: &str = "/api/v1/users/me/alert_words";
@@ -40,10 +42,11 @@ enum Endpoint {
 }
 
 #[derive(Clone, Copy)]
-enum SnippetWrite {
-    Create,
-    Edit(Option<i64>),
-    Delete(Option<i64>),
+enum WriteOperation {
+    CreateSnippet,
+    EditSnippet(Option<i64>),
+    DeleteSnippet(Option<i64>),
+    RemoveAlertWords,
 }
 
 impl Endpoint {
@@ -134,6 +137,7 @@ pub(super) struct UserReads {
     rate_limiter: Option<RateLimiter>,
     activity: Option<ActivityPublisher>,
     alert_word_cache_manifest: Option<Arc<FsPath>>,
+    alert_word_lowercase: Option<Arc<UnicodeLowercase>>,
     sessions: Option<Arc<Sessions>>,
     web_post_scheme: Option<WebPostScheme>,
     saved_snippet_max_content_length: Option<usize>,
@@ -152,6 +156,14 @@ impl UserReads {
         if !settings.external_host.split('.').all(valid_label) {
             return Err("ZULIP_RUST_EXTERNAL_HOST must be a hostname without a port".into());
         }
+        let alert_word_lowercase = settings
+            .alert_word_lowercase_file
+            .map(UnicodeLowercase::load)
+            .transpose()?
+            .map(Arc::new);
+        if alert_word_lowercase.is_some() && settings.alert_word_cache_manifest.is_none() {
+            return Err("Alert-word DELETE requires ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST".into());
+        }
         let database = Database::connect(settings.database, settings.activity.is_none()).await?;
         let rate_limiter = match settings.rate_limit {
             Some(config) => Some(RateLimiter::connect(config).await?),
@@ -159,7 +171,16 @@ impl UserReads {
         };
         let saved_snippet_writes = settings.saved_snippet_max_content_length.is_some();
         let activity = match settings.activity {
-            Some(config) => Some(ActivityPublisher::connect(config, saved_snippet_writes).await?),
+            Some(config) => Some(
+                ActivityPublisher::connect(
+                    config,
+                    saved_snippet_writes || alert_word_lowercase.is_some(),
+                )
+                .await?,
+            ),
+            None if alert_word_lowercase.is_some() => {
+                return Err("Alert-word DELETE requires ZULIP_RUST_AMQP_URL".into());
+            }
             None if saved_snippet_writes => {
                 return Err("Saved snippet writes require ZULIP_RUST_AMQP_URL".into());
             }
@@ -172,6 +193,7 @@ impl UserReads {
             rate_limiter,
             activity,
             alert_word_cache_manifest: settings.alert_word_cache_manifest.map(Arc::from),
+            alert_word_lowercase,
             sessions,
             web_post_scheme: settings.web_post_scheme,
             saved_snippet_max_content_length: settings.saved_snippet_max_content_length,
@@ -229,6 +251,61 @@ impl UserReads {
             rate_limits: user.try_get("rate_limits")?,
         };
         Ok((database, user))
+    }
+
+    async fn remove_alert_words(
+        &self,
+        form: &Form,
+        user_id: i32,
+        realm_id: i32,
+    ) -> Result<(), ApiError> {
+        let lowercase = self
+            .alert_word_lowercase
+            .as_deref()
+            .expect("alert-word DELETE configured");
+        let words = alert_words::parse_removals(form, lowercase).map_err(ApiError::Form)?;
+        let manifest = self
+            .alert_word_cache_manifest
+            .as_deref()
+            .expect("alert-word DELETE requires a cache manifest");
+        let activity = self
+            .activity
+            .as_ref()
+            .expect("alert-word DELETE requires RabbitMQ");
+        if !activity.connected() {
+            return Err(ApiError::NotificationUnavailable);
+        }
+
+        let remaining = {
+            let mut writer = self
+                .database
+                .writer()
+                .await
+                .map_err(ApiError::database_unavailable)?;
+            alert_words::remove(&mut writer, manifest, user_id, realm_id, &words)
+                .await
+                .map_err(|error| {
+                    if error.is::<io::Error>() {
+                        eprintln!("Alert-word cache invalidation failed: {error}");
+                        ApiError::AlertWordCacheUnavailable
+                    } else {
+                        ApiError::database_unavailable(error)
+                    }
+                })?
+        };
+        activity
+            .notify_user(
+                user_id,
+                serde_json::json!({
+                    "type": "alert_words",
+                    "alert_words": remaining,
+                }),
+            )
+            .await
+            .map_err(|error| {
+                eprintln!("Could not confirm alert-word notification: {error}");
+                ApiError::NotificationUnavailable
+            })
     }
 
     async fn limit(
@@ -358,6 +435,7 @@ enum ApiError {
     RateLimiterUnavailable,
     ActivityUnavailable,
     NotificationUnavailable,
+    AlertWordCacheUnavailable,
     Form(FormError),
     UnsupportedMethodOverride,
     SnippetNotFound,
@@ -427,12 +505,20 @@ pub(super) async fn get(
     respond(state, peer, uri, headers, None).await
 }
 
+pub(super) async fn remove_alert_words(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    respond_write(state, peer, request, WriteOperation::RemoveAlertWords).await
+}
+
 pub(super) async fn create_saved_snippet(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     request: Request,
 ) -> Response {
-    respond_snippet_write(state, peer, request, SnippetWrite::Create).await
+    respond_write(state, peer, request, WriteOperation::CreateSnippet).await
 }
 
 pub(super) async fn write_saved_snippet_detail(
@@ -447,18 +533,18 @@ pub(super) async fn write_saved_snippet_detail(
     // An integer outside the storage range can still be used with a no-op edit.
     let id = id.parse::<i64>().ok();
     let write = if request.method() == Method::DELETE {
-        SnippetWrite::Delete(id)
+        WriteOperation::DeleteSnippet(id)
     } else {
-        SnippetWrite::Edit(id)
+        WriteOperation::EditSnippet(id)
     };
-    respond_snippet_write(state, peer, request, write).await
+    respond_write(state, peer, request, write).await
 }
 
-async fn respond_snippet_write(
+async fn respond_write(
     state: UserReads,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     request: Request,
-    write: SnippetWrite,
+    write: WriteOperation,
 ) -> Response {
     let (uri, headers) = (request.uri().clone(), request.headers().clone());
     let form = Form::parse(request).await;
@@ -470,7 +556,7 @@ async fn respond(
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     uri: Uri,
     headers: HeaderMap,
-    form: Option<(SnippetWrite, Result<Form, FormError>)>,
+    form: Option<(WriteOperation, Result<Form, FormError>)>,
 ) -> Response {
     let language = Locales::for_request(&headers);
     let endpoint = if matches!(
@@ -498,19 +584,20 @@ async fn respond(
             requested_write,
             form.as_ref().and_then(|form| form.post_value("method")),
         ) {
-            (Some(SnippetWrite::Create), Some("GET" | "HEAD")) => None,
-            (Some(SnippetWrite::Create), Some(method)) if method != "POST" => {
+            (Some(WriteOperation::CreateSnippet), Some("GET" | "HEAD")) => None,
+            (Some(WriteOperation::CreateSnippet), Some(method)) if method != "POST" => {
                 return Err(ApiError::UnsupportedMethodOverride);
             }
             _ => requested_write,
         };
         let activity_name = match write {
-            Some(SnippetWrite::Create) => "create_saved_snippet",
-            Some(SnippetWrite::Edit(_)) => "edit_saved_snippet",
-            Some(SnippetWrite::Delete(_)) => "delete_saved_snippet",
+            Some(WriteOperation::CreateSnippet) => "create_saved_snippet",
+            Some(WriteOperation::EditSnippet(_)) => "edit_saved_snippet",
+            Some(WriteOperation::DeleteSnippet(_)) => "delete_saved_snippet",
+            Some(WriteOperation::RemoveAlertWords) => "remove_alert_words",
             None => endpoint.activity_name(),
         };
-        let form_client = if matches!(requested_write, Some(SnippetWrite::Create)) {
+        let form_client = if matches!(requested_write, Some(WriteOperation::CreateSnippet)) {
             form.as_ref().and_then(|form| form.value("client"))
         } else {
             None
@@ -533,7 +620,7 @@ async fn respond(
                 // Django only accepts the form token on a physical POST.
                 let form_token = form
                     .as_ref()
-                    .filter(|_| matches!(requested_write, Some(SnippetWrite::Create)))
+                    .filter(|_| matches!(requested_write, Some(WriteOperation::CreateSnippet)))
                     .and_then(|form| form.post_value("csrfmiddlewaretoken"));
                 state
                     .web_post_scheme
@@ -592,6 +679,21 @@ async fn respond(
             (database, user.id, user.realm_id)
         };
         if let (Some(write), Some(form)) = (write, form) {
+            if matches!(write, WriteOperation::RemoveAlertWords) {
+                state.remove_alert_words(&form, user_id, realm_id).await?;
+                // Django reads the current list again after the event has been published.
+                let (field, value) = Endpoint::AlertWords.read(&database, user_id).await?;
+                let processed: &[_] = if form.has_query_client() {
+                    &["alert_words", "client"]
+                } else {
+                    &["alert_words"]
+                };
+                let extra = ignored_parameters(&form, processed);
+                return Ok(format!(
+                    "{{\"result\":\"success\",\"msg\":\"\",\"{field}\":{value}{extra}}}\n"
+                ));
+            }
+
             let max = state
                 .saved_snippet_max_content_length
                 .expect("write route configured");
@@ -601,7 +703,7 @@ async fn respond(
                 .expect("saved snippet writes require RabbitMQ");
             let mut result_fields = String::new();
             let change = match write {
-                SnippetWrite::Create => {
+                WriteOperation::CreateSnippet => {
                     let (title, content) = form.create_values(max).map_err(ApiError::Form)?;
                     if !activity.connected() {
                         return Err(ApiError::NotificationUnavailable);
@@ -612,7 +714,7 @@ async fn respond(
                     result_fields = format!(",\"saved_snippet_id\":{}", snippet.id);
                     Some(SnippetEvent::Added(snippet))
                 }
-                SnippetWrite::Edit(id) => {
+                WriteOperation::EditSnippet(id) => {
                     let (title, content) = form.edit_values(max).map_err(ApiError::Form)?;
                     if title.is_none() && content.is_none() {
                         None
@@ -627,7 +729,7 @@ async fn respond(
                         Some(SnippetEvent::Updated(snippet))
                     }
                 }
-                SnippetWrite::Delete(id) => {
+                WriteOperation::DeleteSnippet(id) => {
                     let id = id.ok_or(ApiError::SnippetNotFound)?;
                     if !activity.connected() {
                         return Err(ApiError::NotificationUnavailable);
@@ -637,10 +739,11 @@ async fn respond(
                     }
                     Some(SnippetEvent::Removed(id))
                 }
+                WriteOperation::RemoveAlertWords => unreachable!("handled above"),
             };
             if let Some(event) = change {
                 activity
-                    .saved_snippet_changed(user_id, &event)
+                    .notify_user(user_id, event.payload())
                     .await
                     .map_err(|error| {
                         eprintln!(
@@ -650,25 +753,18 @@ async fn respond(
                         ApiError::NotificationUnavailable
                     })?;
             }
-            if matches!(write, SnippetWrite::Delete(_)) {
+            if matches!(write, WriteOperation::DeleteSnippet(_)) {
                 // Django's delete view returns a plain success response.
                 return Ok("{\"result\":\"success\",\"msg\":\"\"}\n".to_owned());
             }
             // Django identifies the client before it parses the PATCH body.
             let processed: &[_] =
-                if !matches!(write, SnippetWrite::Edit(_)) || form.has_query_client() {
+                if !matches!(write, WriteOperation::EditSnippet(_)) || form.has_query_client() {
                     &["title", "content", "client"]
                 } else {
                     &["title", "content"]
                 };
-            let ignored = form.ignored_parameters(processed);
-            let extra = if ignored.is_empty() {
-                String::new()
-            } else {
-                let names =
-                    serde_json::to_string(&ignored).expect("parameter names serialize to JSON");
-                format!(",\"ignored_parameters_unsupported\":{names}")
-            };
+            let extra = ignored_parameters(&form, processed);
             return Ok(format!(
                 "{{\"result\":\"success\",\"msg\":\"\"{result_fields}{extra}}}\n"
             ));
@@ -724,6 +820,15 @@ async fn respond(
         }
     }
     response
+}
+
+fn ignored_parameters(form: &Form, processed: &[&str]) -> String {
+    let ignored = form.ignored_parameters(processed);
+    if ignored.is_empty() {
+        return String::new();
+    }
+    let names = serde_json::to_string(&ignored).expect("parameter names serialize to JSON");
+    format!(",\"ignored_parameters_unsupported\":{names}")
 }
 
 fn error_response(
@@ -802,6 +907,26 @@ fn error_response(
             "SERVICE_UNAVAILABLE",
             "Notification service unavailable",
         ),
+        ApiError::AlertWordCacheUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "SERVICE_UNAVAILABLE",
+            "Alert-word cache unavailable",
+        ),
+        ApiError::Form(FormError::InvalidJson(_)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} is not valid JSON",
+        ),
+        ApiError::Form(FormError::ExpectedList(_)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} is not a list",
+        ),
+        ApiError::Form(FormError::ExpectedString(..)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} is not a string",
+        ),
         ApiError::Form(FormError::Missing(_)) => (
             StatusCode::BAD_REQUEST,
             "REQUEST_VARIABLE_MISSING",
@@ -835,8 +960,14 @@ fn error_response(
     let translated = locales.gettext(language, message);
     let message = match &error {
         ApiError::Csrf(reason) => translated.replace("{reason}", reason),
-        ApiError::Form(FormError::Missing(name) | FormError::Blank(name)) => {
-            translated.replace("{var_name}", name)
+        ApiError::Form(
+            FormError::Missing(name)
+            | FormError::Blank(name)
+            | FormError::InvalidJson(name)
+            | FormError::ExpectedList(name),
+        ) => translated.replace("{var_name}", name),
+        ApiError::Form(FormError::ExpectedString(name, index)) => {
+            translated.replace("{var_name}", &format!("{name}[{index}]"))
         }
         ApiError::Form(FormError::TooLong(name, length)) => translated
             .replace("{var_name}", name)

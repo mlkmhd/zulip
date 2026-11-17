@@ -24,9 +24,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let locale_dir =
         env::var_os("ZULIP_LOCALE_DIR").map_or_else(|| PathBuf::from("locale"), PathBuf::from);
     let cache_manifest = env::var_os("ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST").map(PathBuf::from);
+    let lowercase_file = env::var_os("ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE").map(PathBuf::from);
     let app = match env::var("ZULIP_RUST_DATABASE_URL") {
-        Ok(database) => user_read_router(&locale_dir, &database, cache_manifest.as_deref()).await?,
+        Ok(database) => {
+            user_read_router(
+                &locale_dir,
+                &database,
+                cache_manifest.as_deref(),
+                lowercase_file.as_deref(),
+            )
+            .await?
+        }
         Err(env::VarError::NotPresent) => {
+            if lowercase_file.is_some() {
+                return Err("Alert-word DELETE requires ZULIP_RUST_DATABASE_URL".into());
+            }
             if cache_manifest.is_some() {
                 return Err("Alert-word cache readiness requires ZULIP_RUST_DATABASE_URL".into());
             }
@@ -51,6 +63,7 @@ async fn user_read_router(
     locale_dir: &Path,
     database: &str,
     alert_word_cache_manifest: Option<&Path>,
+    alert_word_lowercase_file: Option<&Path>,
 ) -> Result<Router, Box<dyn Error>> {
     let external_host = env::var("ZULIP_RUST_EXTERNAL_HOST")?;
     let redis_url = optional_env("ZULIP_RUST_REDIS_URL")?;
@@ -102,6 +115,7 @@ async fn user_read_router(
         UserReadConfig {
             database,
             alert_word_cache_manifest,
+            alert_word_lowercase_file,
             web_post_scheme,
             saved_snippet_max_content_length,
             external_host: &external_host,

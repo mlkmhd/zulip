@@ -13,6 +13,9 @@ pub(super) enum FormError {
     Missing(&'static str),
     Blank(&'static str),
     TooLong(&'static str, usize),
+    InvalidJson(&'static str),
+    ExpectedList(&'static str),
+    ExpectedString(&'static str, usize),
     Malformed,
 }
 

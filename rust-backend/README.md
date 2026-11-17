@@ -118,8 +118,8 @@ With the manifest configured and the usual [session settings](#read-alert-words-
 in place, `/health/rust-alert-words` checks the current file and the
 unauthenticated loopback Memcached connection. A missing or invalid file or
 an unreachable server gives `503`. Republish the file or restore Memcached
-to recover in the same Rust process. This check supports the preparation of
-alert-word writes. Django continues to serve those requests.
+to recover in the same Rust process. Use this check before enabling
+[deletion through Rust](#delete-alert-words-through-rust).
 
 Use the dedicated Memcached test address from the preceding section and
 `ZULIP_RUST_HTTP_BIN` to run
@@ -132,8 +132,8 @@ client, the cache manifest path, the authenticated user's ID and realm ID, and
 words already lowercased with Python's rules. It deletes matching rows, clears
 both realm caches using the current manifest, and returns the remaining words
 after commit. A cache error rolls back the deletion. An empty list still clears
-the caches and returns the current words. HTTP routing and event delivery for
-alert-word removal use Django.
+the caches and returns the current words. The [HTTP handler](#delete-alert-words-through-rust)
+uses this transaction before publishing the event.
 
 Run the opt-in integration test with an empty disposable PostgreSQL database
 and a dedicated loopback Memcached instance. The test creates a `zulip` schema
@@ -279,10 +279,62 @@ It reads database-backed sessions, including Zulip's cached database engine,
 through PostgreSQL. Django manages session writes, key rotation and login.
 
 Django and Rust allow these read methods without a CSRF token. Rust replaces a
-malformed CSRF cookie and keeps the response private. For writes and their
-CSRF checks, use the regular Django route. Run
+malformed CSRF cookie and keeps the response private. Run
 `AlertWordsRustHTTPTest.test_alert_words_session_and_csrf_parity` with
 `ZULIP_RUST_HTTP_BIN` as above. The test creates its own committed sessions.
+
+## Delete alert words through Rust
+
+On the host running the Rust listener, run the exporter using the deployment's
+Django settings and Python interpreter. The cache manifest is reloaded on each
+deletion. Rust loads the Unicode tables at startup. Re-export the tables and
+restart Rust when the Python runtime changes.
+
+```sh
+./manage.py export_rust_alert_word_cache "$PWD/var/rust-alert-word-cache.json" \
+    --lowercase-output "$PWD/var/rust-alert-word-lowercase.json"
+export ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST="$PWD/var/rust-alert-word-cache.json"
+export ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE="$PWD/var/rust-alert-word-lowercase.json"
+```
+
+With the [alert-word read settings](#run-the-alert-word-read-api-over-http),
+including `ZULIP_RUST_AMQP_URL`, start `zulip-http` to serve
+`DELETE /api/v1/users/me/alert_words` with Basic Auth. The database role also
+needs `DELETE` on `zulip.zerver_alertword`. The handler targets the default
+`notify_tornado` queue used by a single Tornado process. The cache requires one
+unauthenticated loopback Memcached server using the text protocol.
+
+For `DELETE /json/users/me/alert_words`, also configure
+[Django session authentication](#read-alert-words-with-a-django-session) and
+set `ZULIP_RUST_WEB_POST_SCHEME` to the external scheme (`http` or `https`).
+Use the `X-CSRFToken` header for this method. Rust checks any supplied Origin
+against the request's origin. Under HTTPS, it requires a secure same-origin
+Referer when the Origin header is absent.
+
+The handler accepts the `alert_words` JSON array of strings from a form or the
+query string. It clears both realm caches before database commit and publishes
+the remaining list just for the affected user after commit. Unavailable cache
+or broker services return `503`. A broker failure after commit can leave the
+deletion persisted with its notification unconfirmed.
+
+These settings enable DELETE on the direct listener. The supplied development
+and nginx proxy configurations route alert-word writes to Django. Unset
+`ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE` and restart Rust to disable the direct
+DELETE routes. If using `ZULIP_RUST_WEB_POST_SCHEME` solely for alert-word
+deletion, unset it as well.
+
+For the comparison, set `ZULIP_RUST_ACTIVITY_TEST_VHOST` and
+`ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS` to the dedicated test instances
+described above. From the provisioned checkout, run:
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_alert_words.AlertWordRemovalHTTPTest
+```
+
+Omit `ZULIP_RUST_HTTP_BIN` to run the Django baseline. The test uses a single
+Tornado queue and compares its messages directly with the HTTP responses,
+committed data and Memcached entries.
 
 ## Route alert-word reads through the development proxy
 

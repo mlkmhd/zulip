@@ -13,7 +13,7 @@ use lapin::{
 use tokio::time::timeout;
 use tokio_postgres::Client;
 
-use super::{saved_snippets, user_agent};
+use super::user_agent;
 
 #[derive(Clone)]
 pub(super) struct ActivityPublisher(Arc<Publisher>);
@@ -26,6 +26,7 @@ struct Publisher {
 
 type ActivityError = Box<dyn Error + Send + Sync>;
 const BROKER_TIMEOUT: Duration = Duration::from_secs(5);
+const NOTIFICATION_QUEUE: &str = "notify_tornado";
 
 impl ActivityPublisher {
     pub(super) fn connected(&self) -> bool {
@@ -34,7 +35,7 @@ impl ActivityPublisher {
 
     pub(super) async fn connect(
         settings: super::ActivityConfig<'_>,
-        saved_snippet_writes: bool,
+        publishes_events: bool,
     ) -> Result<Self, Box<dyn Error>> {
         if settings.shards == 0 {
             return Err("ZULIP_RUST_USER_ACTIVITY_SHARDS must be positive".into());
@@ -55,7 +56,7 @@ impl ActivityPublisher {
         .await??;
         let queues = (0..settings.shards)
             .map(|shard| queue_name(shard, settings.shards))
-            .chain(saved_snippet_writes.then(|| saved_snippets::NOTIFICATION_QUEUE.to_owned()));
+            .chain(publishes_events.then(|| NOTIFICATION_QUEUE.to_owned()));
         for queue in queues {
             timeout(
                 BROKER_TIMEOUT,
@@ -92,15 +93,15 @@ impl ActivityPublisher {
         self.publish(&queue, event).await
     }
 
-    pub(super) async fn saved_snippet_changed(
+    pub(super) async fn notify_user(
         &self,
         user_id: i32,
-        event: &saved_snippets::SnippetEvent,
+        event: serde_json::Value,
     ) -> Result<(), ActivityError> {
         self.publish(
-            saved_snippets::NOTIFICATION_QUEUE,
+            NOTIFICATION_QUEUE,
             serde_json::json!({
-                "event": event.payload(),
+                "event": event,
                 "users": [user_id],
             }),
         )

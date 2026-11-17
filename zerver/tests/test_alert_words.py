@@ -4,6 +4,7 @@ import socket
 import time
 from base64 import b64encode
 from collections import Counter
+from contextlib import nullcontext
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
@@ -21,6 +22,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import connection, transaction
 from django.test import LiveServerTestCase
+from django.urls import get_resolver
 from django.utils.timezone import now as timezone_now
 
 from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
@@ -435,6 +437,308 @@ class AlertWordMemcachedTest(ZulipTestCase):
                 do_remove_alert_words(user, ["KEEP ON CACHE FAILURE"])
 
         self.assertIn("keep on cache failure", user_alert_words(user))
+
+
+@skipUnless(
+    os.environ.get("ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS")
+    and os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"),
+    "Dedicated Memcached and RabbitMQ fixtures are unavailable",
+)
+class AlertWordRemovalHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_delete_http_cache_and_event_parity(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(settings.RABBITMQ_USERNAME, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        address = os.environ["ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS"]
+        cache_settings = {
+            **settings.CACHES,
+            "default": {
+                "BACKEND": "zerver.lib.singleton_bmemcached.SingletonBMemcached",
+                "LOCATION": address,
+                "KEY_PREFIX": "django-test",
+                "VERSION": 7,
+                "OPTIONS": {},
+            },
+        }
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        words = AlertWord.objects.filter(user_profile=user)
+        original_words = list(words)
+        modern_upper = "\u1c89"
+        modern_lower = "\u1c8a"
+        initial_words = ["hello", "ος", "οσ'α", "i\u0307", "keep", modern_lower]
+        remaining_words = (
+            ["keep"] if modern_upper.lower() == modern_lower else ["keep", modern_lower]
+        )
+        (shared_word,) = AlertWord.objects.bulk_create(
+            [AlertWord(user_profile=other, realm=user.realm, word="hello")]
+        )
+        other_words = user_alert_words(other)
+        basic = {
+            "Authorization": "Basic "
+            + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        }
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        token = "a" * 32
+        cookie = {
+            "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; {settings.CSRF_COOKIE_NAME}={token}"
+        }
+        remove = urlencode(
+            {
+                "alert_words": orjson.dumps(
+                    ["HELLO", "ΟΣ", "ΟΣ'Α", "İ", modern_upper, "absent"]
+                ).decode()
+            }
+        )
+        media = {"Content-Type": "application/x-www-form-urlencoded"}
+        # Load the URLconf with the usual test settings before enabling deployment cache prefixes.
+        get_resolver().resolve("/api/v1/users/me/alert_words")
+        with (
+            self.settings(
+                CACHES=cache_settings,
+                PRODUCTION=True,
+                USING_RABBITMQ=True,
+                RABBITMQ_VHOST=vhost,
+                TORNADO_PROCESSES=1,
+                SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
+            ),
+            pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+            TemporaryDirectory() as directory,
+            patch("zerver.lib.cache.DEPLOYMENTS_DIR", directory),
+        ):
+            channel = broker.channel()
+            for queue in ("notify_tornado", "user_activity"):
+                channel.queue_declare(queue, durable=True)
+                channel.queue_purge(queue)
+            prefixes = [zulip_cache.KEY_PREFIX, f"{zulip_cache.KEY_PREFIX}previous:"]
+            cache.set("cache_key_prefixes", prefixes)
+            keys = [
+                prefix + key
+                for prefix in prefixes
+                for key in (
+                    zulip_cache.realm_alert_words_cache_key(user.realm_id),
+                    zulip_cache.realm_alert_words_automaton_cache_key(user.realm_id),
+                )
+            ]
+            unrelated = prefixes[1] + zulip_cache.realm_alert_words_cache_key(
+                Realm.objects.get(string_id="zephyr").id
+            )
+            manifest = Path(directory) / "cache.json"
+            lowercase = Path(directory) / "lowercase.json"
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            use_rust = os.environ.get("ZULIP_RUST_HTTP_BIN")
+            if use_rust:
+                call_command("export_rust_alert_word_cache", manifest, lowercase_output=lowercase)
+            environment = {
+                "ZULIP_RUST_AMQP_URL": amqp_url,
+                "ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST": str(manifest),
+                "ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE": str(lowercase),
+                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                    settings.AUTHENTICATION_BACKENDS
+                ).decode(),
+                "ZULIP_RUST_SESSION_COOKIE_NAME": settings.SESSION_COOKIE_NAME,
+                "ZULIP_RUST_CSRF_COOKIE_NAME": settings.CSRF_COOKIE_NAME,
+            }
+
+            def check_request(
+                port: int,
+                path: str,
+                headers: dict[str, str],
+                body: str,
+                status: int,
+                remaining: list[str] | None,
+            ) -> tuple[int, bytes, dict[str, str | None]]:
+                words.delete()
+                AlertWord.objects.bulk_create(
+                    [
+                        AlertWord(user_profile=user, realm=user.realm, word=word)
+                        for word in initial_words
+                    ]
+                )
+                for key in [*keys, unrelated]:
+                    cache.set(key, "cached")
+                response = request_test_http(
+                    port, "DELETE", user.realm.host, headers, path, body=body
+                )
+                self.assertEqual(response[0], status, response[1])
+                self.assertCountEqual(
+                    user_alert_words(user), initial_words if remaining is None else remaining
+                )
+                self.assertCountEqual(user_alert_words(other), other_words)
+                self.assertEqual(cache.get(unrelated), "cached")
+                for key in keys:
+                    self.assertEqual(cache.get(key), "cached" if remaining is None else None)
+                _, _, event = channel.basic_get("notify_tornado", auto_ack=True)
+                _, _, activity = channel.basic_get("user_activity", auto_ack=True)
+                if status in (401, 403):
+                    self.assertIsNone(activity)
+                else:
+                    assert activity is not None
+                    activity_data = orjson.loads(activity)
+                    self.assertEqual(activity_data["user_profile_id"], user.id)
+                    self.assertEqual(activity_data["query"], "remove_alert_words")
+                    self.assertIsNone(channel.basic_get("user_activity", auto_ack=True)[2])
+                if remaining is None:
+                    self.assertIsNone(event)
+                else:
+                    self.assertCountEqual(orjson.loads(response[1])["alert_words"], remaining)
+                    assert event is not None
+                    payload = orjson.loads(event)
+                    self.assertEqual(payload["users"], [user.id])
+                    self.assertEqual(payload["event"]["type"], "alert_words")
+                    self.assertCountEqual(payload["event"]["alert_words"], remaining)
+                    self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                return response[0], response[1], response[2]
+
+            api = "/api/v1/users/me/alert_words"
+            web = "/json/users/me/alert_words"
+            try:
+                for scheme in ("http", "https"):
+                    secure = {"X-Forwarded-Proto": "https"} if scheme == "https" else {}
+                    browser = {**media, **secure, **cookie, "X-CSRFToken": token}
+                    origin = {"Origin": f"{scheme}://{user.realm.host}"}
+                    cases = [
+                        ("web valid", web, {**browser, **origin}, remove, 200, remaining_words),
+                        (
+                            "web CSRF in body",
+                            web,
+                            {**media, **secure, **cookie, **origin},
+                            f"{remove}&csrfmiddlewaretoken={token}",
+                            403,
+                            None,
+                        ),
+                        (
+                            "web other origin",
+                            web,
+                            {**browser, "Origin": f"{scheme}://other.testserver"},
+                            remove,
+                            403,
+                            None,
+                        ),
+                        ("web anonymous", web, {**media, **secure}, remove, 401, None),
+                    ]
+                    if scheme == "https":
+                        cases.extend(
+                            [
+                                (
+                                    "secure referer",
+                                    web,
+                                    {**browser, "Referer": f"https://{user.realm.host}/"},
+                                    remove,
+                                    200,
+                                    remaining_words,
+                                ),
+                                ("missing referer", web, browser, remove, 403, None),
+                            ]
+                        )
+                    else:
+                        authorized = {**media, **basic}
+                        cases.extend(
+                            [
+                                ("API valid", api, authorized, remove, 200, remaining_words),
+                                (
+                                    "API empty",
+                                    api,
+                                    authorized,
+                                    "alert_words=%5B%5D",
+                                    200,
+                                    initial_words,
+                                ),
+                                (
+                                    "API body overrides query",
+                                    f"{api}?alert_words=invalid&extra=1&client=ZulipMobile",
+                                    authorized,
+                                    f"{remove}&method=GET&client=ignored",
+                                    200,
+                                    remaining_words,
+                                ),
+                                (
+                                    "API query only",
+                                    f"{api}?{remove}",
+                                    authorized,
+                                    "",
+                                    200,
+                                    remaining_words,
+                                ),
+                                (
+                                    "API multipart",
+                                    api,
+                                    {
+                                        **basic,
+                                        "Content-Type": "multipart/form-data; boundary=words",
+                                    },
+                                    '--words\r\nContent-Disposition: form-data; name="alert_words"\r\n\r\n["HELLO"]\r\n--words--\r\n',
+                                    200,
+                                    initial_words[1:],
+                                ),
+                                ("API missing", api, authorized, "", 400, None),
+                                ("API malformed", api, authorized, "alert_words=%5B", 400, None),
+                                ("API wrong shape", api, authorized, "alert_words=null", 400, None),
+                                (
+                                    "API wrong item",
+                                    api,
+                                    authorized,
+                                    "alert_words=%5B%22ok%22%2CNaN%5D",
+                                    400,
+                                    None,
+                                ),
+                                ("API anonymous", api, media, remove, 401, None),
+                            ]
+                        )
+                    service = (
+                        rust_http_service({**environment, "ZULIP_RUST_WEB_POST_SCHEME": scheme})
+                        if use_rust
+                        else nullcontext(None)
+                    )
+                    with service as rust_port:
+                        for label, path, headers, body, status, remaining in cases:
+                            with self.subTest(scheme=scheme, case=label):
+                                django = check_request(
+                                    django_port, path, headers, body, status, remaining
+                                )
+                                if rust_port is not None:
+                                    rust = check_request(
+                                        rust_port, path, headers, body, status, remaining
+                                    )
+                                    self.assertEqual(rust, django)
+                        if scheme == "http" and rust_port is not None:
+                            original_manifest = manifest.read_bytes()
+                            with socket.socket() as unused_port:
+                                unused_port.bind(("127.0.0.1", 0))
+                                failed = {
+                                    **orjson.loads(original_manifest),
+                                    "address": f"127.0.0.1:{unused_port.getsockname()[1]}",
+                                }
+                                manifest.write_bytes(orjson.dumps(failed))
+                                check_request(rust_port, api, {**media, **basic}, remove, 503, None)
+                            manifest.write_bytes(original_manifest)
+                            check_request(
+                                rust_port, api, {**media, **basic}, remove, 200, remaining_words
+                            )
+            finally:
+                words.delete()
+                AlertWord.objects.bulk_create(original_words)
+                shared_word.delete()
+                cache.delete_many([*keys, unrelated, "cache_key_prefixes"])
+                for queue in ("notify_tornado", "user_activity"):
+                    channel.queue_purge(queue)
 
 
 @skipUnless(os.environ.get("ZULIP_RUST_HTTP_BIN"), "Rust HTTP service binary is unavailable")
