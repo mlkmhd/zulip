@@ -1,5 +1,8 @@
 # Zulip Gold backend migration
 
+See the [migration handoff and progress report](MIGRATION_HANDOFF.md) for
+the verified baseline, Multipass results, and remaining work.
+
 The first Rust component chooses display colors for new channel subscriptions.
 The Rust library builds without Python. While Django still handles
 subscriptions, it can call the Rust implementation through a Python extension.
