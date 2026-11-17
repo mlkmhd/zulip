@@ -1,7 +1,125 @@
+import os
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from urllib.parse import urlsplit
+
+import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase
+
 from zerver.actions.navigation_views import do_add_navigation_view
 from zerver.lib.navigation_views import get_navigation_views_for_user
-from zerver.lib.test_classes import ZulipTestCase
-from zerver.models import UserProfile
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
+from zerver.models import NavigationView, UserProfile
+
+
+class NavigationViewReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_get_navigation_views_parity_with_rust(self) -> None:
+        user = self.example_user("hamlet")
+        other_user = self.example_user("othello")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+
+        def api_auth(profile: UserProfile) -> dict[str, str]:
+            token = b64encode(f"{profile.delivery_email}:{profile.api_key}".encode()).decode()
+            return {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(user.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": user.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            other_view = NavigationView.objects.create(
+                user=other_user, fragment="narrow/is/mentioned", is_pinned=True
+            )
+            cleanup.callback(other_view.delete)
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            service = (
+                rust_http_service(
+                    {
+                        "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                        "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                            settings.AUTHENTICATION_BACKENDS
+                        ).decode(),
+                    }
+                )
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with service as rust_port:
+                api = "/api/v1/navigation_views"
+                web = "/json/navigation_views"
+                cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+
+                def check(method: str, path: str, headers: dict[str, str], status: int) -> bytes:
+                    django = request_test_http(django_port, method, user.realm.host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        rust = request_test_http(rust_port, method, user.realm.host, headers, path)
+                        self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                        if method == "GET" and status == 200:
+                            rust_body, django_body = orjson.loads(rust[1]), orjson.loads(django[1])
+                            self.assertCountEqual(
+                                rust_body.pop("navigation_views"),
+                                django_body.pop("navigation_views"),
+                            )
+                            self.assertEqual(rust_body, django_body)
+                        else:
+                            self.assertEqual(rust[1], django[1])
+                    return django[1]
+
+                self.assertEqual(
+                    orjson.loads(check("GET", api, api_auth(user), 200))["navigation_views"], []
+                )
+                built_in = NavigationView.objects.create(
+                    user=user, fragment="inbox", is_pinned=True
+                )
+                cleanup.callback(built_in.delete)
+                custom = NavigationView.objects.create(
+                    user=user, fragment="narrow/is/alerted", name="یادآوری‌ها", is_pinned=False
+                )
+                cleanup.callback(custom.delete)
+                for path, credentials in ((api, api_auth(user)), (web, cookie)):
+                    with self.subTest(path=path):
+                        data = orjson.loads(check("GET", path, credentials, 200))
+                        self.assertCountEqual(
+                            data["navigation_views"],
+                            [
+                                {"fragment": "inbox", "name": None, "is_pinned": True},
+                                {
+                                    "fragment": custom.fragment,
+                                    "name": custom.name,
+                                    "is_pinned": False,
+                                },
+                            ],
+                        )
+                        self.assertEqual(check("HEAD", path, credentials, 200), b"")
+                        check("GET", path, {}, 401)
+
+                data = orjson.loads(check("GET", api, api_auth(other_user), 200))
+                self.assertEqual(
+                    data["navigation_views"],
+                    [{"fragment": other_view.fragment, "name": None, "is_pinned": True}],
+                )
+
+                custom.is_pinned = True
+                custom.save(update_fields=["is_pinned"])
+                data = orjson.loads(check("GET", web, cookie, 200))
+                self.assertIn(
+                    {"fragment": custom.fragment, "name": custom.name, "is_pinned": True},
+                    data["navigation_views"],
+                )
 
 
 class NavigationViewTests(ZulipTestCase):

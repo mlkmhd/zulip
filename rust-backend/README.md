@@ -643,6 +643,28 @@ host and port resolve to the same organization in both services. `POST`,
 reads, remove the development option or the `profile-fields-routes.conf`
 include and reload nginx after validation.
 
+## Read navigation views through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/navigation_views` with Basic
+Auth and on `/json/navigation_views` with the
+[Django session settings](#read-alert-words-with-a-django-session). The Rust
+database role needs `SELECT` on `zulip.zerver_navigationview`. The response
+contains the authenticated user's saved navigation views. The existing
+Redis quota and RabbitMQ activity settings apply to these reads.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_navigation_views
+./tools/run-dev --rust-http-port 9997 --rust-navigation-view-reads
+```
+
+For nginx staging, include `navigation-views-map.conf` in the HTTP context
+and `navigation-views-routes.conf` in `app.d/`. Confirm that the allowlisted
+host and port resolve to the same organization in both services. `POST`,
+`OPTIONS` and fragment-specific URLs use Django. To roll back the reads,
+remove the development option or the `navigation-views-routes.conf` include
+and reload nginx after validation.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,

@@ -26,6 +26,7 @@ use super::{
     form::{Form, FormError},
     linkifiers,
     locale::Locales,
+    navigation_views,
     rate_limit::{RateLimit, RateLimiter},
     realm_domains,
     saved_snippets::{self, SnippetEvent},
@@ -46,6 +47,7 @@ enum Endpoint {
     Linkifiers,
     RealmDomains,
     CustomProfileFields,
+    NavigationViews,
 }
 
 #[derive(Clone, Copy)]
@@ -73,6 +75,7 @@ impl Endpoint {
             Self::Linkifiers => "list_linkifiers",
             Self::RealmDomains => "list_realm_domains",
             Self::CustomProfileFields => "list_realm_custom_profile_fields",
+            Self::NavigationViews => "get_navigation_views",
         }
     }
 
@@ -102,6 +105,10 @@ impl Endpoint {
             Self::CustomProfileFields => (
                 "custom_fields",
                 serde_json::to_string(&custom_profile_fields::list(database, realm_id).await?),
+            ),
+            Self::NavigationViews => (
+                "navigation_views",
+                serde_json::to_string(&navigation_views::list(database, user_id).await?),
             ),
             Self::Drafts => {
                 require_draft_synchronization(database, user_id).await?;
@@ -657,6 +664,7 @@ async fn respond(
         custom_profile_fields::PATH | custom_profile_fields::SESSION_PATH => {
             Endpoint::CustomProfileFields
         }
+        navigation_views::PATH | navigation_views::SESSION_PATH => Endpoint::NavigationViews,
         _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
@@ -993,7 +1001,8 @@ fn error_response(
             Endpoint::Drafts
             | Endpoint::Linkifiers
             | Endpoint::RealmDomains
-            | Endpoint::CustomProfileFields => {
+            | Endpoint::CustomProfileFields
+            | Endpoint::NavigationViews => {
                 unreachable!("endpoints without a Rust POST do not override methods")
             }
             Endpoint::SavedSnippets => (
