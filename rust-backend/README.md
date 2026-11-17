@@ -226,6 +226,13 @@ If PostgreSQL disconnects after startup, the next database-backed request
 or readiness probe can reopen the connection. Requests that fail after
 acquiring a connection return an error without retrying the operation.
 
+If RabbitMQ disconnects after startup, the readiness probe or a subsequent
+request reopens the connection and declares the activity and notification
+queues. Requests fail with `503` while RabbitMQ is unavailable. The listener
+does not resend a publication when its confirmation failed. If RabbitMQ
+loses the connection after a database commit, the data change may already
+be visible when the client receives `503`.
+
 In a provisioned Zulip development environment, the comparison test starts Django
 and the Rust binary on loopback and gives them the same test database with
 committed fixtures.
@@ -250,6 +257,23 @@ sudo rabbitmqctl set_permissions -p zulip-rust-test-alert-words zulip '.*' '.*' 
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
     ./tools/test-backend zerver.tests.test_alert_words.AlertWordsRustHTTPTest
+```
+
+### Test RabbitMQ recovery
+
+Use a separate test vhost so the recovery test can inspect and purge its
+own queues. A TCP relay interrupts only the Rust listener's broker
+connection. The test checks that a rejected deletion leaves the draft
+intact, that readiness recovers on the same listener after 90 seconds,
+and that the next deletion publishes one event for the owner.
+
+```sh
+sudo rabbitmqctl add_vhost zulip-rust-test-broker-recovery
+sudo rabbitmqctl set_permissions -p zulip-rust-test-broker-recovery zulip '.*' '.*' '.*'
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_BROKER_RECOVERY_TEST_VHOST=zulip-rust-test-broker-recovery \
+    ./tools/test-backend zerver.tests.test_rust_broker_recovery
+sudo rabbitmqctl delete_vhost zulip-rust-test-broker-recovery
 ```
 
 ## Read alert words with a Django session
