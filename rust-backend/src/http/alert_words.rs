@@ -6,18 +6,23 @@ use std::{
 };
 
 use axum::{
-    extract::{RawQuery, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header, uri::Authority},
+    extract::State,
+    http::{HeaderMap, HeaderValue, StatusCode, Uri, header, uri::Authority},
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use tokio_postgres::{Client, Config, NoTls, config::Host};
 
 use super::{
-    AlertWordsConfig, activity::ActivityPublisher, locale::Locales, rate_limit::RateLimiter,
+    AlertWordsConfig,
+    activity::ActivityPublisher,
+    locale::Locales,
+    rate_limit::{RateLimit, RateLimiter},
+    session::{SessionLookup, Sessions},
 };
 
 pub(super) const PATH: &str = "/api/v1/users/me/alert_words";
+pub(super) const SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
 
 #[derive(Clone)]
@@ -27,6 +32,7 @@ pub(super) struct AlertWords {
     locales: Locales,
     rate_limiter: Option<RateLimiter>,
     activity: Option<ActivityPublisher>,
+    sessions: Option<Arc<Sessions>>,
 }
 
 impl AlertWords {
@@ -34,6 +40,11 @@ impl AlertWords {
         settings: AlertWordsConfig<'_>,
         locales: Locales,
     ) -> Result<Self, Box<dyn Error>> {
+        let sessions = settings
+            .session
+            .map(Sessions::new)
+            .transpose()?
+            .map(Arc::new);
         if !settings.external_host.split('.').all(valid_label) {
             return Err("ZULIP_RUST_EXTERNAL_HOST must be a hostname without a port".into());
         }
@@ -79,6 +90,7 @@ impl AlertWords {
             locales,
             rate_limiter,
             activity,
+            sessions,
         })
     }
 
@@ -136,6 +148,45 @@ impl AlertWords {
             .iter()
             .map(|row| row.try_get("word").map_err(ApiError::from))
             .collect()
+    }
+
+    async fn limit(
+        &self,
+        user_id: i32,
+        rules: &str,
+        result: &mut Option<RateLimit>,
+    ) -> Result<(), ApiError> {
+        if let Some(limiter) = &self.rate_limiter {
+            let limit = limiter.check(user_id, rules).await.map_err(|error| {
+                eprintln!("Alert-word rate limit check failed: {error}");
+                ApiError::RateLimiterUnavailable
+            })?;
+            let retry = limit.retry_after;
+            *result = Some(limit);
+            if let Some(seconds) = retry {
+                return Err(ApiError::RateLimited(seconds));
+            }
+        }
+        Ok(())
+    }
+
+    async fn record_activity(
+        &self,
+        user_id: i32,
+        query: Option<&str>,
+        headers: &HeaderMap,
+        browser: bool,
+    ) -> Result<(), ApiError> {
+        if let Some(activity) = &self.activity {
+            activity
+                .record(&self.database, user_id, query, headers, browser)
+                .await
+                .map_err(|error| {
+                    eprintln!("Alert-word activity failed: {error}");
+                    ApiError::ActivityUnavailable
+                })?;
+        }
+        Ok(())
     }
 }
 
@@ -218,6 +269,8 @@ enum ApiError {
     MissingAuthentication,
     Unauthorized(&'static str),
     BadRequest(&'static str),
+    DeactivatedUser,
+    DeactivatedRealm,
     InvalidHost,
     DatabaseUnavailable,
     RateLimiterUnavailable,
@@ -273,40 +326,63 @@ fn prefers_html(headers: &HeaderMap) -> bool {
     score("text/html", "text/*") > score("application/json", "application/*")
 }
 
-pub(super) async fn get(
-    State(state): State<AlertWords>,
-    RawQuery(query): RawQuery,
-    headers: HeaderMap,
-) -> Response {
+pub(super) async fn get(State(state): State<AlertWords>, uri: Uri, headers: HeaderMap) -> Response {
     let language = Locales::for_request(&headers);
+    let browser_session = if uri.path() == SESSION_PATH {
+        state.sessions.as_deref()
+    } else {
+        None
+    };
+    let browser = browser_session.is_some();
+    let mut clear_session_cookie = false;
     let mut rate_limit = None;
     let words = async {
-        let user = state.authenticate(&headers).await?;
-        if let Some(activity) = &state.activity {
-            // Django records activity for authenticated requests even when the limiter rejects them.
-            activity
-                .record(&state.database, user.id, query.as_deref(), &headers)
-                .await
-                .map_err(|error| {
-                    eprintln!("Alert-word activity failed: {error}");
-                    ApiError::ActivityUnavailable
-                })?;
-        }
-        if let Some(limiter) = &state.rate_limiter {
-            let limit = limiter
-                .check(user.id, &user.rate_limits)
-                .await
-                .map_err(|error| {
-                    eprintln!("Alert-word rate limit check failed: {error}");
-                    ApiError::RateLimiterUnavailable
-                })?;
-            let retry_after = limit.retry_after;
-            rate_limit = Some(limit);
-            if let Some(seconds) = retry_after {
-                return Err(ApiError::RateLimited(seconds));
+        let user_id = if let Some(sessions) = browser_session {
+            let subdomain =
+                subdomain(&headers, &state.external_host).ok_or(ApiError::InvalidHost)?;
+            let user = match sessions.lookup(&state.database, &headers).await? {
+                SessionLookup::User(user) => user,
+                SessionLookup::Anonymous { clear_cookie } => {
+                    clear_session_cookie = clear_cookie;
+                    return Err(ApiError::MissingAuthentication);
+                }
+            };
+            // The browser dispatcher checks the quota before account state and activity.
+            state
+                .limit(user.id, &user.rate_limits, &mut rate_limit)
+                .await?;
+            if user.realm_deactivated {
+                return Err(ApiError::DeactivatedRealm);
             }
-        }
-        state.words(user.id).await
+            if !user.active {
+                return Err(ApiError::DeactivatedUser);
+            }
+            if user.subdomain != subdomain {
+                return Err(ApiError::BadRequest(
+                    "Account is not associated with this subdomain",
+                ));
+            }
+            if user.bot_type == Some(INCOMING_WEBHOOK_BOT) {
+                return Err(ApiError::BadRequest(
+                    "Webhook bots can only access webhooks",
+                ));
+            }
+            state
+                .record_activity(user.id, uri.query(), &headers, true)
+                .await?;
+            user.id
+        } else {
+            let user = state.authenticate(&headers).await?;
+            // Basic Auth records activity before the quota check.
+            state
+                .record_activity(user.id, uri.query(), &headers, false)
+                .await?;
+            state
+                .limit(user.id, &user.rate_limits, &mut rate_limit)
+                .await?;
+            user.id
+        };
+        state.words(user_id).await
     }
     .await;
     let mut response = match words {
@@ -326,7 +402,7 @@ pub(super) async fn get(
             )
                 .into_response()
         }
-        Err(error) => error_response(error, &state.locales, language, &headers),
+        Err(error) => error_response(error, &state.locales, language, &headers, browser),
     };
     let response_headers = response.headers_mut();
     response_headers.insert(header::CONTENT_LANGUAGE, HeaderValue::from_static(language));
@@ -340,6 +416,18 @@ pub(super) async fn get(
     if let Some(limit) = rate_limit {
         limit.set_headers(response_headers);
     }
+    if let Some(sessions) = browser_session {
+        response_headers.insert(
+            header::VARY,
+            HeaderValue::from_static("Accept-Language, Cookie"),
+        );
+        if let Some(csrf) = sessions.refresh_csrf_cookie(&headers) {
+            response_headers.append(header::SET_COOKIE, csrf);
+        }
+        if clear_session_cookie {
+            response_headers.append(header::SET_COOKIE, sessions.delete_cookie_header());
+        }
+    }
     response
 }
 
@@ -348,6 +436,7 @@ fn error_response(
     locales: &Locales,
     language: &str,
     headers: &HeaderMap,
+    browser: bool,
 ) -> Response {
     if matches!(error, ApiError::MissingAuthentication) && prefers_html(headers) {
         return (
@@ -356,7 +445,11 @@ fn error_response(
                 (header::CONTENT_TYPE, "text/html; charset=utf-8"),
                 (
                     header::LOCATION,
-                    "/login/?next=%2Fapi%2Fv1%2Fusers%2Fme%2Falert_words",
+                    if browser {
+                        "/login/?next=%2Fjson%2Fusers%2Fme%2Falert_words"
+                    } else {
+                        "/login/?next=%2Fapi%2Fv1%2Fusers%2Fme%2Falert_words"
+                    },
                 ),
                 (header::VARY, "Accept-Language, Cookie"),
             ],
@@ -372,6 +465,16 @@ fn error_response(
         ),
         ApiError::Unauthorized(message) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message),
         ApiError::BadRequest(message) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", message),
+        ApiError::DeactivatedUser => (
+            StatusCode::UNAUTHORIZED,
+            "USER_DEACTIVATED",
+            "Account is deactivated",
+        ),
+        ApiError::DeactivatedRealm => (
+            StatusCode::UNAUTHORIZED,
+            "REALM_DEACTIVATED",
+            "This organization has been deactivated",
+        ),
         ApiError::InvalidHost => (StatusCode::BAD_REQUEST, "BAD_REQUEST", "Invalid host"),
         ApiError::DatabaseUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -411,10 +514,17 @@ fn error_response(
         format!("{{\"result\":\"error\",\"msg\":{message},\"code\":\"{code}\"{extra}}}\n"),
     )
         .into_response();
-    if status == StatusCode::UNAUTHORIZED {
+    if matches!(
+        error,
+        ApiError::MissingAuthentication | ApiError::Unauthorized(_)
+    ) {
         response.headers_mut().insert(
             header::WWW_AUTHENTICATE,
-            HeaderValue::from_static("Basic realm=\"zulip\""),
+            HeaderValue::from_static(if browser {
+                "Session realm=\"zulip\""
+            } else {
+                "Basic realm=\"zulip\""
+            }),
         );
     }
     if let ApiError::RateLimited(seconds) = error {

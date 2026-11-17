@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
 from http.client import HTTPConnection
+from tempfile import NamedTemporaryFile
 from unittest import skipUnless
 from unittest.mock import patch
 from urllib.parse import quote, urlencode, urlsplit
@@ -16,8 +17,11 @@ from urllib.parse import quote, urlencode, urlsplit
 import orjson
 import pika
 from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.contrib.sessions.models import Session
 from django.db import connection, transaction
 from django.test import LiveServerTestCase
+from django.utils.timezone import now as timezone_now
 from psycopg2.extensions import make_dsn
 
 from zerver.actions.alert_words import do_add_alert_words, do_remove_alert_words
@@ -323,6 +327,145 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             UserProfile.objects.filter(id=inactive.id).update(is_active=inactive.is_active)
             Realm.objects.filter(id=realm.id).update(deactivated=realm.deactivated)
 
+    def test_alert_words_session_and_csrf_parity(self) -> None:
+        user = self.example_user("hamlet")
+        inactive = self.example_user("iago")
+        other_realm = Realm.objects.get(string_id="zephyr")
+        webhook = UserProfile.objects.filter(bot_type=UserProfile.INCOMING_WEBHOOK_BOT).first()
+        assert webhook is not None
+        backend = "zproject.backends.DevAuthBackend"
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        keys: list[str] = []
+
+        def create_session(profile: UserProfile = user, **overrides: str) -> str:
+            store = SessionStore()
+            store.update(
+                {
+                    "_auth_user_id": str(profile.id),
+                    "_auth_user_backend": backend,
+                    "_auth_user_hash": profile.get_session_auth_hash(),
+                    **overrides,
+                }
+            )
+            store.create()
+            assert store.session_key is not None
+            keys.append(store.session_key)
+            return store.session_key
+
+        def cookie(key: str) -> dict[str, str]:
+            return {"Cookie": f"{settings.SESSION_COOKIE_NAME}={key}"}
+
+        with NamedTemporaryFile(mode="w", encoding="utf-8") as secret:
+            secret.write(settings.SECRET_KEY)
+            secret.flush()
+            try:
+                valid = create_session(profile_data="a" * 2048)
+                self.assertTrue(Session.objects.get(session_key=valid).session_data.startswith("."))
+                regular = create_session()
+                inactive_key = create_session(inactive)
+                webhook_key = create_session(webhook)
+                UserProfile.objects.filter(id=inactive.id).update(is_active=False)
+                expired = create_session()
+                Session.objects.filter(session_key=expired).update(expire_date=timezone_now())
+                wrong_hash = create_session(_auth_user_hash="0" * 64)
+                wrong_backend = create_session(_auth_user_backend="not.configured.Backend")
+                corrupted = create_session()
+                session = Session.objects.get(session_key=corrupted)
+                session.session_data += "x"
+                session.save(update_fields=["session_data"])
+                deleted = create_session()
+                Session.objects.filter(session_key=deleted).delete()
+                authorization = (
+                    "Basic " + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+                )
+                with self.rust_service(self.django_session_environment(secret.name)) as rust_port:
+                    cases = [
+                        ("valid session", "GET", 200, user.realm.host, cookie(valid)),
+                        ("regular session", "GET", 200, user.realm.host, cookie(regular)),
+                        ("HEAD", "HEAD", 200, user.realm.host, cookie(valid)),
+                        ("missing", "GET", 401, user.realm.host, {}),
+                        (
+                            "valid Basic without session",
+                            "GET",
+                            401,
+                            user.realm.host,
+                            {"Authorization": authorization},
+                        ),
+                        ("missing HTML", "GET", 302, user.realm.host, {"Accept": "text/html"}),
+                        ("expired", "GET", 401, user.realm.host, cookie(expired)),
+                        ("deleted", "GET", 401, user.realm.host, cookie(deleted)),
+                        ("invalid key", "GET", 401, user.realm.host, cookie("short")),
+                        ("password hash changed", "GET", 401, user.realm.host, cookie(wrong_hash)),
+                        ("backend removed", "GET", 401, user.realm.host, cookie(wrong_backend)),
+                        ("corrupted", "GET", 401, user.realm.host, cookie(corrupted)),
+                        ("other organization", "GET", 400, other_realm.host, cookie(valid)),
+                        ("inactive account", "GET", 401, inactive.realm.host, cookie(inactive_key)),
+                        ("incoming bot", "GET", 400, webhook.realm.host, cookie(webhook_key)),
+                        (
+                            "safe cross-origin",
+                            "GET",
+                            200,
+                            user.realm.host,
+                            {
+                                **cookie(valid),
+                                "Origin": "https://other.testserver",
+                                "Referer": "https://other.testserver/path",
+                                "X-CSRFToken": "incorrect",
+                            },
+                        ),
+                    ]
+                    for label, method, status, host, headers in cases:
+                        with self.subTest(case=label):
+                            rust = self.request_words(
+                                rust_port, method, host, headers, browser=True
+                            )
+                            django = self.request_words(
+                                django_port, method, host, headers, browser=True
+                            )
+                            self.assertEqual(django[0], status)
+                            self.assertEqual(rust[:3], django[:3])
+                            if django[3] is not None:
+                                assert rust[3] is not None
+                                delta = parsedate_to_datetime(rust[3]) - parsedate_to_datetime(
+                                    django[3]
+                                )
+                                self.assertLessEqual(abs(delta.total_seconds()), 5)
+                            else:
+                                self.assertIsNone(rust[3])
+                    self.check_session_csrf(django_port, rust_port, user, cookie(valid))
+            finally:
+                Session.objects.filter(session_key__in=keys).delete()
+                UserProfile.objects.filter(id=inactive.id).update(is_active=inactive.is_active)
+
+    def check_session_csrf(
+        self, django_port: int, rust_port: int, user: UserProfile, headers: dict[str, str]
+    ) -> None:
+        csrf_name = settings.CSRF_COOKIE_NAME
+        malformed = {"Cookie": headers["Cookie"] + f"; {csrf_name}=bad"}
+        results = [
+            self.request_words(port, "GET", user.realm.host, malformed, browser=True)
+            for port in (django_port, rust_port)
+        ]
+        attrs = []
+        for status, _, response_headers, _ in results:
+            self.assertEqual(status, 200)
+            replacement = response_headers["Set-Cookie"]
+            assert replacement is not None
+            value, *flags = replacement.split("; ")
+            self.assertRegex(value, rf"^{re.escape(csrf_name)}=[A-Za-z0-9]{{32}}$")
+            attrs.append([flag for flag in flags if not flag.startswith("expires=")])
+        self.assertEqual(attrs[0], attrs[1])
+        self.assertEqual(results[0][1], results[1][1])
+        words = user_alert_words(user)
+        for method in ("POST", "DELETE"):
+            django = self.request_words(django_port, method, user.realm.host, headers, browser=True)
+            rust = self.request_words(rust_port, method, user.realm.host, headers, browser=True)
+            self.assertEqual(django[0], 403)
+            self.assertEqual(orjson.loads(django[1])["code"], "CSRF_FAILED")
+            self.assertEqual(rust[0], 405)
+            self.assertCountEqual(user_alert_words(user), words)
+
     @contextmanager
     def rust_service(self, extra_env: dict[str, str]) -> Iterator[int]:
         db = connection.settings_dict
@@ -338,6 +481,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         env = os.environ.copy()
         env.pop("ZULIP_RUST_REDIS_URL", None)
         env.pop("ZULIP_RUST_AMQP_URL", None)
+        env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)
         with subprocess.Popen(
             [os.environ["ZULIP_RUST_HTTP_BIN"], "127.0.0.1:0"],
             stderr=subprocess.PIPE,
@@ -364,6 +508,16 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     rust.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     rust.kill()
+
+    def django_session_environment(self, secret_file: str) -> dict[str, str]:
+        return {
+            "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": secret_file,
+            "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                settings.AUTHENTICATION_BACKENDS
+            ).decode(),
+            "ZULIP_RUST_SESSION_COOKIE_NAME": settings.SESSION_COOKIE_NAME,
+            "ZULIP_RUST_CSRF_COOKIE_NAME": settings.CSRF_COOKIE_NAME,
+        }
 
     def compare_cases(
         self,
@@ -493,13 +647,22 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     self.assertEqual(orjson.loads(rust[1])["alert_words"], [])
 
     def request_words(
-        self, port: int, method: str, host: str, headers: dict[str, str], *, query: str = ""
+        self,
+        port: int,
+        method: str,
+        host: str,
+        headers: dict[str, str],
+        *,
+        query: str = "",
+        browser: bool = False,
     ) -> tuple[int, bytes, dict[str, str | None], str | None]:
         client = HTTPConnection("127.0.0.1", port, timeout=5)
         try:
             client.request(
                 method,
-                "/api/v1/users/me/alert_words" + (f"?{query}" if query else ""),
+                ("/json" if browser else "/api/v1")
+                + "/users/me/alert_words"
+                + (f"?{query}" if query else ""),
                 headers={
                     "Host": host,
                     "User-Agent": "ZulipMobile/1.0",
@@ -520,6 +683,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 "X-RateLimit-Remaining",
                 "X-RateLimit-Reset",
                 "Retry-After",
+                "Set-Cookie",
             )
             return (
                 response.status,
@@ -566,7 +730,13 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             credentials=pika.PlainCredentials(username, password),
         )
         self.assertFalse(Client.objects.filter(name=custom_name).exists())
-        with pika.BlockingConnection(params) as broker:
+        with (
+            pika.BlockingConnection(params) as broker,
+            NamedTemporaryFile(mode="w", encoding="utf-8") as secret,
+        ):
+            secret.write(settings.SECRET_KEY)
+            secret.flush()
+            environment.update(self.django_session_environment(secret.name))
             channel = broker.channel()
             for shard in range(1, shards + 1):
                 channel.queue_declare(f"user_activity_shard{shard}", durable=True)
@@ -586,6 +756,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     self.rust_service(environment) as rust_port,
                 ):
                     self.check_shared_quota(rust_port, user, custom_user)
+                    self.check_session_quota(rust_port, user)
                 self.check_activity(channel, shards, user, custom_user, custom_name)
             finally:
                 RateLimitedUser(user).clear_history()
@@ -594,6 +765,45 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 UserProfile.objects.filter(id=custom_user.id).update(
                     rate_limits=custom_user.rate_limits
                 )
+
+    def check_session_quota(self, rust_port: int, user: UserProfile) -> None:
+        RateLimitedUser(user).clear_history()
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        store = SessionStore()
+        store.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        store.create()
+        try:
+            headers = {
+                "Cookie": f"{settings.SESSION_COOKIE_NAME}={store.session_key}",
+                "User-Agent": "Mozilla/5.0",
+            }
+            for port, status, remaining in (
+                (django_port, 200, "2"),
+                (rust_port, 200, "1"),
+                (rust_port, 429, "0"),
+                (django_port, 429, "0"),
+            ):
+                result, body, response_headers, _ = self.request_words(
+                    port, "GET", user.realm.host, headers, browser=True
+                )
+                self.assertEqual(result, status)
+                self.assertEqual(response_headers["X-RateLimit-Limit"], "3")
+                self.assertEqual(response_headers["X-RateLimit-Remaining"], remaining)
+                self.assertEqual(response_headers["Vary"], "Accept-Language, Cookie")
+                data = orjson.loads(body)
+                if status == 200:
+                    self.assertCountEqual(data["alert_words"], user_alert_words(user))
+                else:
+                    self.assertEqual(data["code"], "RATE_LIMIT_HIT")
+        finally:
+            store.delete()
 
     def check_shared_quota(
         self, rust_port: int, user: UserProfile, custom_user: UserProfile
@@ -688,7 +898,10 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
     ) -> None:
         mobile = Client.objects.get(name="ZulipMobile")
         custom = Client.objects.get(name=custom_name)
-        expected = Counter({(user.id, mobile.id): 6, (custom_user.id, custom.id): 2})
+        website = Client.objects.get(name="website")
+        expected = Counter(
+            {(user.id, mobile.id): 6, (custom_user.id, custom.id): 2, (user.id, website.id): 2}
+        )
         events = []
         for shard in range(1, shards + 1):
             queue = f"user_activity_shard{shard}"

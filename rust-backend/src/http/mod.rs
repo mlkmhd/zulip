@@ -7,6 +7,7 @@ mod alert_words;
 mod compatibility;
 mod locale;
 mod rate_limit;
+mod session;
 mod user_agent;
 
 pub fn router(locale_dir: &Path) -> Result<Router, Box<dyn Error>> {
@@ -18,6 +19,14 @@ pub struct AlertWordsConfig<'a> {
     pub external_host: &'a str,
     pub rate_limit: Option<RateLimitConfig<'a>>,
     pub activity: Option<ActivityConfig<'a>>,
+    pub session: Option<SessionConfig<'a>>,
+}
+
+pub struct SessionConfig<'a> {
+    pub secret_file: &'a Path,
+    pub backends: &'a str,
+    pub cookie_name: &'a str,
+    pub csrf_cookie_name: &'a str,
 }
 
 pub struct RateLimitConfig<'a> {
@@ -36,12 +45,13 @@ pub async fn router_with_alert_words(
     config: AlertWordsConfig<'_>,
 ) -> Result<Router, Box<dyn Error>> {
     let locales = locale::Locales::load(locale_dir)?;
+    let browser_enabled = config.session.is_some();
     let alert_words = alert_words::AlertWords::connect(config, locales.clone()).await?;
-    Ok(compatibility_router(locales).merge(
-        Router::new()
-            .route(alert_words::PATH, get(alert_words::get))
-            .with_state(alert_words),
-    ))
+    let mut routes = Router::new().route(alert_words::PATH, get(alert_words::get));
+    if browser_enabled {
+        routes = routes.route(alert_words::SESSION_PATH, get(alert_words::get));
+    }
+    Ok(compatibility_router(locales).merge(routes.with_state(alert_words)))
 }
 
 fn compatibility_router(locales: locale::Locales) -> Router {

@@ -160,6 +160,38 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ./tools/test-backend zerver.tests.test_alert_words.AlertWordsRustHTTPTest
 ```
 
+## Read alert words with a Django session
+
+The direct Rust listener also serves `GET /json/users/me/alert_words` and
+`HEAD` when session authentication is enabled. It reads Django's session
+table and checks the signature and the current password-bound session hash.
+The database role needs `SELECT` on `zulip.django_session` in addition to the
+permissions above.
+
+Use a private file containing only the current Django `SECRET_KEY`. Set
+`ZULIP_RUST_DJANGO_SECRET_KEY_FILE` to its path and set
+`ZULIP_RUST_DJANGO_AUTH_BACKENDS` to a JSON list of enabled Zulip authentication
+backends whose sessions Rust should accept. For example, to accept development
+login sessions:
+
+```sh
+export ZULIP_RUST_DJANGO_SECRET_KEY_FILE=/path/to/private/django-secret-key
+export ZULIP_RUST_DJANGO_AUTH_BACKENDS='["zproject.backends.DevAuthBackend"]'
+```
+
+`ZULIP_RUST_SESSION_COOKIE_NAME` and `ZULIP_RUST_CSRF_COOKIE_NAME` default to
+`sessionid` and `csrftoken`. When testing settings with secure cookie names,
+set them to `__Host-sessionid` and `__Host-csrftoken`. The current implementation
+uses the standard cookie path, SameSite policy, CSRF cookie age and login URL.
+It reads database-backed sessions, including Zulip's cached database engine,
+through PostgreSQL. Django manages session writes, key rotation and login.
+
+Django and Rust allow these read methods without a CSRF token. Rust replaces a
+malformed CSRF cookie and keeps the response private. For writes and their
+CSRF checks, use the regular Django route. Run
+`AlertWordsRustHTTPTest.test_alert_words_session_and_csrf_parity` with
+`ZULIP_RUST_HTTP_BIN` as above. The test creates its own committed sessions.
+
 ## Migration sequence
 
 1. Port backend logic that does not depend on services. For each component,

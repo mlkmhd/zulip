@@ -6,7 +6,8 @@ use std::{
 };
 
 use _zulip_backend::http::{
-    ActivityConfig, AlertWordsConfig, RateLimitConfig, router, router_with_alert_words,
+    ActivityConfig, AlertWordsConfig, RateLimitConfig, SessionConfig, router,
+    router_with_alert_words,
 };
 use axum::Router;
 use tokio::net::TcpListener;
@@ -45,6 +46,14 @@ async fn alert_words_router(locale_dir: &Path, database: &str) -> Result<Router,
     let amqp_url = optional_env("ZULIP_RUST_AMQP_URL")?;
     let shards =
         optional_env("ZULIP_RUST_USER_ACTIVITY_SHARDS")?.map_or(Ok(1), |value| value.parse())?;
+    let secret_file = env::var_os("ZULIP_RUST_DJANGO_SECRET_KEY_FILE").map(PathBuf::from);
+    let backends = if secret_file.is_some() {
+        env::var("ZULIP_RUST_DJANGO_AUTH_BACKENDS")?
+    } else {
+        String::new()
+    };
+    let cookie_name = optional_env("ZULIP_RUST_SESSION_COOKIE_NAME")?;
+    let csrf_cookie_name = optional_env("ZULIP_RUST_CSRF_COOKIE_NAME")?;
     router_with_alert_words(
         locale_dir,
         AlertWordsConfig {
@@ -58,6 +67,12 @@ async fn alert_words_router(locale_dir: &Path, database: &str) -> Result<Router,
             activity: amqp_url
                 .as_deref()
                 .map(|url| ActivityConfig { url, shards }),
+            session: secret_file.as_deref().map(|secret_file| SessionConfig {
+                secret_file,
+                backends: &backends,
+                cookie_name: cookie_name.as_deref().unwrap_or("sessionid"),
+                csrf_cookie_name: csrf_cookie_name.as_deref().unwrap_or("csrftoken"),
+            }),
         },
     )
     .await

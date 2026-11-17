@@ -72,8 +72,15 @@ impl ActivityPublisher {
         user_id: i32,
         query: Option<&str>,
         headers: &HeaderMap,
+        browser: bool,
     ) -> Result<(), ActivityError> {
-        let client_id = resolve_client(db, &client_name(query, headers)).await?;
+        let name = client_name(query, headers);
+        let name = if browser && !name.starts_with("Zulip") {
+            "website"
+        } else {
+            &name
+        };
+        let client_id = resolve_client(db, name).await?;
         let event = serde_json::json!({
             "query": "list_alert_words",
             "user_profile_id": user_id,
