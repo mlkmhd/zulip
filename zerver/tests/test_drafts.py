@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest import skipUnless
 from unittest.mock import patch
 from urllib.parse import quote, urlsplit
@@ -44,6 +44,9 @@ from zerver.models import (
 from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
 from zerver.models.realms import get_realm
 from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
+
+if TYPE_CHECKING:
+    from django.test.client import _MonkeyPatchedWSGIResponse as TestHttpResponse
 
 
 class DraftCreationTests(ZulipTestCase):
@@ -505,6 +508,9 @@ class DraftCreationTests(ZulipTestCase):
             }
         ]
         self.create_and_check_drafts_for_error(draft_dicts, "Invalid channel ID")
+        self.create_and_check_drafts_for_error(
+            [{**draft_dicts[0], "to": [2**63]}], "Invalid channel ID"
+        )
 
     def test_create_stream_draft_with_subgroup_access(self) -> None:
         owner = self.example_user("hamlet")
@@ -553,6 +559,44 @@ class DraftCreationTests(ZulipTestCase):
         self.assertEqual(
             Draft.objects.get(user_profile=guest).recipient_id, web_public.recipient_id
         )
+
+    def test_create_stream_draft_checks_content_access(self) -> None:
+        owner = self.example_user("iago")
+        guest = self.example_user("polonius")
+        self.assertTrue(owner.is_realm_admin)
+        self.assertTrue(guest.is_guest)
+        private = self.make_stream("Private draft channel", invite_only=True)
+        foreign = self.make_stream("Foreign draft channel", realm=get_realm("zephyr"))
+        draft = {"type": "stream", "topic": "Drafts", "content": "Unsent"}
+
+        def post_draft(user: UserProfile, stream: Stream) -> "TestHttpResponse":
+            return self.api_post(
+                user,
+                "/api/v1/drafts",
+                {"drafts": orjson.dumps([{**draft, "to": [stream.id]}]).decode()},
+            )
+
+        initial_count = Draft.objects.filter(user_profile=owner).count()
+        self.assert_json_error(post_draft(owner, private), "Invalid channel ID")
+        self.assert_json_error(post_draft(owner, foreign), "Invalid channel ID")
+        self.assertEqual(Draft.objects.filter(user_profile=owner).count(), initial_count)
+
+        subscribers = check_add_user_group(
+            owner.realm, "Draft channel subscriber managers", [owner], acting_user=owner
+        )
+        private.can_add_subscribers_group = subscribers
+        private.save(update_fields=["can_add_subscribers_group"])
+        self.assert_json_success(post_draft(owner, private))
+        self.assertTrue(
+            Draft.objects.filter(user_profile=owner, recipient=private.recipient).exists()
+        )
+
+        self.subscribe(guest, private.name)
+        self.assert_json_success(post_draft(guest, private))
+        self.assertEqual(Draft.objects.get(user_profile=guest).recipient_id, private.recipient_id)
+        self.unsubscribe(guest, private.name)
+        self.assert_json_error(post_draft(guest, private), "Invalid channel ID")
+        self.assertEqual(Draft.objects.filter(user_profile=guest).count(), 1)
 
     def test_create_personal_message_draft_for_non_existing_user(self) -> None:
         draft_dicts = [

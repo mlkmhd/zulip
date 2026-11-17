@@ -27,6 +27,47 @@ mod _zulip_backend {
     }
 
     #[pyfunction]
+    fn draft_channel_recipient(
+        cursor: &Bound<'_, PyAny>,
+        stream_id: i64,
+        realm_id: i32,
+        user_id: i32,
+        is_guest: bool,
+    ) -> PyResult<Option<(Option<i32>,)>> {
+        // Drafts require channel content access, even for realm administrators.
+        cursor.call_method1(
+            "execute",
+            (
+                "WITH RECURSIVE member_groups(id) AS (
+                     SELECT m.user_group_id FROM zulip.zerver_usergroupmembership AS m
+                     WHERE m.user_profile_id = %s
+                     UNION
+                     SELECT m.supergroup_id FROM zulip.zerver_groupgroupmembership AS m
+                     JOIN member_groups AS g ON g.id = m.subgroup_id
+                 )
+                 SELECT s.recipient_id FROM zulip.zerver_stream AS s
+                 WHERE s.id = %s AND s.realm_id = %s AND NOT s.deactivated
+                   AND CASE
+                       WHEN s.is_web_public THEN TRUE
+                       WHEN EXISTS (
+                           SELECT 1 FROM zulip.zerver_subscription AS sub
+                           WHERE sub.recipient_id = s.recipient_id
+                             AND sub.user_profile_id = %s AND sub.active
+                       ) THEN TRUE
+                       WHEN %s THEN FALSE
+                       WHEN NOT s.invite_only THEN TRUE
+                       ELSE EXISTS (
+                           SELECT 1 FROM member_groups AS g
+                           WHERE g.id IN (s.can_subscribe_group_id, s.can_add_subscribers_group_id)
+                       )
+                   END",
+                (user_id, stream_id, realm_id, user_id, is_guest),
+            ),
+        )?;
+        cursor.call_method0("fetchone")?.extract()
+    }
+
+    #[pyfunction]
     fn storage_size_difference(entries: Vec<(String, String, u64)>) -> i128 {
         bot_storage::storage_size_difference(&entries)
     }

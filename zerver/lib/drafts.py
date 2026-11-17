@@ -42,6 +42,11 @@ _rust_draft_timestamp = (
 _rust_draft_input = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_INPUT") == "1" else None
 )
+_rust_draft_channel_access = (
+    import_module("_zulip_backend")
+    if os.environ.get("ZULIP_RUST_DRAFT_CHANNEL_ACCESS") == "1"
+    else None
+)
 _rust_draft_creation = (
     import_module("_zulip_backend") if os.environ.get("ZULIP_RUST_DRAFT_CREATION") == "1" else None
 )
@@ -154,6 +159,26 @@ DraftInput = Annotated[Json[DraftData], WrapValidator(parse_draft_input)]
 DraftBatchInput = Annotated[Json[list[DraftData]], WrapValidator(parse_draft_batch_input)]
 
 
+def get_draft_channel_recipient_id(user_profile: UserProfile, channel_id: int) -> int:
+    if _rust_draft_channel_access is None or not (-(2**63) <= channel_id < 2**63):
+        stream, _sub = access_stream_by_id(user_profile, channel_id)
+        assert stream.recipient_id is not None
+        return stream.recipient_id
+
+    with connection.cursor() as cursor:
+        row = cast(
+            tuple[int | None] | None,
+            _rust_draft_channel_access.draft_channel_recipient(
+                cursor, channel_id, user_profile.realm_id, user_profile.id, user_profile.is_guest
+            ),
+        )
+    if row is None:
+        raise JsonableError(_("Invalid channel ID"))
+    (recipient_id,) = row
+    assert recipient_id is not None
+    return recipient_id
+
+
 def further_validated_draft_dict(
     draft_dict: DraftData, user_profile: UserProfile
 ) -> ValidatedDraftData:
@@ -177,8 +202,7 @@ def further_validated_draft_dict(
         topic_name = normalize_draft_topic(draft_dict.topic)
         if len(to) != 1:
             raise JsonableError(_("Must specify exactly 1 channel ID for channel messages"))
-        stream, _sub = access_stream_by_id(user_profile, to[0])
-        recipient_id = stream.recipient_id
+        recipient_id = get_draft_channel_recipient_id(user_profile, to[0])
     elif draft_dict.type == "private" and len(to) != 0:
         to_users = get_user_profiles_by_ids(set(to), user_profile.realm)
         # Since recipient_for_user_profiles creates the
