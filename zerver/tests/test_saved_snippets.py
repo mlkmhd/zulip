@@ -1,6 +1,7 @@
 import os
 import re
 from base64 import b64encode
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -487,6 +488,25 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 snippets.exclude(id__in=initial_snippet_ids).delete()
 
     def test_saved_snippet_web_post_http_and_event_parity(self) -> None:
+        self.check_web_write_parity(self.check_web_post_cases)
+
+    def test_saved_snippet_web_patch_http_and_event_parity(self) -> None:
+        self.check_web_write_parity(self.check_web_patch_cases)
+
+    def check_web_write_parity(
+        self,
+        check_cases: Callable[
+            [
+                str,
+                int,
+                int | None,
+                UserProfile,
+                str,
+                pika.adapters.blocking_connection.BlockingChannel,
+            ],
+            None,
+        ],
+    ) -> None:
         vhost, amqp_url = self.saved_snippet_broker()
         django_port = urlsplit(self.live_server_url).port
         assert django_port is not None
@@ -537,9 +557,7 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                             else nullcontext(None)
                         )
                         with service as rust_port:
-                            self.check_web_post_cases(
-                                scheme, django_port, rust_port, user, session, channel
-                            )
+                            check_cases(scheme, django_port, rust_port, user, session, channel)
             finally:
                 for queue in ("notify_tornado", "user_activity"):
                     channel.queue_purge(queue)
@@ -656,6 +674,121 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 results.append((result, response_headers))
             if rust_port is not None:
                 self.assertEqual(results[0], results[1])
+
+    def check_web_patch_cases(
+        self,
+        scheme: str,
+        django_port: int,
+        rust_port: int | None,
+        user: UserProfile,
+        session: str,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+    ) -> None:
+        host = user.realm.host
+        token = _get_new_csrf_string()
+        request = HttpRequest()
+        request.META["CSRF_COOKIE"] = token
+        masked = get_token(request)
+        cookie = f"{session}; {settings.CSRF_COOKIE_NAME}={token}"
+        origin = {"Origin": f"{scheme}://{host}"}
+        valid = {**origin, "Cookie": cookie, "X-CSRFToken": masked}
+        fields = {"title": "  سلام ☃  "}
+        other = self.example_user("othello")
+        foreign = SavedSnippet.objects.create(
+            user_profile=other, realm=other.realm, title="Private", content="Other user's text"
+        )
+        own = SavedSnippet.objects.create(
+            user_profile=user, realm=user.realm, title="Original", content="**Old**"
+        )
+        created = own.date_created
+        audit_count = RealmAuditLog.objects.count()
+
+        def check(port: int) -> list[tuple[int, bytes, dict[str, str | None]]]:
+            responses = []
+
+            def patch(
+                headers: dict[str, str],
+                form: dict[str, str],
+                expected: int,
+                *,
+                snippet_id: int = own.id,
+                query: str = "",
+            ) -> None:
+                response = request_test_http(
+                    port,
+                    "PATCH",
+                    host,
+                    {
+                        **headers,
+                        "User-Agent": "Mozilla/5.0",
+                        "X-Forwarded-Proto": scheme if port == django_port else "http",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                    },
+                    f"/json/saved_snippets/{snippet_id}{query}",
+                    body=urlencode(form),
+                )
+                self.assertEqual(response[0], expected, response[1])
+                responses.append(response[:3])
+
+            channel.queue_purge("user_activity")
+            credentials = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+            patch({**origin, "Authorization": f"Basic {credentials}"}, fields, 401)
+            patch({**valid, "Cookie": session}, fields, 403)
+            patch({**origin, "Cookie": cookie}, {**fields, "csrfmiddlewaretoken": token}, 403)
+            patch({**valid, "X-CSRFToken": _get_new_csrf_string()}, fields, 403)
+            patch({**valid, "Origin": f"{scheme}://other.testserver"}, fields, 403)
+            if scheme == "https":
+                header_only = {"Cookie": cookie, "X-CSRFToken": masked}
+                patch(header_only, fields, 403)
+                patch({**header_only, "Referer": f"http://{host}/"}, fields, 403)
+            self.assertIsNone(channel.basic_get("user_activity", auto_ack=True)[0])
+
+            patch(valid, {"title": " "}, 400)
+            patch(valid, fields, 404, snippet_id=foreign.id)
+            patch(valid, {}, 200)
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            own.refresh_from_db()
+            self.assertEqual((own.title, own.content), ("Original", "**Old**"))
+
+            channel.queue_purge("user_activity")
+            patch(valid, {**fields, "csrfmiddlewaretoken": "ignored"}, 200, query="?title=discard")
+            own.refresh_from_db()
+            self.assertEqual(
+                (own.title, own.content, own.date_created), ("سلام ☃", "**Old**", created)
+            )
+            self.assertEqual((own.user_profile_id, own.realm_id), (user.id, user.realm_id))
+            delivery, properties, body = channel.basic_get("notify_tornado", auto_ack=True)
+            assert delivery is not None and properties is not None and body is not None
+            self.assertEqual(properties.delivery_mode, 2)
+            self.assertEqual(
+                orjson.loads(body),
+                {
+                    "users": [user.id],
+                    "event": {
+                        "type": "saved_snippets",
+                        "op": "update",
+                        "saved_snippet": own.to_api_dict(),
+                    },
+                },
+            )
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            delivery, _, body = channel.basic_get("user_activity", auto_ack=True)
+            assert delivery is not None and body is not None
+            activity = orjson.loads(body)
+            self.assertEqual(activity["query"], "edit_saved_snippet")
+            self.assertEqual(activity["user_profile_id"], user.id)
+            self.assertEqual(RealmAuditLog.objects.count(), audit_count)
+            foreign.refresh_from_db()
+            self.assertEqual((foreign.title, foreign.content), ("Private", "Other user's text"))
+            return responses
+
+        try:
+            django = check(django_port)
+            if rust_port is not None:
+                SavedSnippet.objects.filter(id=own.id).update(title="Original")
+                self.assertEqual(check(rust_port), django)
+        finally:
+            SavedSnippet.objects.filter(id__in=[own.id, foreign.id]).delete()
 
     def post_snippet(
         self,

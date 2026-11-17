@@ -486,10 +486,7 @@ async fn respond(
     } else {
         Endpoint::AlertWords
     };
-    let browser_session = if matches!(
-        uri.path(),
-        ALERT_WORDS_SESSION_PATH | saved_snippets::SESSION_PATH
-    ) {
+    let browser_session = if uri.path().starts_with("/json/") {
         state.sessions.as_deref()
     } else {
         None
@@ -538,14 +535,15 @@ async fn respond(
                     return Err(ApiError::MissingAuthentication);
                 }
             };
-            // A method override changes the target view, but CSRF uses the physical POST.
-            if matches!(requested_write, Some(SnippetWrite::Create)) {
+            if requested_write.is_some() {
+                // Django only accepts the form token on a physical POST.
                 let form_token = form
                     .as_ref()
+                    .filter(|_| matches!(requested_write, Some(SnippetWrite::Create)))
                     .and_then(|form| form.post_value("csrfmiddlewaretoken"));
                 state
                     .web_post_scheme
-                    .expect("web POST route configured")
+                    .expect("web write route configured")
                     .validate(&headers, sessions.csrf_cookie(&headers), form_token)
                     .map_err(ApiError::Csrf)?;
             }

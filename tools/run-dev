@@ -87,6 +87,11 @@ parser.add_argument(
     help="Forward saved-snippet web POST requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-saved-snippets-web-edits",
+    action="store_true",
+    help="Forward saved-snippet web PATCH requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--rust-saved-snippet-writes",
     action="store_true",
     help="Forward saved-snippet API POST requests to the Rust HTTP server",
@@ -196,6 +201,8 @@ if options.rust_saved_snippets_web and options.rust_http_port is None:
     parser.error("--rust-saved-snippets-web requires --rust-http-port")
 if options.rust_saved_snippets_web_writes and options.rust_http_port is None:
     parser.error("--rust-saved-snippets-web-writes requires --rust-http-port")
+if options.rust_saved_snippets_web_edits and options.rust_http_port is None:
+    parser.error("--rust-saved-snippets-web-edits requires --rust-http-port")
 if options.rust_saved_snippet_writes and options.rust_http_port is None:
     parser.error("--rust-saved-snippet-writes requires --rust-http-port")
 if options.rust_saved_snippet_edits and options.rust_http_port is None:
@@ -494,6 +501,8 @@ build step and rerun `run-dev`.""")
             detail_methods.add(hdrs.METH_DELETE)
         if detail_methods:
             rust_routes["/api/v1/saved_snippets/{snippet_id:[0-9]+}"] = detail_methods
+        if options.rust_saved_snippets_web_edits:
+            rust_routes["/json/saved_snippets/{snippet_id:[0-9]+}"] = {hdrs.METH_PATCH}
         if rust_routes:
             add_rust_routes(rust_http_port, rust_routes)
 

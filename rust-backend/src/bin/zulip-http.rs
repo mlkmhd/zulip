@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok(database) => user_read_router(&locale_dir, &database).await?,
         Err(env::VarError::NotPresent) => {
             if optional_env("ZULIP_RUST_WEB_POST_SCHEME")?.is_some() {
-                return Err("Web POST requires ZULIP_RUST_DATABASE_URL".into());
+                return Err("Web writes require ZULIP_RUST_DATABASE_URL".into());
             }
             router(&locale_dir)?
         }

@@ -12,6 +12,7 @@ use tokio_postgres::{Client, Error, Row};
 pub(super) const PATH: &str = "/api/v1/saved_snippets";
 pub(super) const SESSION_PATH: &str = "/json/saved_snippets";
 pub(super) const DETAIL_PATH: &str = "/api/v1/saved_snippets/{id}";
+pub(super) const SESSION_DETAIL_PATH: &str = "/json/saved_snippets/{id}";
 pub(super) const NOTIFICATION_QUEUE: &str = "notify_tornado";
 pub(super) const FORM_BODY_LIMIT: usize = 25 * 1024 * 1024;
 const AUDIT_EVENT_CREATED: i16 = 800;

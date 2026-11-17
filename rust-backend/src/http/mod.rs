@@ -60,9 +60,9 @@ pub async fn router_with_user_reads(
     let locales = locale::Locales::load(locale_dir)?;
     let browser_enabled = config.session.is_some();
     let saved_snippet_writes = config.saved_snippet_max_content_length.is_some();
-    let web_post_enabled = config.web_post_scheme.is_some();
-    if web_post_enabled && !(browser_enabled && saved_snippet_writes) {
-        return Err("Web POST requires Django sessions and saved snippet writes".into());
+    let web_writes_enabled = config.web_post_scheme.is_some();
+    if web_writes_enabled && !(browser_enabled && saved_snippet_writes) {
+        return Err("Web writes require Django sessions and saved snippet writes".into());
     }
     let user_reads = user_reads::UserReads::connect(config, locales.clone()).await?;
     let mut snippet_route = get(user_reads::get);
@@ -85,10 +85,15 @@ pub async fn router_with_user_reads(
     }
     if browser_enabled {
         let mut web_snippet_route = get(user_reads::get);
-        if web_post_enabled {
+        if web_writes_enabled {
             web_snippet_route = web_snippet_route
                 .post(user_reads::create_saved_snippet)
                 .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT));
+            routes = routes.route(
+                saved_snippets::SESSION_DETAIL_PATH,
+                patch(user_reads::write_saved_snippet_detail)
+                    .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT)),
+            );
         }
         routes = routes
             .route(user_reads::ALERT_WORDS_SESSION_PATH, get(user_reads::get))
