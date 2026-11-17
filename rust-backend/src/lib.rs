@@ -6,7 +6,7 @@ pub mod user_status;
 #[cfg(feature = "http")]
 pub mod http;
 
-#[cfg(feature = "python")]
+#[cfg(any(feature = "http", feature = "python"))]
 mod memcached;
 
 #[cfg(feature = "python")]

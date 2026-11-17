@@ -1,5 +1,7 @@
 import os
 from importlib import import_module
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
@@ -41,13 +43,7 @@ class AlertWord(models.Model):
         unique_together = ("user_profile", "word")
 
 
-def flush_realm_alert_words(realm_id: int) -> None:
-    keys = (realm_alert_words_cache_key(realm_id), realm_alert_words_automaton_cache_key(realm_id))
-    if _rust_alert_word_cache is None:
-        for key in keys:
-            cache_delete(key)
-        return
-
+def get_rust_alert_word_memcached_address() -> str:
     config = settings.CACHES["default"]
     location = config.get("LOCATION")
     options = config.get("OPTIONS", {})
@@ -60,7 +56,32 @@ def flush_realm_alert_words(realm_id: int) -> None:
         or options.get("tls_context") is not None
     ):
         raise ImproperlyConfigured("Rust alert-word cache requires unauthenticated local Memcached")
+    try:
+        endpoint = urlsplit(f"//{location}")
+        ip = ip_address(endpoint.hostname or "")
+        port = endpoint.port
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            "Expected a numeric loopback Memcached address and port"
+        ) from exc
+    if (
+        endpoint.netloc != location
+        or endpoint.username is not None
+        or not ip.is_loopback
+        or not port
+    ):
+        raise ImproperlyConfigured("Expected a numeric loopback Memcached address and port")
+    return location
 
+
+def flush_realm_alert_words(realm_id: int) -> None:
+    keys = (realm_alert_words_cache_key(realm_id), realm_alert_words_automaton_cache_key(realm_id))
+    if _rust_alert_word_cache is None:
+        for key in keys:
+            cache_delete(key)
+        return
+
+    location = get_rust_alert_word_memcached_address()
     backend = get_cache_backend(None)
     remote_cache_stats_start()
     try:

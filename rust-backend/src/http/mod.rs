@@ -9,6 +9,7 @@ pub use csrf::WebPostScheme;
 pub use rate_limit::ClientIpSource;
 
 mod activity;
+mod alert_word_cache;
 mod compatibility;
 mod csrf;
 mod database;
@@ -28,6 +29,7 @@ pub struct UserReadConfig<'a> {
     pub external_host: &'a str,
     pub rate_limit: Option<RateLimitConfig<'a>>,
     pub activity: Option<ActivityConfig<'a>>,
+    pub alert_word_cache_manifest: Option<&'a Path>,
     pub session: Option<SessionConfig<'a>>,
     pub web_post_scheme: Option<WebPostScheme>,
     pub saved_snippet_max_content_length: Option<usize>,

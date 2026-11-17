@@ -5,6 +5,7 @@ import time
 from base64 import b64encode
 from collections import Counter
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 from unittest import skipUnless
 from unittest.mock import patch
@@ -16,6 +17,8 @@ from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
 from django.contrib.sessions.models import Session
 from django.core.cache import cache
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.db import connection, transaction
 from django.test import LiveServerTestCase
 from django.utils.timezone import now as timezone_now
@@ -436,6 +439,110 @@ class AlertWordMemcachedTest(ZulipTestCase):
 
 @skipUnless(os.environ.get("ZULIP_RUST_HTTP_BIN"), "Rust HTTP service binary is unavailable")
 class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    @skipUnless(
+        os.environ.get("ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS"),
+        "Dedicated Memcached test instance is unavailable",
+    )
+    def test_alert_word_cache_manifest_readiness(self) -> None:
+        user = self.example_user("hamlet")
+        address = os.environ["ZULIP_RUST_ALERT_WORD_CACHE_TEST_ADDRESS"]
+        default_cache = {
+            "BACKEND": "zerver.lib.singleton_bmemcached.SingletonBMemcached",
+            "LOCATION": address,
+            "KEY_PREFIX": zulip_cache.KEY_PREFIX,
+            "VERSION": 7,
+            "OPTIONS": {},
+        }
+        cache_settings = {**settings.CACHES, "default": default_cache}
+        with (
+            self.settings(CACHES=cache_settings, PRODUCTION=True),
+            TemporaryDirectory() as work_dir,
+            patch("zerver.lib.cache.DEPLOYMENTS_DIR", work_dir),
+            NamedTemporaryFile(mode="w", encoding="utf-8") as secret,
+        ):
+            secret.write(settings.SECRET_KEY)
+            secret.flush()
+            manifest = Path(work_dir) / "alert-word-cache.json"
+            prefixes = [zulip_cache.KEY_PREFIX, "previous:"]
+            cache.set("cache_key_prefixes", prefixes)
+            try:
+                with rust_http_service(
+                    {
+                        "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": secret.name,
+                        "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                            settings.AUTHENTICATION_BACKENDS
+                        ).decode(),
+                        "ZULIP_RUST_ALERT_WORD_CACHE_MANIFEST": str(manifest),
+                    }
+                ) as rust_port:
+
+                    def assert_readiness(expected: int) -> None:
+                        status, body, _, _ = request_test_http(
+                            rust_port, "GET", user.realm.host, {}, "/health/rust-alert-words"
+                        )
+                        self.assertEqual(status, expected, body)
+                        self.assertEqual(orjson.loads(body), {"ready": expected == 200})
+
+                    assert_readiness(503)
+                    call_command("export_rust_alert_word_cache", str(manifest))
+                    assert_readiness(200)
+                    exported = orjson.loads(manifest.read_bytes())
+                    self.assertEqual(
+                        exported,
+                        {
+                            "address": address,
+                            "key_prefixes": sorted(cache.make_key(prefix) for prefix in prefixes),
+                        },
+                    )
+                    new_prefix = "new-deployment:"
+                    cache.set("cache_key_prefixes", [*prefixes, new_prefix])
+                    call_command("export_rust_alert_word_cache", str(manifest))
+                    self.assertIn(
+                        cache.make_key(new_prefix),
+                        orjson.loads(manifest.read_bytes())["key_prefixes"],
+                    )
+                    assert_readiness(200)
+
+                    before = manifest.read_bytes()
+                    for unsupported in (
+                        {"OPTIONS": {"username": "memcached-user"}},
+                        {"KEY_FUNCTION": "builtins.str"},
+                        {"LOCATION": "192.0.2.1:11211"},
+                    ):
+                        with (
+                            self.settings(
+                                CACHES={
+                                    **cache_settings,
+                                    "default": {**default_cache, **unsupported},
+                                }
+                            ),
+                            self.assertRaises(CommandError),
+                        ):
+                            call_command("export_rust_alert_word_cache", str(manifest))
+                        self.assertEqual(manifest.read_bytes(), before)
+                    cache.set("cache_key_prefixes", [""])
+                    with self.assertRaisesMessage(
+                        CommandError, "Active Memcached deployment prefixes are unavailable"
+                    ):
+                        call_command("export_rust_alert_word_cache", str(manifest))
+                    self.assertEqual(manifest.read_bytes(), before)
+                    cache.set("cache_key_prefixes", [*prefixes, new_prefix])
+                    assert_readiness(200)
+
+                    manifest.write_bytes(b"{")
+                    assert_readiness(503)
+                    manifest.write_bytes(orjson.dumps({**exported, "key_prefixes": []}))
+                    assert_readiness(503)
+                    with socket.socket() as unused_port:
+                        unused_port.bind(("127.0.0.1", 0))
+                        invalid_address = f"127.0.0.1:{unused_port.getsockname()[1]}"
+                        manifest.write_bytes(orjson.dumps({**exported, "address": invalid_address}))
+                        assert_readiness(503)
+                    call_command("export_rust_alert_word_cache", str(manifest))
+                    assert_readiness(200)
+            finally:
+                cache.delete("cache_key_prefixes")
+
     def test_alert_words_http_parity(self) -> None:
         user = self.example_user("hamlet")
         inactive = self.example_user("iago")

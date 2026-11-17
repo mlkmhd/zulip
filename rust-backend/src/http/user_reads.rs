@@ -2,6 +2,7 @@ use std::{
     error::Error,
     fmt::Display,
     net::SocketAddr,
+    path::Path as FsPath,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -18,6 +19,7 @@ use tokio_postgres::Client;
 use super::{
     UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
+    alert_word_cache,
     database::Database,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
@@ -95,6 +97,11 @@ pub(super) async fn ready(State(state): State<UserReads>) -> Response {
             {
                 return false;
             }
+            if let Some(path) = state.alert_word_cache_manifest
+                && !alert_word_cache::ready(path).await
+            {
+                return false;
+            }
             state
                 .activity
                 .as_ref()
@@ -125,6 +132,7 @@ pub(super) struct UserReads {
     locales: Locales,
     rate_limiter: Option<RateLimiter>,
     activity: Option<ActivityPublisher>,
+    alert_word_cache_manifest: Option<Arc<FsPath>>,
     sessions: Option<Arc<Sessions>>,
     web_post_scheme: Option<WebPostScheme>,
     saved_snippet_max_content_length: Option<usize>,
@@ -162,6 +170,7 @@ impl UserReads {
             locales,
             rate_limiter,
             activity,
+            alert_word_cache_manifest: settings.alert_word_cache_manifest.map(Arc::from),
             sessions,
             web_post_scheme: settings.web_post_scheme,
             saved_snippet_max_content_length: settings.saved_snippet_max_content_length,
