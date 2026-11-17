@@ -29,6 +29,7 @@
 | `GET /api/v1/users/me/alert_words` و `HEAD` متناظر                                      | Basic Auth، خواندن PostgreSQL، سهمیهٔ مشترک Redis و صف فعالیت RabbitMQ | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `GET /json/users/me/alert_words` و `HEAD` متناظر                                        | نشست امضاشدهٔ Django، CSRF روش‌های امن، سهمیه و فعالیت                 | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست        | Django               |
 | `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
+| `POST /api/v1/saved_snippets`                                                           | ثبت متن و audit، اعلان پس از commit                                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
@@ -86,8 +87,16 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 [تست HTTP](../zerver/tests/test_saved_snippets.py)
 
 `HEAD` همان هدرها و بدنهٔ خالی دارد. Rust این دو روش را مستقیم یا از
-پروکسی توسعه و nginx آزمایشی سرو می‌کند. Django `/json/saved_snippets`، `OPTIONS` و
-عملیات تغییردهندهٔ داده را سرو می‌کند. [راهنمای staging](README.md#stage-saved-snippet-reads-in-nginx)
+پروکسی توسعه و nginx آزمایشی سرو می‌کند.
+
+`POST` در هر دو پیاده‌سازی عنوان و محتوای فرم را اعتبارسنجی می‌کند و
+ردیف `zerver_savedsnippet` را همراه با `zerver_realmauditlog` و نوع
+`SAVED_SNIPPET_CREATED` در یک تراکنش ثبت می‌کند. پاسخ شناسهٔ تازهٔ
+`saved_snippet_id` را می‌دهد. رویداد `saved_snippets/add` پس از commit
+فقط برای صاحب متن به صف `notify_tornado` فرستاده می‌شود. برش Rust برای
+یک فرایند Tornado فعال شده است و تنظیمات نوشتن آن مستقل از خواندن است.
+Django مسیر `/json/saved_snippets`، `PATCH`، `DELETE` و `OPTIONS` را سرو می‌کند.
+[تراکنش و رویداد Django](../zerver/actions/saved_snippets.py)، [راهنمای staging](README.md#enable-saved-snippet-creation)
 
 ## فهرست OpenAPI
 
