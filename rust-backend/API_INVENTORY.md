@@ -30,6 +30,7 @@
 | `GET /json/users/me/alert_words` و `HEAD` متناظر                                        | نشست امضاشدهٔ Django، CSRF روش‌های امن، سهمیه و فعالیت                 | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست        | Django               |
 | `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/saved_snippets`                                                           | ثبت متن و audit، اعلان پس از commit                                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
+| `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
@@ -95,8 +96,17 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 `saved_snippet_id` را می‌دهد. رویداد `saved_snippets/add` پس از commit
 فقط برای صاحب متن به صف `notify_tornado` فرستاده می‌شود. برش Rust برای
 یک فرایند Tornado فعال شده است و تنظیمات نوشتن آن مستقل از خواندن است.
-Django مسیر `/json/saved_snippets`، `PATCH`، `DELETE` و `OPTIONS` را سرو می‌کند.
-[تراکنش و رویداد Django](../zerver/actions/saved_snippets.py)، [راهنمای staging](README.md#enable-saved-snippet-creation)
+[تراکنش و رویداد Django](../zerver/actions/saved_snippets.py)، [راهنمای staging برای POST](README.md#enable-saved-snippet-creation)
+
+`PATCH /api/v1/saved_snippets/{saved_snippet_id}` عنوان یا محتوا یا هر دو را
+برای صاحب متن به‌روز می‌کند. تاریخ ایجاد و فیلدهای حذف‌شده از درخواست
+حفظ می‌شوند. درخواست بدون عنوان و محتوا موفق است و تغییری در متن یا
+رویداد ویرایش ایجاد نمی‌کند. با ورودی معتبر برای تغییر، متن ناموجود و
+متن متعلق به کاربر دیگر هر دو `404` می‌گیرند. پس از commit در PostgreSQL،
+رویداد `saved_snippets/update` با متن کامل فقط برای صاحب متن از Tornado
+تحویل می‌شود. هدایت PATCH مستقل از GET و POST است.
+Django مسیر `/json/saved_snippets`، `DELETE` و `OPTIONS` را سرو می‌کند.
+[تست مقایسه](../zerver/tests/test_saved_snippets.py)، [راهنمای staging برای PATCH](README.md#enable-saved-snippet-editing)
 
 ## فهرست OpenAPI
 
