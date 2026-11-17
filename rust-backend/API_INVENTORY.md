@@ -28,7 +28,7 @@
 | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------- |
 | `GET /api/v1/users/me/alert_words` و `HEAD` متناظر                                      | Basic Auth، خواندن PostgreSQL، سهمیهٔ مشترک Redis و صف فعالیت RabbitMQ | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `GET /json/users/me/alert_words` و `HEAD` متناظر                                        | نشست امضاشدهٔ Django، CSRF روش‌های امن، سهمیه و فعالیت                 | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست        | Django               |
-| `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم یا پروکسی توسعه با `--rust-saved-snippets`          | Django               |
+| `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
@@ -79,14 +79,15 @@
 در کوئری Django و Rust وجود ندارد. view خواندنی دادهٔ متن‌ها را تغییر
 نمی‌دهد، کش متن‌ها را استفاده نمی‌کند و رویداد `saved_snippets` منتشر نمی‌کند.
 در صورت پیکربندی Redis و RabbitMQ، ثبت فعالیت با نام `get_saved_snippets`
-پیش از بررسی سهمیهٔ `api_by_user` انجام می‌شود. معافیت کلاینت داخلی در
-سهمیهٔ Rust برای استقرار مقصد باقی است.
+پیش از بررسی سهمیهٔ `api_by_user` انجام می‌شود. کلاینت `internal` با
+IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Django و معادل
+آن در Rust همین معافیت را برای IP غیرمحلی هم فعال می‌کند.
 [view](../zerver/views/saved_snippets.py)، [مدل](../zerver/models/saved_snippets.py)،
 [تست HTTP](../zerver/tests/test_saved_snippets.py)
 
 `HEAD` همان هدرها و بدنهٔ خالی دارد. Rust این دو روش را مستقیم یا از
-پروکسی توسعه سرو می‌کند. Django `/json/saved_snippets`، `OPTIONS` و
-عملیات تغییردهندهٔ داده را سرو می‌کند. [راهنمای اجرا](README.md#read-saved-snippets-through-rust)
+پروکسی توسعه و nginx آزمایشی سرو می‌کند. Django `/json/saved_snippets`، `OPTIONS` و
+عملیات تغییردهندهٔ داده را سرو می‌کند. [راهنمای staging](README.md#stage-saved-snippet-reads-in-nginx)
 
 ## فهرست OpenAPI
 
