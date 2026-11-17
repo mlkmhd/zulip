@@ -31,6 +31,8 @@ def rust_http_service(
     env.pop("ZULIP_RUST_REDIS_URL", None)
     env.pop("ZULIP_RUST_AMQP_URL", None)
     env.pop("ZULIP_RUST_DJANGO_SECRET_KEY_FILE", None)
+    env.pop("ZULIP_RUST_CLIENT_IP_SOURCE", None)
+    env.pop("ZULIP_RUST_DEBUG_RATE_LIMITING", None)
     with subprocess.Popen(
         [os.environ["ZULIP_RUST_HTTP_BIN"], "127.0.0.1:0"],
         stderr=subprocess.PIPE,

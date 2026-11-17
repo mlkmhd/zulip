@@ -287,7 +287,17 @@ SKIP_AUTO_HEADERS = {
 }
 
 
-async def forward(upstream_port: int, request: web.Request) -> web.StreamResponse:
+async def forward(
+    upstream_port: int, request: web.Request, *, replace_real_ip: bool = False
+) -> web.StreamResponse:
+    assert request.remote is not None
+    headers = [
+        (key, value)
+        for key, value in request.headers.items()
+        if key not in HOP_BY_HOP_HEADERS and (not replace_real_ip or key.lower() != "x-real-ip")
+    ]
+    if replace_real_ip:
+        headers.append(("X-Real-IP", request.remote))
     upstream_response: aiohttp.ClientResponse | None = None
     request_started = time.time()
     while upstream_response is None:
@@ -295,11 +305,7 @@ async def forward(upstream_port: int, request: web.Request) -> web.StreamRespons
             upstream_response = await session.request(
                 request.method,
                 request.url.with_host("127.0.0.1").with_port(upstream_port),
-                headers=[
-                    (key, value)
-                    for key, value in request.headers.items()
-                    if key not in HOP_BY_HOP_HEADERS
-                ],
+                headers=headers,
                 data=request.content.iter_any() if request.body_exists else None,
                 allow_redirects=False,
                 auto_decompress=False,
@@ -327,7 +333,6 @@ async def forward(upstream_port: int, request: web.Request) -> web.StreamRespons
         for key, value in upstream_response.headers.items()
         if key not in HOP_BY_HOP_HEADERS
     )
-    assert request.remote is not None
     response.headers["X-Real-IP"] = request.remote
     response.headers["X-Forwarded-Port"] = str(proxy_port)
     await response.prepare(request)
@@ -477,7 +482,7 @@ def add_rust_read_routes(rust_port: int, paths: list[str]) -> None:
 
     async def forward_read(request: web.Request) -> web.StreamResponse:
         if request.method in (hdrs.METH_GET, hdrs.METH_HEAD) and supports_rust_host(request.host):
-            return await forward(rust_port, request)
+            return await forward(rust_port, request, replace_real_ip=True)
         return await forward(django_port, request)
 
     for path in paths:

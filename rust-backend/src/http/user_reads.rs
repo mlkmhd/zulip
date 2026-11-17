@@ -1,12 +1,14 @@
 use std::{
     error::Error,
     fmt::Display,
+    net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime},
 };
 
 use axum::{
-    extract::State,
+    Extension,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, HeaderValue, StatusCode, Uri, header, uri::Authority},
     response::{IntoResponse, Response},
 };
@@ -15,7 +17,7 @@ use tokio_postgres::Client;
 
 use super::{
     UserReadConfig,
-    activity::ActivityPublisher,
+    activity::{ActivityPublisher, client_name},
     database::Database,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
@@ -239,20 +241,11 @@ impl UserReads {
         database: &Client,
         user_id: i32,
         endpoint: Endpoint,
-        query: Option<&str>,
-        headers: &HeaderMap,
-        browser: bool,
+        client: &str,
     ) -> Result<(), ApiError> {
         if let Some(activity) = &self.activity {
             activity
-                .record(
-                    database,
-                    user_id,
-                    endpoint.activity_name(),
-                    query,
-                    headers,
-                    browser,
-                )
+                .record(database, user_id, endpoint.activity_name(), client)
                 .await
                 .map_err(|error| {
                     eprintln!("User read activity failed: {error}");
@@ -405,7 +398,12 @@ fn prefers_html(headers: &HeaderMap) -> bool {
     score("text/html", "text/*") > score("application/json", "application/*")
 }
 
-pub(super) async fn get(State(state): State<UserReads>, uri: Uri, headers: HeaderMap) -> Response {
+pub(super) async fn get(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    uri: Uri,
+    headers: HeaderMap,
+) -> Response {
     let language = Locales::for_request(&headers);
     let endpoint = if uri.path() == saved_snippets::PATH {
         Endpoint::SavedSnippets
@@ -455,19 +453,34 @@ pub(super) async fn get(State(state): State<UserReads>, uri: Uri, headers: Heade
                     "Webhook bots can only access webhooks",
                 ));
             }
+            let client = client_name(uri.query(), &headers);
+            let client = if client.starts_with("Zulip") {
+                &client
+            } else {
+                "website"
+            };
             state
-                .record_activity(&database, user.id, endpoint, uri.query(), &headers, true)
+                .record_activity(&database, user.id, endpoint, client)
                 .await?;
             (database, user.id)
         } else {
             let (database, user) = state.authenticate(&headers).await?;
+            let client = client_name(uri.query(), &headers);
             // Basic Auth records activity before the quota check.
             state
-                .record_activity(&database, user.id, endpoint, uri.query(), &headers, false)
+                .record_activity(&database, user.id, endpoint, &client)
                 .await?;
-            state
-                .limit(user.id, &user.rate_limits, &mut rate_limit)
-                .await?;
+            if !state.rate_limiter.as_ref().is_some_and(|limiter| {
+                limiter.exempts_internal_client(
+                    &client,
+                    peer.map(|Extension(ConnectInfo(address))| address.ip()),
+                    &headers,
+                )
+            }) {
+                state
+                    .limit(user.id, &user.rate_limits, &mut rate_limit)
+                    .await?;
+            }
             (database, user.id)
         };
         endpoint.read(&database, user_id).await

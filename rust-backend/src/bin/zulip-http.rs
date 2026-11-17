@@ -6,7 +6,8 @@ use std::{
 };
 
 use _zulip_backend::http::{
-    ActivityConfig, RateLimitConfig, SessionConfig, UserReadConfig, router, router_with_user_reads,
+    ActivityConfig, ClientIpSource, RateLimitConfig, SessionConfig, UserReadConfig, router,
+    router_with_user_reads,
 };
 use axum::Router;
 use tokio::net::TcpListener;
@@ -29,7 +30,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
     let listener = TcpListener::bind(address).await?;
     eprintln!("Zulip HTTP listening on {}", listener.local_addr()?);
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -42,6 +47,17 @@ async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, B
         String::new()
     };
     let key_prefix = optional_env("ZULIP_RUST_REDIS_KEY_PREFIX")?.unwrap_or_default();
+    let client_ip_source = match optional_env("ZULIP_RUST_CLIENT_IP_SOURCE")?.as_deref() {
+        None => ClientIpSource::Unspecified,
+        Some("peer") => ClientIpSource::Peer,
+        Some("proxy") => ClientIpSource::Proxy,
+        Some(_) => return Err("ZULIP_RUST_CLIENT_IP_SOURCE must be peer or proxy".into()),
+    };
+    let debug_rate_limiting = match optional_env("ZULIP_RUST_DEBUG_RATE_LIMITING")?.as_deref() {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(_) => return Err("ZULIP_RUST_DEBUG_RATE_LIMITING must be 0 or 1".into()),
+    };
     let amqp_url = optional_env("ZULIP_RUST_AMQP_URL")?;
     let shards =
         optional_env("ZULIP_RUST_USER_ACTIVITY_SHARDS")?.map_or(Ok(1), |value| value.parse())?;
@@ -62,6 +78,8 @@ async fn user_read_router(locale_dir: &Path, database: &str) -> Result<Router, B
                 url,
                 key_prefix: &key_prefix,
                 rules: &rules,
+                client_ip_source,
+                debug_rate_limiting,
             }),
             activity: amqp_url
                 .as_deref()

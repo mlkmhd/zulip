@@ -1,6 +1,7 @@
 use std::{error::Error, path::Path};
 
 use axum::{Router, routing::get};
+pub use rate_limit::ClientIpSource;
 
 mod activity;
 mod compatibility;
@@ -35,6 +36,8 @@ pub struct RateLimitConfig<'a> {
     pub url: &'a str,
     pub key_prefix: &'a str,
     pub rules: &'a str,
+    pub client_ip_source: ClientIpSource,
+    pub debug_rate_limiting: bool,
 }
 
 pub struct ActivityConfig<'a> {

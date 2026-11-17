@@ -666,6 +666,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             "ZULIP_RUST_REDIS_URL": redis_url,
             "ZULIP_RUST_REDIS_KEY_PREFIX": redis_utils.REDIS_KEY_PREFIX,
             "ZULIP_RUST_RATE_LIMIT_RULES": orjson.dumps(rules).decode(),
+            "ZULIP_RUST_CLIENT_IP_SOURCE": "proxy",
             "ZULIP_RUST_AMQP_URL": broker_url,
             "ZULIP_RUST_USER_ACTIVITY_SHARDS": str(shards),
         }
@@ -676,6 +677,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             credentials=pika.PlainCredentials(username, password),
         )
         self.assertFalse(Client.objects.filter(name=custom_name).exists())
+        self.assertFalse(Client.objects.filter(name="InTeRnAl").exists())
         with (
             pika.BlockingConnection(params) as broker,
             NamedTemporaryFile(mode="w", encoding="utf-8") as secret,
@@ -699,15 +701,22 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                         USER_ACTIVITY_SHARDS=shards,
                     ),
                     patch.object(RedisRateLimiterBackend, "_testing_clock", False),
-                    rust_http_service(environment) as rust_port,
                 ):
-                    self.check_shared_quota(rust_port, user, custom_user)
-                    self.check_session_quota(rust_port, user)
+                    with rust_http_service(environment) as rust_port:
+                        self.check_shared_quota(rust_port, user, custom_user)
+                        self.check_session_quota(rust_port, user)
+                    with (
+                        self.settings(DEBUG_RATE_LIMITING=True),
+                        rust_http_service(
+                            {**environment, "ZULIP_RUST_DEBUG_RATE_LIMITING": "1"}
+                        ) as rust_port,
+                    ):
+                        self.check_debug_internal_quota(rust_port, user)
                 self.check_activity(channel, shards, user, custom_user, custom_name)
             finally:
                 RateLimitedUser(user).clear_history()
                 RateLimitedUser(custom_user).clear_history()
-                Client.objects.filter(name=custom_name).delete()
+                Client.objects.filter(name__in=[custom_name, "InTeRnAl"]).delete()
                 UserProfile.objects.filter(id=custom_user.id).update(
                     rate_limits=custom_user.rate_limits
                 )
@@ -767,6 +776,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             method: str = "GET",
             *,
             endpoint: str = "users/me/alert_words",
+            real_ip: str = "192.0.2.1",
             **query: str,
         ) -> tuple[int, bytes, dict[str, str | None], str | None]:
             authorization = (
@@ -777,7 +787,7 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                 port,
                 method,
                 profile.realm.host,
-                {"Authorization": authorization},
+                {"Authorization": authorization, "X-Real-IP": real_ip},
                 f"/api/v1/{endpoint}?{urlencode(query)}",
             )
 
@@ -830,6 +840,15 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         assert_limited_pair()
         self.assertEqual(redis.hgetall(gcra), snapshot)
 
+        for port in (django_port, rust_port):
+            for address, status in (("127.0.0.1", 200), ("::1", 200), ("192.0.2.1", 429)):
+                result, _, headers, _ = request(
+                    port, user, endpoint="saved_snippets", real_ip=address, client="InTeRnAl"
+                )
+                self.assertEqual(result, status)
+                self.assertEqual(headers["X-RateLimit-Limit"], "3" if status == 429 else None)
+        self.assertEqual(redis.hgetall(gcra), snapshot)
+
         client = "Rust+parity café " * 3
         rust = request(rust_port, custom_user, "HEAD", endpoint="saved_snippets", client=client)
         django = request(django_port, custom_user, endpoint="saved_snippets", client=client)
@@ -838,6 +857,26 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         self.assertEqual(rust[2]["X-RateLimit-Limit"], "2")
         self.assertEqual(django[2]["X-RateLimit-Limit"], "2")
         self.assertEqual(django[2]["X-RateLimit-Remaining"], "0")
+
+    def check_debug_internal_quota(self, rust_port: int, user: UserProfile) -> None:
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        authorization = (
+            "Basic " + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        )
+        headers = {"Authorization": authorization}
+        path = "/api/v1/saved_snippets"
+        for port in (django_port, rust_port):
+            result, _, response_headers, _ = request_test_http(
+                port, "GET", user.realm.host, headers, path + "?client=InTeRnAl"
+            )
+            self.assertEqual(result, 200)
+            self.assertIsNone(response_headers["X-RateLimit-Limit"])
+            result, _, response_headers, _ = request_test_http(
+                port, "GET", user.realm.host, headers, path
+            )
+            self.assertEqual(result, 429)
+            self.assertEqual(response_headers["X-RateLimit-Limit"], "3")
 
     def check_activity(
         self,
@@ -850,11 +889,13 @@ class AlertWordsRustHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
         mobile = Client.objects.get(name="ZulipMobile")
         custom = Client.objects.get(name=custom_name)
         website = Client.objects.get(name="website")
+        internal = Client.objects.get(name="InTeRnAl")
         expected = Counter(
             {
                 ("list_alert_words", user.id, mobile.id): 2,
-                ("get_saved_snippets", user.id, mobile.id): 4,
+                ("get_saved_snippets", user.id, mobile.id): 6,
                 ("get_saved_snippets", custom_user.id, custom.id): 2,
+                ("get_saved_snippets", user.id, internal.id): 8,
                 ("list_alert_words", user.id, website.id): 2,
             }
         )

@@ -75,17 +75,9 @@ impl ActivityPublisher {
         db: &Client,
         user_id: i32,
         endpoint: &str,
-        query: Option<&str>,
-        headers: &HeaderMap,
-        browser: bool,
+        client_name: &str,
     ) -> Result<(), ActivityError> {
-        let name = client_name(query, headers);
-        let name = if browser && !name.starts_with("Zulip") {
-            "website"
-        } else {
-            &name
-        };
-        let client_id = resolve_client(db, name).await?;
+        let client_id = resolve_client(db, client_name).await?;
         let event = serde_json::json!({
             "query": endpoint,
             "user_profile_id": user_id,
@@ -126,7 +118,7 @@ fn queue_name(shard: u32, shards: u32) -> String {
     }
 }
 
-fn client_name(query: Option<&str>, headers: &HeaderMap) -> String {
+pub(super) fn client_name(query: Option<&str>, headers: &HeaderMap) -> String {
     if let Some((_, name)) = query.and_then(|query| {
         form_urlencoded::parse(query.as_bytes())
             .filter(|(key, _)| key == "client")

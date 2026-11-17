@@ -125,8 +125,18 @@ To share the API quota, set `ZULIP_RUST_REDIS_URL` to Django's Redis database
 `RATE_LIMITING_RULES["api_by_user"]` as JSON, for example `[[60,200]]`. Use
 `[]` for Django's empty rule list. Per-user PostgreSQL overrides take
 precedence. `ZULIP_RUST_REDIS_KEY_PREFIX` defaults to the empty prefix used
-outside tests. The loopback endpoint applies the quota to all authenticated
-clients when Redis is configured.
+outside tests. Basic Auth requests from the `internal` client are exempt
+when the request originates at `127.0.0.1` or `::1`, or when
+`ZULIP_RUST_DEBUG_RATE_LIMITING=1` mirrors Django's `DEBUG_RATE_LIMITING=True`.
+Client names are case-insensitive for this check. Exempt requests still
+authenticate and record activity when RabbitMQ is configured.
+
+Set `ZULIP_RUST_CLIENT_IP_SOURCE=proxy` when the loopback listener is behind
+a trusted proxy that overwrites `X-Real-IP` with the verified client address.
+The supplied nginx include and the Rust read routes in `tools/run-dev` do
+this. For a listener used directly, set `ZULIP_RUST_CLIENT_IP_SOURCE=peer`
+to use the TCP peer address. With the setting unset, the server applies
+the quota unless debug mode exempts the client.
 
 To publish activity, set `ZULIP_RUST_AMQP_URL` to the AMQP endpoint and vhost
 used by Django, including its credentials. Set
@@ -264,6 +274,33 @@ ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
 ```
 
 Omit `ZULIP_RUST_HTTP_BIN` to run the same cases on Django alone.
+
+## Stage saved-snippet reads in nginx
+
+Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,
+`ZULIP_RUST_CLIENT_IP_SOURCE=proxy`, and the staging Redis and RabbitMQ
+settings. The nginx `proxy` include supplies `X-Real-IP` from
+`$trusted_remote_addr`, the same address sent to Django. For a staging
+instance that accepts requests directly, set `$trusted_remote_addr` from
+`$remote_addr`.
+
+1. Include `saved-snippets-map.conf` from `rust-backend/staging/nginx/` in
+   nginx's HTTP context. The sample verifies `zulip.testserver` with or
+   without `:8880`. Substitute the hostname and port that select the same
+   organization in Rust and Django.
+2. Verify an authenticated `GET /api/v1/saved_snippets` directly on the
+   Rust listener using the staging hostname. Place `saved-snippets-routes.conf`
+   in the staging `zulip-include/app.d/` directory, run `nginx -t`, and reload.
+3. Check `GET` and `HEAD` through nginx. Use `OPTIONS` and a test write on a
+   disposable database to check the Django route. Compare an authenticated
+   ordinary request, a loopback `internal` request, and a nonlocal `internal`
+   request against the same quota. The nonlocal request remains subject to
+   the quota even when it sends its own loopback `X-Real-IP`.
+
+To roll back, remove `saved-snippets-routes.conf` from `app.d/`, run `nginx -t`,
+and reload. While the Rust route is active, an unreachable Rust listener
+produces the existing nginx JSON error response. nginx keeps the request on
+the selected upstream to avoid duplicating quota and activity side effects.
 
 ## Stage alert-word reads in nginx
 

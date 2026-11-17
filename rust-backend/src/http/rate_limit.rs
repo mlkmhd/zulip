@@ -1,5 +1,6 @@
 use std::{
     error::Error,
+    net::IpAddr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,12 +14,75 @@ use redis::{
 const RATE_LIMIT_SCRIPT: &str = include_str!("../../../zerver/lib/rate_limiter.lua");
 const NO_RULES: [(u64, u64); 1] = [(1, 9999)];
 
+#[derive(Clone, Copy)]
+pub enum ClientIpSource {
+    Unspecified,
+    Peer,
+    Proxy,
+}
+
+impl ClientIpSource {
+    fn is_local(self, peer: Option<IpAddr>, headers: &HeaderMap) -> bool {
+        let is_local = |address: IpAddr| match address {
+            IpAddr::V4(ip) => ip == std::net::Ipv4Addr::LOCALHOST,
+            IpAddr::V6(ip) => ip == std::net::Ipv6Addr::LOCALHOST,
+        };
+        match self {
+            Self::Unspecified => false,
+            Self::Peer => peer.is_some_and(is_local),
+            Self::Proxy => {
+                // Only an explicitly configured local proxy may vouch for the client IP.
+                let mut values = headers.get_all("x-real-ip").iter();
+                peer.is_some_and(is_local)
+                    && values
+                        .next()
+                        .is_some_and(|value| matches!(value.as_bytes(), b"127.0.0.1" | b"::1"))
+                    && values.next().is_none()
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selects_only_the_configured_client_address() {
+        let local = Some("127.0.0.1".parse().unwrap());
+        let other_loopback = Some("127.0.0.2".parse().unwrap());
+        let remote = Some("192.0.2.1".parse().unwrap());
+        let mut headers = HeaderMap::new();
+
+        assert!(ClientIpSource::Peer.is_local(local, &headers));
+        assert!(!ClientIpSource::Peer.is_local(other_loopback, &headers));
+        assert!(!ClientIpSource::Proxy.is_local(local, &headers));
+
+        headers.insert("x-real-ip", HeaderValue::from_static("::1"));
+        assert!(!ClientIpSource::Unspecified.is_local(local, &headers));
+        assert!(!ClientIpSource::Peer.is_local(remote, &headers));
+        assert!(ClientIpSource::Proxy.is_local(local, &headers));
+        assert!(!ClientIpSource::Proxy.is_local(remote, &headers));
+        assert!(!ClientIpSource::Proxy.is_local(None, &headers));
+
+        headers.append("x-real-ip", HeaderValue::from_static("127.0.0.1"));
+        assert!(!ClientIpSource::Proxy.is_local(local, &headers));
+        headers.insert(
+            "x-real-ip",
+            HeaderValue::from_static("127.0.0.1, 192.0.2.1"),
+        );
+        assert!(!ClientIpSource::Proxy.is_local(local, &headers));
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct RateLimiter {
     connection: ConnectionManager,
     script: Arc<Script>,
     rules: Arc<[(u64, u64)]>,
     prefix: Arc<str>,
+    client_ip_source: ClientIpSource,
+    debug_rate_limiting: bool,
 }
 
 impl RateLimiter {
@@ -51,7 +115,19 @@ impl RateLimiter {
             script: Arc::new(Script::new(RATE_LIMIT_SCRIPT)),
             rules: rules.into(),
             prefix: settings.key_prefix.into(),
+            client_ip_source: settings.client_ip_source,
+            debug_rate_limiting: settings.debug_rate_limiting,
         })
+    }
+
+    pub(super) fn exempts_internal_client(
+        &self,
+        client: &str,
+        peer: Option<IpAddr>,
+        headers: &HeaderMap,
+    ) -> bool {
+        client.eq_ignore_ascii_case("internal")
+            && (self.debug_rate_limiting || self.client_ip_source.is_local(peer, headers))
     }
 
     pub(super) async fn check(
