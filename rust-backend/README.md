@@ -118,8 +118,7 @@ Send `GET /api/v1/users/me/alert_words` to the loopback listener with
 `Host: <organization>.zulipdev.com` and HTTP Basic authentication. The user
 name is the account email and the password is its API key. The base hostname
 selects the root-domain organization. This direct development route supports
-the standard realm subdomain layout. Django serves configured custom realm hosts,
-the web session alias, writes, and normal proxy traffic.
+the standard realm subdomain layout.
 
 To share the API quota, set `ZULIP_RUST_REDIS_URL` to Django's Redis database
 0 and `ZULIP_RUST_RATE_LIMIT_RULES` to the effective
@@ -191,6 +190,46 @@ malformed CSRF cookie and keeps the response private. For writes and their
 CSRF checks, use the regular Django route. Run
 `AlertWordsRustHTTPTest.test_alert_words_session_and_csrf_parity` with
 `ZULIP_RUST_HTTP_BIN` as above. The test creates its own committed sessions.
+
+## Route alert-word reads through the development proxy
+
+Start the Rust HTTP server with the database and session settings above. Set
+`ZULIP_RUST_EXTERNAL_HOST` to Django's base hostname without the port, then start
+the proxy with both options:
+
+```sh
+./tools/run-dev --rust-http-port 9997 --rust-alert-words
+```
+
+The proxy forwards `GET` and `HEAD` on `/api/v1/users/me/alert_words`
+and `/json/users/me/alert_words` when the hostname selects the same realm
+in Django and Rust. Use a standard realm hostname such as
+`zulip.zulipdev.com:9991` with the default development settings.
+Custom host mappings such as the default `localhost:9991` mapping to the
+`zulip` realm are served by Django when the Rust mapping differs. Django also
+serves `OPTIONS`, `POST`, `DELETE`, and other methods on these paths.
+
+To restore Django reads, stop the proxy and restart it without
+`--rust-alert-words`. Keep `--rust-http-port` if you still want Rust to
+serve the mobile compatibility route. A Rust upstream error uses the proxy's
+normal error handling.
+
+The proxy smoke test uses committed fixtures and writes only to a disposable
+clone of `zulip_test_template` whose name starts with `zulip_rust_proxy_`.
+Point both services and the test at that clone. Use `TEST_EXTERNAL_HOST=testserver`,
+`EXTERNAL_HOST=testserver:9981`, and the Rust base host `testserver`.
+Configure Rust with `ZULIP_RUST_RATE_LIMIT_RULES='[[60,200]]'` and a Redis key prefix
+unique to the clone. The Rust rate header distinguishes the upstream from
+Django, where the test settings disable rate limiting. Start the proxy with
+`--test --streamlined --rust-http-port 9997 --rust-alert-words` and run:
+
+```sh
+DJANGO_SETTINGS_MODULE=zproject.test_settings ZULIP_RUST_PROXY_EXPECT_RUST=1 \
+    ./manage.py shell --no-imports -c 'from runpy import run_path; run_path("rust-backend/tests/check_alert_words_proxy.py", run_name="__main__")'
+```
+
+Restart the proxy without `--rust-alert-words` and repeat with
+`ZULIP_RUST_PROXY_EXPECT_RUST=0`, leaving the Rust service running.
 
 ## Migration sequence
 

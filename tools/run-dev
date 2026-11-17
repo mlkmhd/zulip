@@ -5,6 +5,7 @@ import errno
 import logging
 import os
 import pwd
+import re
 import signal
 import subprocess
 import sys
@@ -63,7 +64,12 @@ parser.add_argument("--streamlined", action="store_true", help="Avoid process_qu
 parser.add_argument(
     "--rust-http-port",
     type=int,
-    help="Forward the mobile compatibility API to the Rust server on this loopback port",
+    help="Forward supported development routes to the Rust server on this loopback port",
+)
+parser.add_argument(
+    "--rust-alert-words",
+    action="store_true",
+    help="Forward alert-word GET and HEAD requests to the Rust HTTP server",
 )
 parser.add_argument(
     "--behind-https-proxy",
@@ -152,6 +158,8 @@ if options.rust_http_port is not None and (
     not 1 <= options.rust_http_port <= 65535 or proxy_port <= options.rust_http_port <= tusd_port
 ):
     parser.error("--rust-http-port must be a valid port outside the development server port range")
+if options.rust_alert_words and options.rust_http_port is None:
+    parser.error("--rust-alert-words requires --rust-http-port")
 
 for mime_type, extension in EXTRA_MIME_TYPES:
     aiohttp.web_fileresponse.CONTENT_TYPES.add_type(mime_type, extension)
@@ -417,6 +425,9 @@ build step and rerun `run-dev`.""")
 
         app.router.add_get("/compatibility", forward_compatibility)
 
+        if options.rust_alert_words:
+            add_rust_alert_word_routes(rust_http_port)
+
     app.add_routes(
         [
             web.route(
@@ -427,6 +438,38 @@ build step and rerun `run-dev`.""")
             web.route(hdrs.METH_ANY, r"/{path:.*}", partial(forward, django_port)),
         ]
     )
+
+
+def add_rust_alert_word_routes(rust_port: int) -> None:
+    import django
+    from django.conf import settings
+
+    django.setup()
+    from zerver.lib.subdomains import get_subdomain_from_hostname
+
+    base_host = settings.EXTERNAL_HOST_WITHOUT_PORT.lower()
+    subdomain_pattern = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+    def supports_rust_host(host: str) -> bool:
+        host = host.lower()
+        hostname = host.partition(":")[0]
+        if hostname == base_host:
+            rust_subdomain = ""
+        else:
+            subdomain = hostname.removesuffix("." + base_host)
+            if subdomain == hostname or not subdomain_pattern.fullmatch(subdomain):
+                return False
+            rust_subdomain = "" if subdomain == "www" else subdomain
+        # Preserve Django's realm selection for custom hosts and aliases.
+        return get_subdomain_from_hostname(host) == rust_subdomain
+
+    async def forward_alert_words(request: web.Request) -> web.StreamResponse:
+        if request.method in (hdrs.METH_GET, hdrs.METH_HEAD) and supports_rust_host(request.host):
+            return await forward(rust_port, request)
+        return await forward(django_port, request)
+
+    for prefix in ("/api/v1", "/json"):
+        app.router.add_route(hdrs.METH_ANY, f"{prefix}/users/me/alert_words", forward_alert_words)
 
 
 def print_listeners(external_host_url: str) -> None:
