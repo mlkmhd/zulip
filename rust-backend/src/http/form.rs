@@ -15,6 +15,7 @@ pub(super) enum FormError {
     TooLong(&'static str, usize),
     ItemTooLong(&'static str, usize, usize),
     InvalidJson(&'static str),
+    ExpectedBoolean(&'static str),
     ExpectedList(&'static str),
     ExpectedString(&'static str, usize),
     Malformed,
@@ -26,6 +27,13 @@ pub(super) struct Form {
 }
 
 impl Form {
+    pub fn from_query(query: Option<&str>) -> Result<Self, FormError> {
+        Ok(Self {
+            fields: HashMap::new(),
+            query: parse_urlencoded(query.unwrap_or("").as_bytes())?,
+        })
+    }
+
     pub async fn parse(request: Request) -> Result<Self, FormError> {
         let query = parse_urlencoded(request.uri().query().unwrap_or("").as_bytes())?;
         let content_type = request

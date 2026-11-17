@@ -1,6 +1,16 @@
+import os
+from base64 import b64encode
+from contextlib import ExitStack, nullcontext
+from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import urlsplit
 
 import orjson
+from django.conf import settings
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import LiveServerTestCase
 from typing_extensions import override
 
 from zerver.actions.channel_folders import (
@@ -9,10 +19,123 @@ from zerver.actions.channel_folders import (
     try_reorder_realm_channel_folders,
 )
 from zerver.actions.streams import do_change_stream_folder, do_deactivate_stream
-from zerver.lib.test_classes import ZulipTestCase
+from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
+from zerver.lib.test_rust_http import request_test_http, rust_http_service
 from zerver.models import ChannelFolder
 from zerver.models.realms import get_realm
 from zerver.models.streams import get_stream
+
+
+class ChannelFolderReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_get_channel_folders_parity_with_rust(self) -> None:
+        user = self.example_user("hamlet")
+        other_user = self.mit_user("sipbtest")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        token = b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode()
+        auth = {"Authorization": f"Basic {token}"}
+
+        with TemporaryDirectory() as directory, ExitStack() as cleanup:
+            archived = ChannelFolder.objects.create(
+                realm=user.realm, name="Archived folder", is_archived=True, order=-1
+            )
+            cleanup.callback(archived.delete)
+            active = ChannelFolder.objects.create(
+                realm=user.realm,
+                name="پوشه",
+                description="**Discussion**",
+                rendered_description="<p><strong>Discussion</strong></p>",
+                creator=user,
+                order=-2,
+                date_created=datetime(1969, 12, 31, 23, 59, 58, 500000, tzinfo=timezone.utc),
+            )
+            cleanup.callback(active.delete)
+            other = ChannelFolder.objects.create(realm=other_user.realm, name="Other realm folder")
+            cleanup.callback(other.delete)
+            session = SessionStore()
+            session.update(
+                {
+                    "_auth_user_id": str(user.id),
+                    "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                    "_auth_user_hash": user.get_session_auth_hash(),
+                }
+            )
+            session.create()
+            cleanup.callback(session.delete)
+            cookie = {"Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}"}
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            service = (
+                rust_http_service(
+                    {
+                        "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                        "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                            settings.AUTHENTICATION_BACKENDS
+                        ).decode(),
+                    }
+                )
+                if os.environ.get("ZULIP_RUST_HTTP_BIN")
+                else nullcontext(None)
+            )
+            with service as rust_port:
+
+                def check(method: str, path: str, headers: dict[str, str], status: int) -> bytes:
+                    django = request_test_http(django_port, method, user.realm.host, headers, path)
+                    self.assertEqual(django[0], status, django[1])
+                    if rust_port is not None:
+                        rust = request_test_http(rust_port, method, user.realm.host, headers, path)
+                        self.assertEqual((rust[0], rust[2]), (django[0], django[2]))
+                        if method == "GET":
+                            self.assertEqual(orjson.loads(rust[1]), orjson.loads(django[1]))
+                        else:
+                            self.assertEqual(rust[1], django[1])
+                    return django[1]
+
+                for path, headers in (
+                    ("/api/v1/channel_folders", auth),
+                    ("/json/channel_folders", cookie),
+                ):
+                    with self.subTest(path=path):
+                        default = orjson.loads(check("GET", path, headers, 200))
+                        self.assertEqual(
+                            default["channel_folders"][0],
+                            {
+                                "id": active.id,
+                                "name": active.name,
+                                "description": active.description,
+                                "rendered_description": active.rendered_description,
+                                "creator_id": user.id,
+                                "date_created": -1,
+                                "is_archived": False,
+                                "order": -2,
+                            },
+                        )
+                        self.assertNotIn(
+                            archived.id, [folder["id"] for folder in default["channel_folders"]]
+                        )
+                        all_path = (
+                            path
+                            + "?include_archived=false&z=1&include_archived=true&client=ZulipMobile&a=1"
+                        )
+                        all_folders = orjson.loads(check("GET", all_path, headers, 200))
+                        self.assertEqual(all_folders["ignored_parameters_unsupported"], ["a", "z"])
+                        self.assertEqual(
+                            [folder["id"] for folder in all_folders["channel_folders"][:2]],
+                            [active.id, archived.id],
+                        )
+                        self.assertIsNone(all_folders["channel_folders"][1]["creator_id"])
+                        self.assertNotIn(
+                            other.id, [folder["id"] for folder in all_folders["channel_folders"]]
+                        )
+                        self.assertEqual(check("HEAD", all_path, headers, 200), b"")
+                        for value, message in (
+                            ("invalid", "include_archived is not valid JSON"),
+                            ("1", "include_archived is not a boolean"),
+                            ("%22true%22", "include_archived is not a boolean"),
+                        ):
+                            body = check("GET", f"{path}?include_archived={value}", headers, 400)
+                            self.assertEqual(orjson.loads(body)["msg"], message)
+                        check("GET", f"{path}?include_archived=invalid", {}, 401)
 
 
 class ChannelFoldersTestCase(ZulipTestCase):

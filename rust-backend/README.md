@@ -665,6 +665,29 @@ host and port resolve to the same organization in both services. `POST`,
 remove the development option or the `navigation-views-routes.conf` include
 and reload nginx after validation.
 
+## Read channel folders through Rust
+
+The listener serves `GET` and `HEAD` on `/api/v1/channel_folders` with Basic
+Auth and on `/json/channel_folders` with the
+[Django session settings](#read-alert-words-with-a-django-session). The Rust
+database role needs `SELECT` on `zulip.zerver_channelfolder`. The response
+contains the authenticated organization's channel folders in display order.
+Pass `include_archived=true` to include archived folders. The existing Redis
+quota and RabbitMQ activity settings apply to these reads.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_channel_folders
+./tools/run-dev --rust-http-port 9997 --rust-channel-folder-reads
+```
+
+For nginx staging, include `channel-folders-map.conf` in the HTTP context
+and `channel-folders-routes.conf` in `app.d/`. Confirm that the allowlisted
+host and port resolve to the same organization in both services. `PATCH`,
+`OPTIONS`, and the create and update URLs use Django. To roll back the reads,
+remove the development option or the `channel-folders-routes.conf` include
+and reload nginx after validation.
+
 ## Stage saved-snippet reads in nginx
 
 Start `zulip-http` on `127.0.0.1:9997` with the saved-snippet read settings,

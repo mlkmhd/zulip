@@ -20,7 +20,7 @@ use tokio_postgres::Client;
 use super::{
     UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
-    alert_word_cache, alert_words, custom_profile_fields,
+    alert_word_cache, alert_words, channel_folders, custom_profile_fields,
     database::Database,
     drafts,
     form::{Form, FormError},
@@ -48,6 +48,7 @@ enum Endpoint {
     RealmDomains,
     CustomProfileFields,
     NavigationViews,
+    ChannelFolders,
 }
 
 #[derive(Clone, Copy)]
@@ -76,6 +77,7 @@ impl Endpoint {
             Self::RealmDomains => "list_realm_domains",
             Self::CustomProfileFields => "list_realm_custom_profile_fields",
             Self::NavigationViews => "get_navigation_views",
+            Self::ChannelFolders => "get_channel_folders",
         }
     }
 
@@ -84,6 +86,7 @@ impl Endpoint {
         database: &Client,
         user_id: i32,
         realm_id: i32,
+        query: Option<&str>,
     ) -> Result<String, ApiError> {
         let (field, serialized) = match self {
             Self::AlertWords => (
@@ -110,6 +113,20 @@ impl Endpoint {
                 "navigation_views",
                 serde_json::to_string(&navigation_views::list(database, user_id).await?),
             ),
+            Self::ChannelFolders => {
+                let form = Form::from_query(query).map_err(ApiError::Form)?;
+                let folders = channel_folders::list(
+                    database,
+                    realm_id,
+                    channel_folders::include_archived(&form).map_err(ApiError::Form)?,
+                )
+                .await?;
+                let folders =
+                    serde_json::to_string(&folders).expect("database fields can serialize to JSON");
+                let extra =
+                    ignored_parameters(&form, &[channel_folders::INCLUDE_ARCHIVED, "client"]);
+                return Ok(format!("\"channel_folders\":{folders}{extra}"));
+            }
             Self::Drafts => {
                 require_draft_synchronization(database, user_id).await?;
                 let drafts = drafts::list(database, user_id).await?;
@@ -665,6 +682,7 @@ async fn respond(
             Endpoint::CustomProfileFields
         }
         navigation_views::PATH | navigation_views::SESSION_PATH => Endpoint::NavigationViews,
+        channel_folders::PATH | channel_folders::SESSION_PATH => Endpoint::ChannelFolders,
         _ => Endpoint::AlertWords,
     };
     let browser_session = if uri.path().starts_with("/json/") {
@@ -823,7 +841,7 @@ async fn respond(
                     .await?;
                 // Django reads the current list again after the event has been published.
                 let fields = Endpoint::AlertWords
-                    .read(&database, user_id, realm_id)
+                    .read(&database, user_id, realm_id, uri.query())
                     .await?;
                 let processed: &[_] = if requested_write.is_some_and(WriteOperation::is_post)
                     || form.has_query_client()
@@ -922,7 +940,9 @@ async fn respond(
                 "{{\"result\":\"success\",\"msg\":\"\"{result_fields}{extra}}}\n"
             ));
         }
-        let fields = endpoint.read(&database, user_id, realm_id).await?;
+        let fields = endpoint
+            .read(&database, user_id, realm_id, uri.query())
+            .await?;
         Ok(format!(
             "{{\"result\":\"success\",\"msg\":\"\",{fields}}}\n"
         ))
@@ -1002,7 +1022,8 @@ fn error_response(
             | Endpoint::Linkifiers
             | Endpoint::RealmDomains
             | Endpoint::CustomProfileFields
-            | Endpoint::NavigationViews => {
+            | Endpoint::NavigationViews
+            | Endpoint::ChannelFolders => {
                 unreachable!("endpoints without a Rust POST do not override methods")
             }
             Endpoint::SavedSnippets => (
@@ -1093,6 +1114,11 @@ fn error_response(
             "BAD_REQUEST",
             "{var_name} is not a list",
         ),
+        ApiError::Form(FormError::ExpectedBoolean(_)) => (
+            StatusCode::BAD_REQUEST,
+            "BAD_REQUEST",
+            "{var_name} is not a boolean",
+        ),
         ApiError::Form(FormError::ExpectedString(..)) => (
             StatusCode::BAD_REQUEST,
             "BAD_REQUEST",
@@ -1141,6 +1167,7 @@ fn error_response(
             FormError::Missing(name)
             | FormError::Blank(name)
             | FormError::InvalidJson(name)
+            | FormError::ExpectedBoolean(name)
             | FormError::ExpectedList(name),
         ) => translated.replace("{var_name}", name),
         ApiError::Form(FormError::ExpectedString(name, index)) => {

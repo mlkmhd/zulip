@@ -11,6 +11,7 @@ pub use rate_limit::ClientIpSource;
 mod activity;
 mod alert_word_cache;
 pub mod alert_words;
+mod channel_folders;
 mod compatibility;
 mod csrf;
 mod custom_profile_fields;
@@ -116,6 +117,7 @@ pub async fn router_with_user_reads(
         .route(realm_domains::PATH, get(user_reads::get))
         .route(custom_profile_fields::PATH, get(user_reads::get))
         .route(navigation_views::PATH, get(user_reads::get))
+        .route(channel_folders::PATH, get(user_reads::get))
         .route("/health/rust-alert-words", get(user_reads::ready));
     let snippet_detail_route = patch(user_reads::write_saved_snippet_detail)
         .delete(user_reads::write_saved_snippet_detail)
@@ -153,6 +155,7 @@ pub async fn router_with_user_reads(
             .route(realm_domains::SESSION_PATH, get(user_reads::get))
             .route(custom_profile_fields::SESSION_PATH, get(user_reads::get))
             .route(navigation_views::SESSION_PATH, get(user_reads::get))
+            .route(channel_folders::SESSION_PATH, get(user_reads::get))
             .route(saved_snippets::SESSION_PATH, web_snippet_route);
     }
     Ok(compatibility_router(locales).merge(routes.with_state(user_reads)))

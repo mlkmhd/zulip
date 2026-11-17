@@ -112,6 +112,11 @@ parser.add_argument(
     help="Forward navigation view GET and HEAD requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-channel-folder-reads",
+    action="store_true",
+    help="Forward channel folder GET and HEAD requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--rust-saved-snippets",
     action="store_true",
     help="Forward saved-snippet API GET and HEAD requests to the Rust HTTP server",
@@ -256,6 +261,8 @@ if options.rust_profile_field_reads and options.rust_http_port is None:
     parser.error("--rust-profile-field-reads requires --rust-http-port")
 if options.rust_navigation_view_reads and options.rust_http_port is None:
     parser.error("--rust-navigation-view-reads requires --rust-http-port")
+if options.rust_channel_folder_reads and options.rust_http_port is None:
+    parser.error("--rust-channel-folder-reads requires --rust-http-port")
 if options.rust_saved_snippets and options.rust_http_port is None:
     parser.error("--rust-saved-snippets requires --rust-http-port")
 if options.rust_saved_snippets_web and options.rust_http_port is None:
@@ -591,6 +598,9 @@ build step and rerun `run-dev`.""")
         if options.rust_navigation_view_reads:
             rust_routes["/api/v1/navigation_views"] = read_methods
             rust_routes["/json/navigation_views"] = read_methods
+        if options.rust_channel_folder_reads:
+            rust_routes["/api/v1/channel_folders"] = read_methods
+            rust_routes["/json/channel_folders"] = read_methods
         if options.rust_saved_snippets or options.rust_saved_snippet_writes:
             snippet_methods = read_methods.copy() if options.rust_saved_snippets else set()
             if options.rust_saved_snippet_writes:
