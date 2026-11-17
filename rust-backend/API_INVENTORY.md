@@ -38,7 +38,8 @@
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | اعتبارسنجی و پاک‌سازی، درج گروهی، پاک‌سازی کش و رویداد پس از commit    | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
-| `GET /api/v1/drafts` و alias وب با `HEAD` متناظر                                        | شرط همگام‌سازی حساب، خواندن PostgreSQL و ارائهٔ گیرنده                | Rust مستقیم                                                     | Django               |
+| `GET /api/v1/drafts` و alias وب با `HEAD` متناظر                                        | شرط همگام‌سازی حساب، خواندن PostgreSQL و ارائهٔ گیرنده                | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
+| `DELETE /api/v1/drafts/{draft_id}` و alias وب                                          | حذف محدود به مالک و رویداد بعد از commit                              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
 | `PUT /api/v1/bot_storage` و alias وب                                                    | محاسبهٔ تغییر سهمیه با `ZULIP_RUST_BOT_STORAGE`                        | Django                                                          | Django               |
@@ -124,7 +125,9 @@
 برحسب زمان آخرین ویرایش است. کانال با شناسهٔ کانال و پیام مستقیم با شناسهٔ
 عضوها برمی‌گردد. گیرندهٔ ناموجود به `type: ""` و `to: []` تبدیل می‌شود.
 `HEAD` هدرها را بدون بدنه برمی‌گرداند. خواندن، رویداد پیش‌نویس منتشر نمی‌کند.
-هدایت پروکسی و عملیات نوشتن هنوز در Django هستند.
+خواندن و حذف با هدایت اختیاری و بازگشت در پروکسی توسعه و nginx آزمایشی
+تأیید شده‌اند. `DELETE` پس از بررسی همگام‌سازی فقط ردیف مالک را حذف می‌کند
+و `drafts/remove` را پس از commit می‌فرستد. `POST` و `PATCH` در Django هستند.
 [view](../zerver/views/drafts.py)، [پیاده‌سازی Rust](src/http/drafts.rs)،
 [تست مقایسه](../zerver/tests/test_drafts.py)
 
