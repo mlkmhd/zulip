@@ -31,6 +31,7 @@
 | `GET /api/v1/saved_snippets` و `HEAD` متناظر                                            | Basic Auth، خواندن PostgreSQL، سهمیهٔ Redis و صف فعالیت RabbitMQ       | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/saved_snippets`                                                           | ثبت متن و audit، اعلان پس از commit                                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
+| `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `POST /api/v1/users/me/alert_words` و alias وب                                          | پاک‌سازی و حذف تکرار با `ZULIP_RUST_ALERT_WORDS`                       | Django                                                          | Django               |
 | `POST /api/v1/users/me/status`، `GET/POST /api/v1/users/{user_id}/status` و aliasهای وب | ساخت بخشی از پاسخ و قواعد به‌روزرسانی با `ZULIP_RUST_USER_STATUS`      | Django                                                          | Django               |
 | `POST /api/v1/register` و alias وب                                                      | قالب‌بندی وضعیت کاربران در snapshot با `ZULIP_RUST_USER_STATUS`        | Django                                                          | Django               |
@@ -105,8 +106,15 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 متن متعلق به کاربر دیگر هر دو `404` می‌گیرند. پس از commit در PostgreSQL،
 رویداد `saved_snippets/update` با متن کامل فقط برای صاحب متن از Tornado
 تحویل می‌شود. هدایت PATCH مستقل از GET و POST است.
-Django مسیر `/json/saved_snippets`، `DELETE` و `OPTIONS` را سرو می‌کند.
 [تست مقایسه](../zerver/tests/test_saved_snippets.py)، [راهنمای staging برای PATCH](README.md#enable-saved-snippet-editing)
+
+`DELETE /api/v1/saved_snippets/{saved_snippet_id}` فقط ردیف صاحب متن را
+حذف می‌کند و audit قبلی را نگه می‌دارد. پس از commit، رویداد
+`saved_snippets/remove` شامل شناسهٔ متن فقط برای صاحب آن فرستاده می‌شود.
+متن ناموجود یا متعلق به دیگری `404` می‌گیرد. هدایت DELETE در staging
+با عوض کردن map مستقل از PATCH قابل برگشت است.
+Django مسیر `/json/saved_snippets` و `OPTIONS` را سرو می‌کند.
+[راهنمای staging برای DELETE](README.md#enable-saved-snippet-deletion)
 
 ## فهرست OpenAPI
 
