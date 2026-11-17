@@ -20,6 +20,7 @@ from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import LiveServerTestCase
 
 from zerver.actions.user_groups import check_add_user_group
+from zerver.actions.users import do_deactivate_user
 from zerver.lib.drafts import (
     DraftData,
     ValidatedDraftData,
@@ -41,6 +42,7 @@ from zerver.models import (
     UserProfile,
 )
 from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
+from zerver.models.realms import get_realm
 from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
 
 
@@ -531,6 +533,27 @@ class DraftCreationTests(ZulipTestCase):
         self.assert_json_error(self.api_post(owner, "/api/v1/drafts", params), "Invalid channel ID")
         self.assertEqual(Draft.objects.filter(user_profile=owner).count(), 1)
 
+    def test_guest_can_create_draft_for_unsubscribed_web_public_channel(self) -> None:
+        guest = self.example_user("polonius")
+        self.assertTrue(guest.is_guest)
+        public = self.make_stream("Public draft channel")
+        web_public = self.make_stream("Web public draft channel", is_web_public=True)
+        draft = {"type": "stream", "to": [public.id], "topic": "Drafts", "content": "Unsent"}
+        response = self.api_post(
+            guest, "/api/v1/drafts", {"drafts": orjson.dumps([draft]).decode()}
+        )
+        self.assert_json_error(response, "Invalid channel ID")
+        self.assertFalse(Draft.objects.filter(user_profile=guest).exists())
+
+        draft["to"] = [web_public.id]
+        response = self.api_post(
+            guest, "/api/v1/drafts", {"drafts": orjson.dumps([draft]).decode()}
+        )
+        self.assert_json_success(response)
+        self.assertEqual(
+            Draft.objects.get(user_profile=guest).recipient_id, web_public.recipient_id
+        )
+
     def test_create_personal_message_draft_for_non_existing_user(self) -> None:
         draft_dicts = [
             {
@@ -542,6 +565,46 @@ class DraftCreationTests(ZulipTestCase):
             }
         ]
         self.create_and_check_drafts_for_error(draft_dicts, "Invalid user ID 99999999999999")
+
+    def test_create_direct_message_draft_with_cross_realm_recipients(self) -> None:
+        owner = self.example_user("hamlet")
+        other_realm_user = self.mit_user("starnine")
+        system_bot = self.notification_bot(get_realm(settings.SYSTEM_BOT_REALM))
+        self.assertNotEqual(system_bot.realm_id, owner.realm_id)
+        draft = {
+            "type": "private",
+            "to": [system_bot.id],
+            "topic": "",
+            "content": "Unsent",
+            "timestamp": 42,
+        }
+        rejected_members = [owner.id, system_bot.id, other_realm_user.id]
+        self.assertIsNone(get_direct_message_group(rejected_members))
+        with self.capture_send_event_calls(expected_num_events=0):
+            self.create_and_check_drafts_for_error(
+                [{**draft, "to": [system_bot.id, other_realm_user.id]}],
+                f"Invalid user ID {other_realm_user.id}",
+            )
+        self.assertIsNone(get_direct_message_group(rejected_members))
+
+        with self.capture_send_event_calls(expected_num_events=1):
+            self.create_and_check_drafts_for_success([draft])
+        group = get_direct_message_group([owner.id, system_bot.id])
+        assert group is not None
+        self.assertEqual(Draft.objects.get(user_profile=owner).recipient_id, group.recipient_id)
+
+    def test_create_direct_message_draft_with_deactivated_recipient(self) -> None:
+        owner = self.example_user("hamlet")
+        recipient = self.example_user("othello")
+        do_deactivate_user(recipient, acting_user=None)
+        members = [owner.id, recipient.id]
+        self.assertIsNone(get_direct_message_group(members))
+        draft = {"type": "private", "to": [recipient.id], "topic": "", "content": "Unsent"}
+        with self.capture_send_event_calls(expected_num_events=0):
+            self.create_and_check_drafts_for_error(
+                [draft], f"'{recipient.email}' is no longer using Zulip."
+            )
+        self.assertIsNone(get_direct_message_group(members))
 
     def test_create_personal_message_draft_for_inaccessible_users(self) -> None:
         self.set_up_db_for_testing_user_access()
