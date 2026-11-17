@@ -665,6 +665,37 @@ host and port resolve to the same organization in both services. `POST`,
 remove the development option or the `navigation-views-routes.conf` include
 and reload nginx after validation.
 
+### Create navigation views through Rust
+
+Set `ZULIP_RUST_NAVIGATION_VIEW_POSTS=1` and configure
+[RabbitMQ activity and notifications](#run-the-alert-word-read-api-over-http).
+Grant the Rust database role `INSERT` on `zulip.zerver_navigationview`
+and `zulip.zerver_realmauditlog`, with access to the sequences used by
+both tables. Browser POST also requires Django session settings and
+`ZULIP_RUST_WEB_POST_SCHEME=http` or `https`, matching the external
+scheme. The API uses Basic Auth.
+
+Rust stores the view and its audit entry in one transaction. The owner's
+`navigation_view/add` event is published after commit. If notification
+confirmation fails after commit, the view and audit entry can already
+exist when the client receives an error.
+
+Run the direct comparison with a dedicated RabbitMQ test vhost. Omit
+`ZULIP_RUST_HTTP_BIN` to run the Django baseline.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
+    ./tools/test-backend zerver.tests.test_navigation_views
+./tools/run-dev --rust-http-port 9997 --rust-navigation-view-posts --rust-navigation-view-reads
+```
+
+For nginx staging, replace the read map with
+`navigation-views-post-map.conf` and keep the routes include. Validate
+and reload nginx. Restore `navigation-views-map.conf` and reload to
+return POST to Django while keeping GET and HEAD on Rust. In development,
+remove `--rust-navigation-view-posts` for the same rollback.
+
 ## Read channel folders through Rust
 
 The listener serves `GET` and `HEAD` on `/api/v1/channel_folders` with Basic

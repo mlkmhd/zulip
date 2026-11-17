@@ -5,6 +5,7 @@ use axum::{
     extract::{FromRequest, Multipart, Request},
     http::header,
 };
+use jiter::JsonValue;
 
 pub(super) const FORM_BODY_LIMIT: usize = 25 * 1024 * 1024;
 
@@ -81,6 +82,23 @@ impl Form {
             .get(name)
             .or_else(|| self.query.get(name))
             .map(String::as_str)
+    }
+
+    pub fn nonblank(&self, name: &'static str) -> Result<Option<&str>, FormError> {
+        match self.value(name).map(str::trim) {
+            Some("") => Err(FormError::Blank(name)),
+            value => Ok(value),
+        }
+    }
+
+    pub fn json_bool(&self, name: &'static str) -> Result<Option<bool>, FormError> {
+        let Some(value) = self.value(name) else {
+            return Ok(None);
+        };
+        match JsonValue::parse(value.as_bytes(), true).map_err(|_| FormError::InvalidJson(name))? {
+            JsonValue::Bool(value) => Ok(Some(value)),
+            _ => Err(FormError::ExpectedBoolean(name)),
+        }
     }
 
     pub fn ignored_parameters(&self, processed: &[&str]) -> BTreeSet<&str> {

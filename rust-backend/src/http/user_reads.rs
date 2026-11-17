@@ -57,6 +57,7 @@ enum Endpoint {
 #[derive(Clone, Copy)]
 enum WriteOperation {
     CreateSnippet,
+    CreateNavigationView,
     EditSnippet(Option<i64>),
     DeleteSnippet(Option<i64>),
     AddAlertWords,
@@ -66,7 +67,10 @@ enum WriteOperation {
 
 impl WriteOperation {
     fn is_post(self) -> bool {
-        matches!(self, Self::CreateSnippet | Self::AddAlertWords)
+        matches!(
+            self,
+            Self::CreateSnippet | Self::CreateNavigationView | Self::AddAlertWords
+        )
     }
 }
 
@@ -262,6 +266,7 @@ impl UserReads {
                     config,
                     saved_snippet_writes
                         || settings.draft_deletes
+                        || settings.navigation_view_posts
                         || alert_word_lowercase.is_some(),
                 )
                 .await?,
@@ -274,6 +279,9 @@ impl UserReads {
             }
             None if settings.draft_deletes => {
                 return Err("Draft DELETE requires ZULIP_RUST_AMQP_URL".into());
+            }
+            None if settings.navigation_view_posts => {
+                return Err("Navigation view POST requires ZULIP_RUST_AMQP_URL".into());
             }
             None => None,
         };
@@ -531,6 +539,7 @@ enum ApiError {
     Csrf(String),
     Unauthorized(&'static str),
     BadRequest(&'static str),
+    InvalidNavigationView(&'static str),
     DeactivatedUser,
     DeactivatedRealm,
     InvalidHost,
@@ -634,6 +643,14 @@ pub(super) async fn create_saved_snippet(
     respond_write(state, peer, request, WriteOperation::CreateSnippet).await
 }
 
+pub(super) async fn create_navigation_view(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    respond_write(state, peer, request, WriteOperation::CreateNavigationView).await
+}
+
 pub(super) async fn delete_draft(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -734,6 +751,7 @@ async fn respond(
         };
         let activity_name = match write {
             Some(WriteOperation::CreateSnippet) => "create_saved_snippet",
+            Some(WriteOperation::CreateNavigationView) => "add_navigation_view",
             Some(WriteOperation::EditSnippet(_)) => "edit_saved_snippet",
             Some(WriteOperation::DeleteSnippet(_)) => "delete_saved_snippet",
             Some(WriteOperation::AddAlertWords) => "add_alert_words",
@@ -823,6 +841,35 @@ async fn respond(
             (database, user.id, user.realm_id)
         };
         if let (Some(write), Some(form)) = (write, form) {
+            if matches!(write, WriteOperation::CreateNavigationView) {
+                let view = navigation_views::NavigationView::from_form(&form).map_err(ApiError::Form)?;
+                view.validate_name().map_err(ApiError::InvalidNavigationView)?;
+                let activity = state
+                    .activity
+                    .as_ref()
+                    .expect("navigation view creation requires RabbitMQ");
+                let queue = activity
+                    .notification_queue(realm_id, user_id)
+                    .await
+                    .ok_or(ApiError::NotificationUnavailable)?;
+                let created = {
+                    let mut writer = state
+                        .database
+                        .writer()
+                        .await
+                        .map_err(ApiError::database_unavailable)?;
+                    view.create(&mut writer, user_id, realm_id).await?
+                };
+                if !created {
+                    return Err(ApiError::InvalidNavigationView("Navigation view already exists."));
+                }
+                activity.notify_user(queue, user_id, view.add_event()).await.map_err(|error| {
+                    eprintln!("Could not confirm navigation view notification for user {user_id}: {error}");
+                    ApiError::NotificationUnavailable
+                })?;
+                let extra = ignored_parameters(&form, &["fragment", "is_pinned", "name", "client"]);
+                return Ok(format!("{{\"result\":\"success\",\"msg\":\"\"{extra}}}\n"));
+            }
             if let WriteOperation::DeleteDraft(id) = write {
                 require_draft_synchronization(&database, user_id).await?;
                 let id = id.ok_or(ApiError::DraftNotFound)?;
@@ -925,6 +972,7 @@ async fn respond(
                 }
                 WriteOperation::AddAlertWords
                 | WriteOperation::RemoveAlertWords
+                | WriteOperation::CreateNavigationView
                 | WriteOperation::DeleteDraft(_) => {
                     unreachable!("handled above")
                 }
@@ -1043,13 +1091,12 @@ fn error_response(
             | Endpoint::Linkifiers
             | Endpoint::RealmDomains
             | Endpoint::CustomProfileFields
-            | Endpoint::NavigationViews
             | Endpoint::ChannelFolders
             | Endpoint::ScheduledMessages
             | Endpoint::Reminders => {
                 unreachable!("endpoints without a Rust POST do not override methods")
             }
-            Endpoint::SavedSnippets => (
+            Endpoint::SavedSnippets | Endpoint::NavigationViews => (
                 "GET, POST, HEAD",
                 "{\"result\":\"error\",\"msg\":\"Method Not Allowed\",\"allowed_methods\":[\"GET\",\"POST\",\"HEAD\"]}",
             ),
@@ -1090,7 +1137,9 @@ fn error_response(
             "Not logged in: API authentication or user session required",
         ),
         ApiError::Unauthorized(message) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", message),
-        ApiError::BadRequest(message) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", message),
+        ApiError::BadRequest(message) | ApiError::InvalidNavigationView(message) => {
+            (StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
+        }
         ApiError::DeactivatedUser => (
             StatusCode::UNAUTHORIZED,
             "USER_DEACTIVATED",
@@ -1221,6 +1270,7 @@ fn error_response(
         }
         ApiError::Form(_)
         | ApiError::SnippetNotFound
+        | ApiError::InvalidNavigationView(_)
         | ApiError::DraftSyncDisabled
         | ApiError::DraftNotFound => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),

@@ -1,4 +1,3 @@
-use jiter::JsonValue;
 use serde::Serialize;
 use tokio_postgres::{Client, Error};
 
@@ -21,15 +20,7 @@ pub(super) struct ChannelFolder {
 }
 
 pub(super) fn include_archived(form: &Form) -> Result<bool, FormError> {
-    let Some(value) = form.value(INCLUDE_ARCHIVED) else {
-        return Ok(false);
-    };
-    match JsonValue::parse(value.as_bytes(), true)
-        .map_err(|_| FormError::InvalidJson(INCLUDE_ARCHIVED))?
-    {
-        JsonValue::Bool(value) => Ok(value),
-        _ => Err(FormError::ExpectedBoolean(INCLUDE_ARCHIVED)),
-    }
+    Ok(form.json_bool(INCLUDE_ARCHIVED)?.unwrap_or(false))
 }
 
 pub(super) async fn list(

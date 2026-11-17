@@ -44,6 +44,7 @@ pub struct UserReadConfig<'a> {
     pub alert_word_lowercase_file: Option<&'a Path>,
     pub alert_word_posts: bool,
     pub draft_deletes: bool,
+    pub navigation_view_posts: bool,
     pub session: Option<SessionConfig<'a>>,
     pub web_post_scheme: Option<WebPostScheme>,
     pub saved_snippet_max_content_length: Option<usize>,
@@ -80,12 +81,17 @@ pub async fn router_with_user_reads(
     let alert_word_writes = config.alert_word_lowercase_file.is_some();
     let alert_word_posts = config.alert_word_posts;
     let draft_deletes = config.draft_deletes;
+    let navigation_view_posts = config.navigation_view_posts;
     if alert_word_posts && !alert_word_writes {
         return Err("Alert-word POST requires ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE".into());
     }
     let web_writes_enabled = config.web_post_scheme.is_some();
     if web_writes_enabled
-        && !(browser_enabled && (saved_snippet_writes || alert_word_writes || draft_deletes))
+        && !(browser_enabled
+            && (saved_snippet_writes
+                || alert_word_writes
+                || draft_deletes
+                || navigation_view_posts))
     {
         return Err("Web writes require Django sessions and an enabled write route".into());
     }
@@ -103,6 +109,9 @@ pub async fn router_with_user_reads(
             .post(user_reads::create_saved_snippet)
             .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
     }
+    let navigation_view_post_route = get(user_reads::get)
+        .post(user_reads::create_navigation_view)
+        .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
     let mut routes = Router::new()
         .route(
             user_reads::ALERT_WORDS_PATH,
@@ -117,7 +126,14 @@ pub async fn router_with_user_reads(
         .route(linkifiers::PATH, get(user_reads::get))
         .route(realm_domains::PATH, get(user_reads::get))
         .route(custom_profile_fields::PATH, get(user_reads::get))
-        .route(navigation_views::PATH, get(user_reads::get))
+        .route(
+            navigation_views::PATH,
+            if navigation_view_posts {
+                navigation_view_post_route.clone()
+            } else {
+                get(user_reads::get)
+            },
+        )
         .route(channel_folders::PATH, get(user_reads::get))
         .route(scheduled_messages::PATH, get(user_reads::get))
         .route(scheduled_messages::REMINDERS_PATH, get(user_reads::get))
@@ -157,7 +173,14 @@ pub async fn router_with_user_reads(
             .route(linkifiers::SESSION_PATH, get(user_reads::get))
             .route(realm_domains::SESSION_PATH, get(user_reads::get))
             .route(custom_profile_fields::SESSION_PATH, get(user_reads::get))
-            .route(navigation_views::SESSION_PATH, get(user_reads::get))
+            .route(
+                navigation_views::SESSION_PATH,
+                if web_writes_enabled && navigation_view_posts {
+                    navigation_view_post_route
+                } else {
+                    get(user_reads::get)
+                },
+            )
             .route(channel_folders::SESSION_PATH, get(user_reads::get))
             .route(scheduled_messages::SESSION_PATH, get(user_reads::get))
             .route(

@@ -75,12 +75,9 @@ pub(super) async fn list(database: &Client, user_id: i32) -> Result<Vec<SavedSni
 
 impl Form {
     fn optional(&self, name: &'static str, max: usize) -> Result<Option<&str>, FormError> {
-        let Some(value) = self.value(name).map(str::trim) else {
+        let Some(value) = self.nonblank(name)? else {
             return Ok(None);
         };
-        if value.is_empty() {
-            return Err(FormError::Blank(name));
-        }
         if value.chars().count() > max {
             return Err(FormError::TooLong(name, max));
         }

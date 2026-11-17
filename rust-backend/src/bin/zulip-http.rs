@@ -27,6 +27,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let lowercase_file = env::var_os("ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE").map(PathBuf::from);
     let alert_word_posts = enabled("ZULIP_RUST_ALERT_WORD_POSTS")?;
     let draft_deletes = enabled("ZULIP_RUST_DRAFT_DELETES")?;
+    let navigation_view_posts = enabled("ZULIP_RUST_NAVIGATION_VIEW_POSTS")?;
     let app = match env::var("ZULIP_RUST_DATABASE_URL") {
         Ok(database) => {
             user_read_router(
@@ -36,12 +37,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 lowercase_file.as_deref(),
                 alert_word_posts,
                 draft_deletes,
+                navigation_view_posts,
             )
             .await?
         }
         Err(env::VarError::NotPresent) => {
             if draft_deletes {
                 return Err("Draft DELETE requires ZULIP_RUST_DATABASE_URL".into());
+            }
+            if navigation_view_posts {
+                return Err("Navigation view POST requires ZULIP_RUST_DATABASE_URL".into());
             }
             if lowercase_file.is_some() || alert_word_posts {
                 return Err("Alert-word writes require ZULIP_RUST_DATABASE_URL".into());
@@ -73,6 +78,7 @@ async fn user_read_router(
     alert_word_lowercase_file: Option<&Path>,
     alert_word_posts: bool,
     draft_deletes: bool,
+    navigation_view_posts: bool,
 ) -> Result<Router, Box<dyn Error>> {
     let external_host = env::var("ZULIP_RUST_EXTERNAL_HOST")?;
     let redis_url = optional_env("ZULIP_RUST_REDIS_URL")?;
@@ -131,6 +137,7 @@ async fn user_read_router(
             alert_word_lowercase_file,
             alert_word_posts,
             draft_deletes,
+            navigation_view_posts,
             web_post_scheme,
             saved_snippet_max_content_length,
             external_host: &external_host,

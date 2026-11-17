@@ -1,20 +1,25 @@
 import os
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from urllib.parse import urlsplit
+from unittest import skipUnless
+from urllib.parse import quote, urlencode, urlsplit
 
 import orjson
+import pika
 from django.conf import settings
 from django.contrib.sessions.backends.db import SessionStore
+from django.db import connection
 from django.test import LiveServerTestCase
 
 from zerver.actions.navigation_views import do_add_navigation_view
 from zerver.lib.navigation_views import get_navigation_views_for_user
 from zerver.lib.test_classes import ZulipTestCase, ZulipTransactionTestCase
 from zerver.lib.test_rust_http import request_test_http, rust_http_service
-from zerver.models import NavigationView, UserProfile
+from zerver.models import NavigationView, RealmAuditLog, UserProfile
+from zerver.models.realm_audit_logs import AuditLogEventType
 
 
 class NavigationViewReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
@@ -120,6 +125,253 @@ class NavigationViewReadHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
                     {"fragment": custom.fragment, "name": custom.name, "is_pinned": True},
                     data["navigation_views"],
                 )
+
+
+@skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
+class NavigationViewCreateHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_create_navigation_view_parity_with_rust(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(settings.RABBITMQ_USERNAME, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        user = self.example_user("hamlet")
+        other = self.example_user("othello")
+        django_port = urlsplit(self.live_server_url).port
+        assert django_port is not None
+        api = "/api/v1/navigation_views"
+        web = "/json/navigation_views"
+        token = "a" * 32
+        basic = {
+            "Authorization": "Basic "
+            + b64encode(f"{user.delivery_email}:{user.api_key}".encode()).decode(),
+        }
+        views = NavigationView.objects.filter(user=user)
+        audits = RealmAuditLog.objects.filter(
+            acting_user=user, event_type=AuditLogEventType.NAVIGATION_VIEW_CREATED
+        )
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(user.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": user.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        with (
+            ExitStack() as cleanup,
+            self.settings(
+                USING_RABBITMQ=True,
+                RABBITMQ_VHOST=vhost,
+                TORNADO_PROCESSES=1,
+                SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"),
+            ),
+            pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+            TemporaryDirectory() as directory,
+        ):
+            cleanup.callback(session.delete)
+            cleanup.callback(views.delete)
+            cleanup.callback(audits.delete)
+            private = NavigationView.objects.create(
+                user=other, fragment="narrow/is/alerted", is_pinned=False, name="یادآوری‌ها"
+            )
+            cleanup.callback(private.delete)
+            channel = broker.channel()
+            for queue in ("notify_tornado", "user_activity"):
+                channel.queue_declare(queue, durable=True)
+                channel.queue_purge(queue)
+            secret = Path(directory) / "secret"
+            secret.write_text(settings.SECRET_KEY)
+            environment = {
+                "ZULIP_RUST_NAVIGATION_VIEW_POSTS": "1",
+                "ZULIP_RUST_AMQP_URL": amqp_url,
+                "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                    settings.AUTHENTICATION_BACKENDS
+                ).decode(),
+            }
+            cookie = {
+                "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; {settings.CSRF_COOKIE_NAME}={token}",
+            }
+            form_header = {"Content-Type": "application/x-www-form-urlencoded"}
+
+            def check(
+                port: int, path: str, auth: dict[str, str]
+            ) -> list[tuple[int, bytes, dict[str, str | None]]]:
+                views.delete()
+                audits.delete()
+                results = []
+                count = 0
+
+                def send(
+                    form: dict[str, str],
+                    status: int,
+                    expected_view: dict[str, str | bool | None] | None = None,
+                    *,
+                    headers: dict[str, str] = auth,
+                    query: str = "",
+                ) -> None:
+                    nonlocal count
+                    result = request_test_http(
+                        port,
+                        "POST",
+                        user.realm.host,
+                        {**headers, **form_header},
+                        path + query,
+                        body=urlencode(form),
+                    )
+                    self.assertEqual(result[0], status, result[1])
+                    results.append(result[:3])
+                    event = channel.basic_get("notify_tornado", auto_ack=True)[2]
+                    if expected_view is None:
+                        self.assertIsNone(event)
+                    else:
+                        count += 1
+                        fragment = expected_view["fragment"]
+                        self.assertEqual(
+                            views.values("fragment", "is_pinned", "name").get(fragment=fragment),
+                            expected_view,
+                        )
+                        audit = audits.get(extra_data={"fragment": fragment})
+                        self.assertEqual(audit.realm_id, user.realm_id)
+                        self.assertEqual(audit.modified_user_id, user.id)
+                        self.assertFalse(audit.backfilled)
+                        assert event is not None
+                        self.assertEqual(
+                            orjson.loads(event),
+                            {
+                                "event": {
+                                    "type": "navigation_view",
+                                    "op": "add",
+                                    "navigation_view": expected_view,
+                                },
+                                "users": [user.id],
+                            },
+                        )
+                        self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                    self.assertEqual(views.count(), count)
+                    self.assertEqual(audits.count(), count)
+
+                if path == web:
+                    send(
+                        {"fragment": "inbox", "is_pinned": "true"},
+                        403,
+                        headers={key: value for key, value in auth.items() if key != "X-CSRFToken"},
+                    )
+                else:
+                    send({"fragment": "inbox", "is_pinned": "true"}, 401, headers={})
+                send({}, 400)
+                send({"fragment": " \u2003 "}, 400)
+                send({"fragment": "inbox"}, 400)
+                send({"fragment": "inbox", "is_pinned": "True"}, 400)
+                send({"fragment": "inbox", "is_pinned": "1"}, 400)
+                send({"fragment": "inbox", "is_pinned": "true", "name": "Inbox"}, 400)
+                send({"fragment": "search", "is_pinned": "false"}, 400)
+                send({"fragment": "search", "is_pinned": "false", "name": " "}, 400)
+                send(
+                    {"fragment": " inbox ", "is_pinned": "true", "extra": "ignored"},
+                    200,
+                    {"fragment": "inbox", "is_pinned": True, "name": None},
+                    query="?is_pinned=false",
+                )
+                send({"fragment": "inbox", "is_pinned": "false"}, 400)
+                send(
+                    {"name": " یادآوری‌ها ", "is_pinned": "false"},
+                    200,
+                    {"fragment": private.fragment, "is_pinned": False, "name": private.name},
+                    query="?fragment=narrow%2Fis%2Falerted",
+                )
+                send({"fragment": "other", "is_pinned": "false", "name": "یادآوری‌ها"}, 400)
+                send({"method": "GET"}, 200)
+                send({"method": "DELETE"}, 405)
+                return results
+
+            enabled = os.environ.get("ZULIP_RUST_HTTP_BIN")
+            for scheme in ("http", "https"):
+                web_auth = {**cookie, "X-CSRFToken": token}
+                if scheme == "https":
+                    web_auth.update(
+                        {"X-Forwarded-Proto": "https", "Referer": f"https://{user.realm.host}/"}
+                    )
+                service = (
+                    rust_http_service({**environment, "ZULIP_RUST_WEB_POST_SCHEME": scheme})
+                    if enabled
+                    else nullcontext(None)
+                )
+                with service as rust_port:
+                    routes = (
+                        [(api, basic), (web, web_auth)] if scheme == "http" else [(web, web_auth)]
+                    )
+                    for path, headers in routes:
+                        with self.subTest(path=path, scheme=scheme):
+                            django = check(django_port, path, headers)
+                            if rust_port is not None:
+                                self.assertEqual(check(rust_port, path, headers), django)
+
+            if enabled:
+                views.delete()
+                audits.delete()
+                with (
+                    rust_http_service(environment) as first,
+                    rust_http_service(environment) as second,
+                    ThreadPoolExecutor(max_workers=2) as requests,
+                ):
+                    for names, fragments in [
+                        (("Same", "Same"), ("first", "second")),
+                        (("One", "Two"), ("same", "same")),
+                    ]:
+                        responses = [
+                            requests.submit(
+                                request_test_http,
+                                port,
+                                "POST",
+                                user.realm.host,
+                                {**basic, **form_header},
+                                api,
+                                body=urlencode(
+                                    {"fragment": fragment, "name": name, "is_pinned": "true"}
+                                ),
+                            )
+                            for port, fragment, name in zip(
+                                (first, second), fragments, names, strict=True
+                            )
+                        ]
+                        self.assertCountEqual(
+                            [response.result()[0] for response in responses], [200, 400]
+                        )
+                        self.assertEqual(views.count(), 1)
+                        self.assertEqual(audits.count(), 1)
+                        self.assertIsNotNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                        self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                        views.delete()
+                        audits.delete()
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "ALTER TABLE zerver_realmauditlog ADD CONSTRAINT reject_navigation_view_test "
+                            "CHECK (event_type <> 850) NOT VALID"
+                        )
+                        try:
+                            result = request_test_http(
+                                first,
+                                "POST",
+                                user.realm.host,
+                                {**basic, **form_header},
+                                api,
+                                body=urlencode({"fragment": "inbox", "is_pinned": "true"}),
+                            )
+                            self.assertEqual(result[0], 503, result[1])
+                            self.assertFalse(views.exists())
+                            self.assertFalse(audits.exists())
+                            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                        finally:
+                            cursor.execute(
+                                "ALTER TABLE zerver_realmauditlog DROP CONSTRAINT reject_navigation_view_test"
+                            )
+            channel.queue_purge("user_activity")
 
 
 class NavigationViewTests(ZulipTestCase):
