@@ -7,7 +7,7 @@ use axum::{
 };
 use regex::Regex;
 
-use super::locale::MissingUserAgentMessages;
+use super::locale::Locales;
 
 static USER_AGENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?P<name>[^/ ]*[^0-9/(]*)(?:/(?P<version>[^/ ]*))?(?:[ /].*)?$").unwrap()
@@ -37,13 +37,10 @@ fn older_android_version(version: &str) -> bool {
     false
 }
 
-pub(super) async fn get(
-    State(messages): State<MissingUserAgentMessages>,
-    headers: HeaderMap,
-) -> Response {
-    let (language, missing_header) = messages.for_request(&headers);
+pub(super) async fn get(State(locales): State<Locales>, headers: HeaderMap) -> Response {
+    let language = Locales::for_request(&headers);
     let response = match headers.get(header::USER_AGENT) {
-        None => error(missing_header),
+        None => error(locales.gettext(language, "User-Agent header missing from request")),
         Some(value) => {
             // WSGI exposes HTTP header bytes as ISO-8859-1 strings.
             let user_agent: String = value.as_bytes().iter().copied().map(char::from).collect();

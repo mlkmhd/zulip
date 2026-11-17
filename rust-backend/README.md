@@ -1,6 +1,6 @@
 # Zulip Gold backend migration
 
-See the [migration handoff and progress report](MIGRATION_HANDOFF.md) for
+See `MIGRATION_HANDOFF.md` in this directory for
 the verified baseline, Multipass results, and remaining work.
 
 The first Rust component chooses display colors for new channel subscriptions.
@@ -98,6 +98,39 @@ running, run the same cases over HTTP by selecting its loopback port:
 ```sh
 ./tools/test-backend zerver.tests.test_compatibility
 ZULIP_RUST_COMPATIBILITY_TEST_PORT=9997 ./tools/test-backend zerver.tests.test_compatibility
+```
+
+## Run the alert-word read API over HTTP
+
+Set `ZULIP_RUST_DATABASE_URL` to a PostgreSQL connection string for the local
+Zulip database and `ZULIP_RUST_EXTERNAL_HOST` to the base hostname without a
+port. The database role needs read access to `zulip.zerver_userprofile`,
+`zulip.zerver_realm`, and `zulip.zerver_alertword`. The service accepts a local
+Unix socket or loopback PostgreSQL connection and uses a read-only session.
+
+```sh
+export ZULIP_RUST_DATABASE_URL='host=/var/run/postgresql dbname=zulip user=zulip'
+export ZULIP_RUST_EXTERNAL_HOST=zulipdev.com
+cargo run --manifest-path rust-backend/Cargo.toml --locked --features http --bin zulip-http -- 127.0.0.1:9997
+```
+
+Send `GET /api/v1/users/me/alert_words` to the loopback listener with
+`Host: <organization>.zulipdev.com` and HTTP Basic authentication. The user
+name is the account email and the password is its API key. The base hostname
+selects the root-domain organization. This direct development route supports
+the standard realm subdomain layout. Django serves configured custom realm hosts,
+the web session alias, writes, and normal proxy traffic. Shared rate limiting
+and activity tracking remain part of the production integration work.
+
+In a provisioned Zulip development environment, the comparison test starts Django
+and the Rust binary on loopback and gives them the same test database with
+committed fixtures.
+
+```sh
+source .venv/bin/activate
+cargo build --manifest-path rust-backend/Cargo.toml --locked --features http --bin zulip-http
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ./tools/test-backend zerver.tests.test_alert_words.AlertWordsRustHTTPTest
 ```
 
 ## Migration sequence

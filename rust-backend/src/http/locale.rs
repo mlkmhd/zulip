@@ -10,7 +10,6 @@ use axum::http::{HeaderMap, header};
 use gettext::Catalog;
 use regex::Regex;
 
-const MISSING_USER_AGENT: &str = "User-Agent header missing from request";
 // The existing endpoint uses Django's default LANGUAGES, including languages
 // for which Zulip does not yet have its own translated message.
 const SUPPORTED_LANGUAGES: &str = "af ar ar-dz ast az bg be bn br bs ca ckb cs cy da de dsb el en
@@ -28,9 +27,9 @@ static LANGUAGE_RANGE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 #[derive(Clone)]
-pub(super) struct MissingUserAgentMessages(Arc<HashMap<String, String>>);
+pub(super) struct Locales(Arc<HashMap<String, Catalog>>);
 
-impl MissingUserAgentMessages {
+impl Locales {
     pub(super) fn load(directory: &Path) -> Result<Self, Box<dyn Error>> {
         let mut messages = HashMap::new();
         for entry in fs::read_dir(directory)? {
@@ -57,12 +56,12 @@ impl MissingUserAgentMessages {
             };
             let catalog =
                 Catalog::parse(file).map_err(|error| format!("{}: {error}", path.display()))?;
-            messages.insert(locale, catalog.gettext(MISSING_USER_AGENT).to_owned());
+            messages.insert(locale, catalog);
         }
         Ok(Self(Arc::new(messages)))
     }
 
-    pub(super) fn for_request(&self, headers: &HeaderMap) -> (&str, &str) {
+    pub(super) fn for_request(headers: &HeaderMap) -> &'static str {
         if let Some(cookie) = headers
             .get(header::COOKIE)
             .and_then(|value| value.to_str().ok())
@@ -73,8 +72,8 @@ impl MissingUserAgentMessages {
                 .filter(|(name, _)| *name == "django_language")
                 .map(|(_, value)| value.trim_matches('"'))
                 .next_back();
-            if let Some(message) = language.and_then(|language| self.lookup(language)) {
-                return message;
+            if let Some(language) = language.and_then(Self::supported_language) {
+                return language;
             }
         }
         if let Some(value) = headers
@@ -85,15 +84,15 @@ impl MissingUserAgentMessages {
                 if language == "*" {
                     break;
                 }
-                if let Some(message) = self.lookup(language) {
-                    return message;
+                if let Some(language) = Self::supported_language(language) {
+                    return language;
                 }
             }
         }
-        ("en", MISSING_USER_AGENT)
+        "en"
     }
 
-    fn lookup(&self, language: &str) -> Option<(&str, &str)> {
+    fn supported_language(language: &str) -> Option<&'static str> {
         let language = if language.len() > LANGUAGE_HEADER_LIMIT {
             language.get(..LANGUAGE_HEADER_LIMIT)?.rsplit_once('-')?.0
         } else {
@@ -108,7 +107,7 @@ impl MissingUserAgentMessages {
         let variants =
             std::iter::successors(Some(tag), |tag| tag.rsplit_once('-').map(|(tag, _)| tag));
         let supported = SUPPORTED_LANGUAGES.split_ascii_whitespace();
-        let selected = variants
+        variants
             .clone()
             .find_map(|tag| supported.clone().find(|code| *code == tag))
             .or_else(|| {
@@ -117,12 +116,15 @@ impl MissingUserAgentMessages {
                     code.strip_prefix(base)
                         .is_some_and(|rest| rest.starts_with('-'))
                 })
-            })?;
-        let message = self.0.get(selected).or_else(|| {
-            let (base, _) = selected.rsplit_once('-')?;
+            })
+    }
+
+    pub(super) fn gettext<'a>(&'a self, language: &str, message: &'a str) -> &'a str {
+        let catalog = self.0.get(language).or_else(|| {
+            let (base, _) = language.rsplit_once('-')?;
             self.0.get(base)
         });
-        Some((selected, message.map_or(MISSING_USER_AGENT, String::as_str)))
+        catalog.map_or(message, |catalog| catalog.gettext(message))
     }
 }
 
