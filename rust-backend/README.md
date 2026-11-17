@@ -446,10 +446,11 @@ snippet to the owner through Tornado.
 In nginx staging, include `saved-snippet-web-edit-map.conf` in the HTTP
 context and install `saved-snippet-web-edit-routes.conf` in
 `zulip-include/app.d/`. Use the verified hostname and port, run
-`nginx -t`, and reload. The include selects PATCH on the numeric detail
-path. Django serves DELETE, OPTIONS, and POST method overrides on that
-path. An unavailable Rust listener returns nginx's JSON upstream error.
-To roll back web PATCH, remove the detail routes include and reload.
+`nginx -t`, and reload. The edit map selects PATCH on the numeric detail
+path. Django serves OPTIONS and POST method overrides on that path. An
+unavailable Rust listener returns nginx's JSON upstream error. To return
+all web detail methods to Django, remove the detail routes include and
+reload.
 
 In the development proxy, use
 `--rust-http-port 9997 --rust-saved-snippets-web-edits`. Remove the edit
@@ -459,6 +460,31 @@ flag to return web PATCH to Django.
 ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
     ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
     ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest.test_saved_snippet_web_patch_http_and_event_parity
+```
+
+### Enable saved-snippet web deletion
+
+Use the [web creation settings](#enable-saved-snippet-web-creation) and
+grant the Rust database role `DELETE` on `zulip.zerver_savedsnippet`.
+`DELETE /json/saved_snippets/{id}` requires a Django session and the
+`X-CSRFToken` header. After removing the owner's row, Rust publishes the
+deleted ID to the owner's Tornado queue. The creation audit entry is
+retained. A repeated deletion returns `404`.
+
+For nginx staging, replace `saved-snippet-web-edit-map.conf` with
+`saved-snippet-web-delete-map.conf` and retain the detail routes include.
+The new map selects PATCH and DELETE for the verified host and port. Run
+`nginx -t` and reload. Restore the edit map and reload to return DELETE
+to Django while keeping PATCH on Rust.
+
+In the development proxy, use
+`--rust-http-port 9997 --rust-saved-snippets-web-deletes`. Remove the
+delete flag to return DELETE to Django.
+
+```sh
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-alert-words \
+    ./tools/test-backend zerver.tests.test_saved_snippets.SavedSnippetWriteHTTPTest.test_saved_snippet_web_delete_http_and_event_parity
 ```
 
 ## Stage alert-word reads in nginx

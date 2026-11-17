@@ -32,6 +32,7 @@
 | `GET /json/saved_snippets` و `HEAD` متناظر                                              | نشست Django، رفتار CSRF روش‌های امن، سهمیه و فعالیت                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست        | Django               |
 | `POST /json/saved_snippets` | نشست Django، اعتبارسنجی CSRF، ثبت متن و audit، اعلان پس از commit | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست و پروتکل | Django |
 | `PATCH /json/saved_snippets/{saved_snippet_id}` | نشست Django، CSRF از هدر، ویرایش با شرط مالکیت و اعلان پس از commit | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست و پروتکل | Django |
+| `DELETE /json/saved_snippets/{saved_snippet_id}` | نشست Django، CSRF از هدر، حذف با شرط مالکیت و اعلان پس از commit | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی با تنظیم نشست و پروتکل | Django |
 | `POST /api/v1/saved_snippets`                                                           | ثبت متن و audit، اعلان پس از commit                                    | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `PATCH /api/v1/saved_snippets/{saved_snippet_id}`                                       | ویرایش با شرط مالکیت، اعلان پس از commit                               | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
 | `DELETE /api/v1/saved_snippets/{saved_snippet_id}`                                      | حذف با شرط مالکیت، اعلان پس از commit                                  | Rust مستقیم، پروکسی توسعه یا nginx آزمایشی                      | Django               |
@@ -136,9 +137,16 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 کوکی CSRF با هدر `X-CSRFToken` اجرا می‌شود. بررسی نشست و CSRF پیش از سهمیه
 و ثبت فعالیت است. ویرایش از همان عملیات PostgreSQL و اعلان API استفاده
 می‌کند. کش متن‌ها در این عملیات تغییر نمی‌کند. هدایت PATCH وب مستقل
-است و Django درخواست‌های DELETE و POST با override روش را سرو می‌کند.
+است و Django درخواست POST با override روش را سرو می‌کند.
 [تست مقایسه](../zerver/tests/test_saved_snippets.py)،
 [راهنمای staging برای ویرایش متن در وب](README.md#enable-saved-snippet-web-editing)
+
+`DELETE /json/saved_snippets/{saved_snippet_id}` با همان نشست و بررسی
+هدر CSRF اجرا می‌شود. منطق حذف API فقط ردیف صاحب متن را حذف می‌کند.
+audit ایجاد حفظ می‌شود و رویداد `saved_snippets/remove` پس از commit فقط
+برای صاحب متن منتشر می‌شود. کش متن‌ها در این عملیات تغییر نمی‌کند.
+تغییر map در nginx می‌تواند فقط DELETE را به Django برگرداند.
+[راهنمای staging برای حذف متن در وب](README.md#enable-saved-snippet-web-deletion)
 
 ## فهرست OpenAPI
 
@@ -453,7 +461,7 @@ IP واقعی `127.0.0.1` یا `::1` معاف است. تنظیم debug در Djan
 | `/json/reminders/{reminder_id}`                       | `DELETE`                 | Django            |
 | `/json/remove_client_device`                          | `POST`                   | Django            |
 | `/json/saved_snippets`                                | `GET`, `POST`            | Django            |
-| `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Django، Rust اختیاری برای PATCH |
+| `/json/saved_snippets/{saved_snippet_id}`             | `DELETE`, `PATCH`        | Django، Rust اختیاری |
 | `/json/scheduled_messages`                            | `GET`, `POST`            | Django            |
 | `/json/scheduled_messages/{scheduled_message_id}`     | `DELETE`, `PATCH`        | Django            |
 | `/json/self-hosted-billing`                           | `GET`                    | Django (مخصوص وب) |
