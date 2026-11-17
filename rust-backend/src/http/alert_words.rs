@@ -25,6 +25,49 @@ pub(super) const PATH: &str = "/api/v1/users/me/alert_words";
 pub(super) const SESSION_PATH: &str = "/json/users/me/alert_words";
 const INCOMING_WEBHOOK_BOT: i16 = 2;
 
+pub(super) async fn ready(State(state): State<AlertWords>) -> Response {
+    let ready = state.sessions.is_some()
+        && tokio::time::timeout(Duration::from_secs(2), async {
+            if state
+                .database
+                .batch_execute(
+                    "SELECT u.id, r.id, w.word, s.session_key
+                 FROM zulip.zerver_userprofile u, zulip.zerver_realm r,
+                      zulip.zerver_alertword w, zulip.django_session s LIMIT 0",
+                )
+                .await
+                .is_err()
+            {
+                return false;
+            }
+            if let Some(limiter) = &state.rate_limiter
+                && !limiter.ping().await
+            {
+                return false;
+            }
+            state
+                .activity
+                .as_ref()
+                .is_none_or(ActivityPublisher::connected)
+        })
+        .await
+        .unwrap_or(false);
+    let (status, body) = if ready {
+        (StatusCode::OK, "{\"ready\":true}\n")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "{\"ready\":false}\n")
+    };
+    (
+        status,
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        body,
+    )
+        .into_response()
+}
+
 #[derive(Clone)]
 pub(super) struct AlertWords {
     database: Arc<Client>,

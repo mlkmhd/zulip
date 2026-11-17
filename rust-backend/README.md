@@ -231,6 +231,41 @@ DJANGO_SETTINGS_MODULE=zproject.test_settings ZULIP_RUST_PROXY_EXPECT_RUST=1 \
 Restart the proxy without `--rust-alert-words` and repeat with
 `ZULIP_RUST_PROXY_EXPECT_RUST=0`, leaving the Rust service running.
 
+## Stage alert-word reads in nginx
+
+Start `zulip-http` on `127.0.0.1:9997` with PostgreSQL, session settings, and
+the staging Redis and RabbitMQ settings. Use the snippets under
+`rust-backend/staging/nginx/` in the staging instance:
+
+1. Include `alert-words-map.conf` in nginx's HTTP context. The sample allows
+   `zulip.testserver` with or without port `8880`. Replace this with the exact
+   staging host and port after confirming that Django and Rust resolve it to
+   the same organization.
+2. Place `alert-words-health.conf` in the staging `zulip-include/app.d/`
+   directory. Validate and reload nginx, then probe
+   `GET /health/rust-alert-words` from loopback. Expect `200` with
+   `{"ready":true}` before enabling the routes. The probe checks session
+   configuration, reads the relevant PostgreSQL tables, pings Redis when
+   configured, and checks the RabbitMQ connection and channel when configured.
+   `503` indicates a running but unready service. Django's `/health` remains
+   available separately.
+3. Place `alert-words-routes.conf` in the same `app.d/` directory. Run
+   `nginx -t` and reload the staging instance. The two alert-word routes
+   send `GET` and `HEAD` to Rust for the allowed host. Every other method
+   follows the existing Django uWSGI route.
+
+To roll back, remove `alert-words-routes.conf` from the staging `app.d/`
+directory, validate the configuration, and reload nginx. The readiness probe
+can stay installed during rollback. An upstream failure uses the existing
+API error response and requires an explicit routing rollback. This avoids
+replaying a read that may already have updated quota or activity.
+
+The smoke test above also runs against nginx with
+`ZULIP_RUST_PROXY_PORT=8880`. Use `ZULIP_RUST_PROXY_EXPECT_RUST=1` with the
+routing include installed, then `0` after removing it and reloading. During
+testing, use a disposable Django database and dedicated dependency instances
+when exercising outages.
+
 ## Migration sequence
 
 1. Port backend logic that does not depend on services. For each component,

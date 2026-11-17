@@ -19,7 +19,7 @@ use super::user_agent;
 pub(super) struct ActivityPublisher(Arc<Publisher>);
 
 struct Publisher {
-    _connection: Connection,
+    connection: Connection,
     channel: Channel,
     shards: u32,
 }
@@ -28,6 +28,10 @@ type ActivityError = Box<dyn Error + Send + Sync>;
 const BROKER_TIMEOUT: Duration = Duration::from_secs(5);
 
 impl ActivityPublisher {
+    pub(super) fn connected(&self) -> bool {
+        self.0.connection.status().connected() && self.0.channel.status().connected()
+    }
+
     pub(super) async fn connect(
         settings: super::ActivityConfig<'_>,
     ) -> Result<Self, Box<dyn Error>> {
@@ -60,7 +64,7 @@ impl ActivityPublisher {
             .await??;
         }
         Ok(Self(Arc::new(Publisher {
-            _connection: connection,
+            connection,
             channel,
             shards: settings.shards,
         })))

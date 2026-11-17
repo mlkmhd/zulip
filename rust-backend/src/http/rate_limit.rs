@@ -22,6 +22,13 @@ pub(super) struct RateLimiter {
 }
 
 impl RateLimiter {
+    pub(super) async fn ping(&self) -> bool {
+        redis::cmd("PING")
+            .query_async::<String>(&mut self.connection.clone())
+            .await
+            .is_ok_and(|response| response == "PONG")
+    }
+
     pub(super) async fn connect(
         settings: super::RateLimitConfig<'_>,
     ) -> Result<Self, Box<dyn Error>> {

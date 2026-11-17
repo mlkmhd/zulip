@@ -47,7 +47,9 @@ pub async fn router_with_alert_words(
     let locales = locale::Locales::load(locale_dir)?;
     let browser_enabled = config.session.is_some();
     let alert_words = alert_words::AlertWords::connect(config, locales.clone()).await?;
-    let mut routes = Router::new().route(alert_words::PATH, get(alert_words::get));
+    let mut routes = Router::new()
+        .route(alert_words::PATH, get(alert_words::get))
+        .route("/health/rust-alert-words", get(alert_words::ready));
     if browser_enabled {
         routes = routes.route(alert_words::SESSION_PATH, get(alert_words::get));
     }

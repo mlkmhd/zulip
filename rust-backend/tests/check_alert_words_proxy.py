@@ -1,5 +1,5 @@
 # ruff: noqa: INP001
-"""Check run-dev's alert-word routing against a disposable Zulip test database."""
+"""Check alert-word proxy routing against a disposable Zulip test database."""
 
 import os
 from base64 import b64encode
@@ -19,6 +19,7 @@ from zerver.models import AlertWord, UserProfile
 
 def check_proxy(rust_enabled: bool) -> None:
     assert settings.TEST_SUITE and connection.settings_dict["NAME"].startswith("zulip_rust_proxy_")
+    proxy_port = int(os.environ.get("ZULIP_RUST_PROXY_PORT", "9981"))
     user = UserProfile.objects.get(delivery_email="hamlet@zulip.com", realm__string_id="zulip")
     original_words = user_alert_words(user)
     word = f"rust-proxy-{uuid4().hex}"
@@ -53,7 +54,7 @@ def check_proxy(rust_enabled: bool) -> None:
         fields: dict[str, str] | None = None,
     ) -> tuple[bytes, str | None]:
         nonlocal checks
-        client = HTTPConnection("127.0.0.1", 9981, timeout=10)
+        client = HTTPConnection("127.0.0.1", proxy_port, timeout=10)
         try:
             outgoing = {"Host": host, "X-Real-IP": "192.0.2.1", **headers}
             if fields is not None:
@@ -65,7 +66,7 @@ def check_proxy(rust_enabled: bool) -> None:
             body = response.read()
             label = (method, path, host)
             assert response.status == status, (label, response.status, status)
-            # run-dev's test settings disable rate headers in Django. The configured
+            # Django's test settings disable rate headers. The configured
             # Rust-only quota makes the selected upstream visible on successful reads.
             assert response.getheader("X-RateLimit-Limit") == ("200" if rust else None), label
             checks += 1
@@ -76,7 +77,7 @@ def check_proxy(rust_enabled: bool) -> None:
     try:
         for prefix, auth in (("/api/v1", api), ("/json", browser)):
             path = f"{prefix}/users/me/alert_words"
-            body, _ = request("GET", path, auth, 200, rust=rust_enabled)
+            body, _ = request("GET", path + "?client=ZulipMobile", auth, 200, rust=rust_enabled)
             assert orjson.loads(body)["alert_words"] == original_words
             body, _ = request("HEAD", path, auth, 200, rust=rust_enabled)
             assert body == b""
