@@ -71,7 +71,8 @@ pub async fn router_with_user_reads(
     if saved_snippet_writes {
         routes = routes.route(
             saved_snippets::DETAIL_PATH,
-            patch(user_reads::edit_saved_snippet)
+            patch(user_reads::write_saved_snippet_detail)
+                .delete(user_reads::write_saved_snippet_detail)
                 .layer(DefaultBodyLimit::max(saved_snippets::FORM_BODY_LIMIT)),
         );
     }

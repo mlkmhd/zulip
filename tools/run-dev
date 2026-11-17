@@ -87,6 +87,11 @@ parser.add_argument(
     help="Forward saved-snippet API PATCH requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-saved-snippet-deletes",
+    action="store_true",
+    help="Forward saved-snippet API DELETE requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--behind-https-proxy",
     action="store_true",
     help="Start app server in HTTPS mode, using reverse proxy",
@@ -181,6 +186,8 @@ if options.rust_saved_snippet_writes and options.rust_http_port is None:
     parser.error("--rust-saved-snippet-writes requires --rust-http-port")
 if options.rust_saved_snippet_edits and options.rust_http_port is None:
     parser.error("--rust-saved-snippet-edits requires --rust-http-port")
+if options.rust_saved_snippet_deletes and options.rust_http_port is None:
+    parser.error("--rust-saved-snippet-deletes requires --rust-http-port")
 
 for mime_type, extension in EXTRA_MIME_TYPES:
     aiohttp.web_fileresponse.CONTENT_TYPES.add_type(mime_type, extension)
@@ -461,8 +468,13 @@ build step and rerun `run-dev`.""")
             if options.rust_saved_snippet_writes:
                 snippet_methods.add(hdrs.METH_POST)
             rust_routes["/api/v1/saved_snippets"] = snippet_methods
+        detail_methods: set[str] = set()
         if options.rust_saved_snippet_edits:
-            rust_routes["/api/v1/saved_snippets/{snippet_id:[0-9]+}"] = {hdrs.METH_PATCH}
+            detail_methods.add(hdrs.METH_PATCH)
+        if options.rust_saved_snippet_deletes:
+            detail_methods.add(hdrs.METH_DELETE)
+        if detail_methods:
+            rust_routes["/api/v1/saved_snippets/{snippet_id:[0-9]+}"] = detail_methods
         if rust_routes:
             add_rust_routes(rust_http_port, rust_routes)
 

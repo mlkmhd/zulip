@@ -9,7 +9,7 @@ use std::{
 use axum::{
     Extension,
     extract::{ConnectInfo, Path, Request, State},
-    http::{HeaderMap, HeaderValue, StatusCode, Uri, header, uri::Authority},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header, uri::Authority},
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -21,7 +21,7 @@ use super::{
     database::Database,
     locale::Locales,
     rate_limit::{RateLimit, RateLimiter},
-    saved_snippets,
+    saved_snippets::{self, SnippetEvent},
     session::{SessionLookup, Sessions},
 };
 
@@ -39,6 +39,7 @@ enum Endpoint {
 enum SnippetWrite {
     Create,
     Edit(Option<i64>),
+    Delete(Option<i64>),
 }
 
 impl Endpoint {
@@ -433,7 +434,7 @@ pub(super) async fn create_saved_snippet(
     respond_snippet_write(state, peer, request, SnippetWrite::Create).await
 }
 
-pub(super) async fn edit_saved_snippet(
+pub(super) async fn write_saved_snippet_detail(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     Path(id): Path<String>,
@@ -444,7 +445,12 @@ pub(super) async fn edit_saved_snippet(
     }
     // An integer outside the storage range can still be used with a no-op edit.
     let id = id.parse::<i64>().ok();
-    respond_snippet_write(state, peer, request, SnippetWrite::Edit(id)).await
+    let write = if request.method() == Method::DELETE {
+        SnippetWrite::Delete(id)
+    } else {
+        SnippetWrite::Edit(id)
+    };
+    respond_snippet_write(state, peer, request, write).await
 }
 
 async fn respond_snippet_write(
@@ -501,6 +507,7 @@ async fn respond(
         let activity_name = match write {
             Some(SnippetWrite::Create) => "create_saved_snippet",
             Some(SnippetWrite::Edit(_)) => "edit_saved_snippet",
+            Some(SnippetWrite::Delete(_)) => "delete_saved_snippet",
             None => endpoint.activity_name(),
         };
         let (database, user_id, realm_id) = if let Some(sessions) = browser_session {
@@ -596,7 +603,7 @@ async fn respond(
                     )
                     .await?;
                     result_fields = format!(",\"saved_snippet_id\":{}", snippet.id);
-                    Some(("add", snippet))
+                    Some(SnippetEvent::Added(snippet))
                 }
                 SnippetWrite::Edit(id) => {
                     let (title, content) = form.edit_values(max).map_err(ApiError::Form)?;
@@ -610,21 +617,35 @@ async fn respond(
                         let snippet = saved_snippets::edit(&database, user_id, id, title, content)
                             .await?
                             .ok_or(ApiError::SnippetNotFound)?;
-                        Some(("update", snippet))
+                        Some(SnippetEvent::Updated(snippet))
                     }
                 }
+                SnippetWrite::Delete(id) => {
+                    let id = id.ok_or(ApiError::SnippetNotFound)?;
+                    if !activity.connected() {
+                        return Err(ApiError::NotificationUnavailable);
+                    }
+                    if !saved_snippets::delete(&database, user_id, id).await? {
+                        return Err(ApiError::SnippetNotFound);
+                    }
+                    Some(SnippetEvent::Removed(id))
+                }
             };
-            if let Some((operation, snippet)) = change {
+            if let Some(event) = change {
                 activity
-                    .saved_snippet_changed(user_id, operation, &snippet)
+                    .saved_snippet_changed(user_id, &event)
                     .await
                     .map_err(|error| {
                         eprintln!(
                             "Could not confirm notification for saved snippet {}: {error}",
-                            snippet.id
+                            event.snippet_id()
                         );
                         ApiError::NotificationUnavailable
                     })?;
+            }
+            if matches!(write, SnippetWrite::Delete(_)) {
+                // Django's delete view returns a plain success response.
+                return Ok("{\"result\":\"success\",\"msg\":\"\"}\n".to_owned());
             }
             let ignored = form.ignored_parameters(matches!(write, SnippetWrite::Edit(_)));
             let extra = if ignored.is_empty() {

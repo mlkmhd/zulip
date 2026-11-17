@@ -6,6 +6,7 @@ use axum::{
     http::header,
 };
 use serde::Serialize;
+use serde_json::{Value, json};
 use tokio_postgres::{Client, Error, Row};
 
 pub(super) const PATH: &str = "/api/v1/saved_snippets";
@@ -31,6 +32,35 @@ impl SavedSnippet {
             content: row.try_get("content")?,
             date_created: row.try_get("date_created")?,
         })
+    }
+}
+
+pub(super) enum SnippetEvent {
+    Added(SavedSnippet),
+    Updated(SavedSnippet),
+    Removed(i64),
+}
+
+impl SnippetEvent {
+    pub fn snippet_id(&self) -> i64 {
+        match self {
+            Self::Added(snippet) | Self::Updated(snippet) => snippet.id,
+            Self::Removed(id) => *id,
+        }
+    }
+
+    pub fn payload(&self) -> Value {
+        match self {
+            Self::Added(snippet) => {
+                json!({"type": "saved_snippets", "op": "add", "saved_snippet": snippet})
+            }
+            Self::Updated(snippet) => {
+                json!({"type": "saved_snippets", "op": "update", "saved_snippet": snippet})
+            }
+            Self::Removed(id) => {
+                json!({"type": "saved_snippets", "op": "remove", "saved_snippet_id": id})
+            }
+        }
     }
 }
 
@@ -217,4 +247,19 @@ pub(super) async fn edit(
         &[&snippet_id, &user_id, &title, &content],
     ).await?;
     row.as_ref().map(SavedSnippet::from_row).transpose()
+}
+
+pub(super) async fn delete(
+    database: &Client,
+    user_id: i32,
+    snippet_id: i64,
+) -> Result<bool, Error> {
+    // Only the request that commits the deletion may publish a removal event.
+    let deleted = database
+        .execute(
+            "DELETE FROM zulip.zerver_savedsnippet WHERE id = $1 AND user_profile_id = $2",
+            &[&snippet_id, &user_id],
+        )
+        .await?;
+    Ok(deleted == 1)
 }

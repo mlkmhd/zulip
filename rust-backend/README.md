@@ -348,13 +348,31 @@ publishes the full snippet to the owner's Tornado queue.
 For nginx staging, include `saved-snippet-edit-map.conf` in the HTTP
 context and add `saved-snippet-edit-routes.conf` to `zulip-include/app.d/`.
 Use the verified realm hostname and port in the map, run `nginx -t`, and
-reload. The include routes only `PATCH /api/v1/saved_snippets/{id}`.
-Django handles `DELETE`, `OPTIONS`, and the web alias. Remove the edit
-routes include and reload to roll back PATCH independently of GET and POST.
+reload. This map selects `PATCH /api/v1/saved_snippets/{id}`. Remove the
+detail routes include and reload to return item requests to Django
+independently of GET and POST on the collection.
 
 For the development proxy, use `--rust-http-port 9997 --rust-saved-snippet-edits`.
 The comparison command above also checks that patches preserve omitted fields,
 deny edits to another user's snippet, and publish the same event as Django.
+
+### Enable saved-snippet deletion
+
+`ZULIP_RUST_SAVED_SNIPPET_WRITES=1` enables `DELETE` on the Rust listener.
+Grant the PostgreSQL role `DELETE` on `zulip.zerver_savedsnippet`. Only the
+authenticated owner's row is eligible for deletion. After PostgreSQL
+commits, Rust publishes `saved_snippets/remove` with the deleted ID to the
+owner's Tornado queue. A repeated deletion returns `404`. An existing
+creation audit record is retained.
+
+For nginx staging, replace `saved-snippet-edit-map.conf` with
+`saved-snippet-delete-map.conf`, retaining the detail routes include. The
+new map selects both PATCH and DELETE for the verified host. Run `nginx -t`
+and reload. To roll back only DELETE, restore the edit map and reload.
+For the development proxy, use `--rust-http-port 9997 --rust-saved-snippet-deletes`.
+
+The HTTP comparison above also checks the deleted row, event payload,
+and response for repeated or competing delete requests.
 
 ## Stage alert-word reads in nginx
 

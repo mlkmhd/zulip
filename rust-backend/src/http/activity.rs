@@ -95,13 +95,12 @@ impl ActivityPublisher {
     pub(super) async fn saved_snippet_changed(
         &self,
         user_id: i32,
-        operation: &str,
-        snippet: &saved_snippets::SavedSnippet,
+        event: &saved_snippets::SnippetEvent,
     ) -> Result<(), ActivityError> {
         self.publish(
             saved_snippets::NOTIFICATION_QUEUE,
             serde_json::json!({
-                "event": {"type": "saved_snippets", "op": operation, "saved_snippet": snippet},
+                "event": event.payload(),
                 "users": [user_id],
             }),
         )

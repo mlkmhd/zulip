@@ -1,5 +1,6 @@
 import os
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -304,11 +305,16 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             try:
                 django = self.check_create_cases(django_port, user, channel)
                 django_edits = self.check_edit_cases(django_port, user, channel)
+                django_deletes = self.check_delete_cases(django_port, user, channel)
                 if rust_port is not None:
                     rust = self.check_create_cases(rust_port, user, channel)
                     self.assertEqual(rust, django)
                     rust_edits = self.check_edit_cases(rust_port, user, channel)
                     self.assertEqual(rust_edits, django_edits)
+                    rust_deletes = self.check_delete_cases(
+                        rust_port, user, channel, check_race=True
+                    )
+                    self.assertEqual(rust_deletes, django_deletes)
                     self.check_failed_insert(rust_port, user, channel)
                     self.check_unroutable_event(rust_port, user, channel)
             finally:
@@ -577,6 +583,116 @@ class SavedSnippetWriteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             self.assertEqual(RealmAuditLog.objects.count(), audit_count)
         finally:
             SavedSnippet.objects.filter(id__in=[own.id, foreign.id]).delete()
+        return responses
+
+    def check_delete_cases(
+        self,
+        port: int,
+        user: UserProfile,
+        channel: pika.adapters.blocking_connection.BlockingChannel,
+        *,
+        check_race: bool = False,
+    ) -> list[tuple[int, bytes, dict[str, str | None]]]:
+        other = self.example_user("othello")
+        own, spare, foreign = SavedSnippet.objects.bulk_create(
+            [
+                SavedSnippet(
+                    user_profile=user, realm=user.realm, title="Delete me", content="**Text**"
+                ),
+                SavedSnippet(user_profile=user, realm=user.realm, title="Keep me", content="Keep"),
+                SavedSnippet(
+                    user_profile=other,
+                    realm=other.realm,
+                    title="Private",
+                    content="Other user's text",
+                ),
+            ]
+        )
+        audit = RealmAuditLog.objects.create(
+            realm=user.realm,
+            acting_user=user,
+            modified_user=user,
+            event_time=own.date_created,
+            event_type=AuditLogEventType.SAVED_SNIPPET_CREATED,
+            extra_data={"saved_snippet_id": own.id},
+        )
+        audit_count = RealmAuditLog.objects.count()
+        responses = []
+
+        def request_delete(
+            snippet_id: int,
+            *,
+            authenticated: bool = True,
+            extra: bool = False,
+        ) -> tuple[int, bytes, dict[str, str | None], str | None]:
+            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            if authenticated:
+                credentials = f"{user.delivery_email}:{user.api_key}".encode()
+                headers["Authorization"] = "Basic " + b64encode(credentials).decode()
+            return request_test_http(
+                port,
+                "DELETE",
+                user.realm.host,
+                headers,
+                f"/api/v1/saved_snippets/{snippet_id}" + ("?unknown=1" if extra else ""),
+                body="title=ignored&method=PATCH" if extra else None,
+            )
+
+        def verify_removed(snippet_id: int) -> None:
+            self.assertFalse(SavedSnippet.objects.filter(id=snippet_id).exists())
+            delivery, properties, event_body = channel.basic_get("notify_tornado", auto_ack=True)
+            assert delivery is not None and properties is not None and event_body is not None
+            self.assertEqual(properties.delivery_mode, 2)
+            self.assertEqual(
+                orjson.loads(event_body),
+                {
+                    "users": [user.id],
+                    "event": {
+                        "type": "saved_snippets",
+                        "op": "remove",
+                        "saved_snippet_id": snippet_id,
+                    },
+                },
+            )
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+
+        try:
+            for snippet_id, has_auth, status in (
+                (own.id, False, 401),
+                (0, True, 404),
+                (foreign.id, True, 404),
+                (2**63, True, 404),
+            ):
+                response = request_delete(snippet_id, authenticated=has_auth)
+                self.assertEqual(response[0], status)
+                responses.append(response[:3])
+            self.assertTrue(SavedSnippet.objects.filter(id=own.id).exists())
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+
+            response = request_delete(own.id, extra=True)
+            self.assertEqual(response[0], 200)
+            self.assertEqual(orjson.loads(response[1]), {"result": "success", "msg": ""})
+            responses.append(response[:3])
+            verify_removed(own.id)
+
+            response = request_delete(own.id)
+            self.assertEqual(response[0], 404)
+            responses.append(response[:3])
+            self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[0])
+            self.assertTrue(SavedSnippet.objects.filter(id=spare.id).exists())
+
+            if check_race:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    results = list(pool.map(request_delete, (spare.id, spare.id)))
+                self.assertCountEqual([result[0] for result in results], [200, 404])
+                verify_removed(spare.id)
+
+            self.assertTrue(SavedSnippet.objects.filter(id=foreign.id).exists())
+            self.assertTrue(RealmAuditLog.objects.filter(id=audit.id).exists())
+            self.assertEqual(RealmAuditLog.objects.count(), audit_count)
+        finally:
+            audit.delete()
+            SavedSnippet.objects.filter(id__in=[own.id, spare.id, foreign.id]).delete()
         return responses
 
     def check_failed_insert(
