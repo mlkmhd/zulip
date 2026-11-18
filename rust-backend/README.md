@@ -93,6 +93,30 @@ timestamps in Rust. Rust preserves microsecond precision and rejects
 negative values after rounding. Django supplies the current time for
 omitted timestamps and handles values outside Python's datetime range.
 
+Set `ZULIP_RUST_DRAFT_INPUT=1` to validate draft JSON in Rust for
+`POST` and `PATCH` through Django. Rust checks the entire batch before
+Django resolves any recipients. Rust identifies the first ordinary schema
+error and its field path. Django uses the existing translated API error
+format. Rust keeps the last value of duplicate fields and preserves large
+integers and special float values. Pydantic handles JSON parser failures
+and inputs near its maximum JSON integer length.
+Reinstall the extension before enabling this flag. Unset the flag and
+restart Django to restore Pydantic validation for all draft inputs.
+
+Set `ZULIP_RUST_DRAFT_CHANNEL_ACCESS=1` to resolve channel recipients
+through Rust during draft creation and editing. The query uses Django's
+PostgreSQL connection and checks the organization, archive status,
+active subscriptions, and nested group membership. Reinstall the
+extension before enabling this flag. Unset it and restart Django to
+restore the ORM lookup.
+
+Set `ZULIP_RUST_DRAFT_DIRECT_ACCESS=1` to validate direct-message
+recipients in Rust for draft creation and editing. The query uses Django's
+PostgreSQL connection and checks guest visibility before creating any
+subscriptions. Rust uses Django's configured cross-realm bot emails.
+Reinstall the extension before enabling the flag. Unset it and restart
+Django to restore the ORM validator.
+
 `ZULIP_RUST_DRAFT_CREATION=1` enables Rust bulk insertion for draft creation
 through both the API and web endpoints. Rust uses the PostgreSQL cursor from
 the existing Django transaction and returns IDs in request order. Django
@@ -123,7 +147,7 @@ done
 
 Reinstall the extension and set `ZULIP_RUST_DRAFT_GROUPS=1` to look up and
 create direct-message groups in Rust during draft creation and editing.
-Django checks recipient permissions before Rust uses its transaction cursor
+The recipient validator runs before Rust uses Django's transaction cursor
 to find or create the group, recipient, and subscriptions. PostgreSQL
 enforces the same group uniqueness for both writers. A valid earlier draft
 can create a group before a later draft in the batch fails validation.
@@ -136,12 +160,14 @@ The standalone Rust draft reader uses the same serializer.
 
 Reinstall the extension before enabling the timestamp and serialization
 flags. Unset the corresponding flag and restart Django to roll back each
-bridge independently. Compare the Django paths with and without these
-three bridges using the same tests.
+bridge independently. Compare draft input, recipient lookup, timestamps,
+and serialization using the same tests.
 
 ```sh
 for mode in 0 1; do
-    ZULIP_RUST_DRAFT_GROUPS=$mode ZULIP_RUST_DRAFT_TIMESTAMP=$mode \
+    ZULIP_RUST_DRAFT_INPUT=$mode ZULIP_RUST_DRAFT_CHANNEL_ACCESS=$mode \
+        ZULIP_RUST_DRAFT_DIRECT_ACCESS=$mode ZULIP_RUST_DRAFT_GROUPS=$mode \
+        ZULIP_RUST_DRAFT_TIMESTAMP=$mode \
         ZULIP_RUST_DRAFT_SERIALIZATION=$mode ./tools/test-backend \
         zerver.tests.test_drafts zerver.tests.test_events.DraftActionTest \
         zerver.tests.test_home.HomeTest.test_limit_drafts
