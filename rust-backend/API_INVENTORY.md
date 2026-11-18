@@ -40,7 +40,7 @@
 | `DELETE /api/v1/users/me/alert_words` و alias وب                                        | تراکنش PostgreSQL، پاک‌سازی Memcached و رویداد پس از commit             | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/drafts` و alias وب با `HEAD` متناظر                                        | شرط همگام‌سازی حساب، خواندن PostgreSQL و ارائهٔ گیرنده                | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `DELETE /api/v1/drafts/{draft_id}` و alias وب                                          | حذف محدود به مالک و رویداد بعد از commit                              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
-| `POST /api/v1/drafts` و alias وب | عادی‌سازی متن و زمان، یافتن یا ساخت گروه پیام مستقیم، درج گروهی و قالب رویداد | Django با افزونهٔ اختیاری Rust | Django |
+| `POST /api/v1/drafts` و alias وب | اعتبارسنجی شکل بسته، دسترسی گیرنده، ثبت گروه و پیش‌نویس، رویداد مالک | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی | Django |
 | `PATCH /api/v1/drafts/{draft_id}` و alias وب | عادی‌سازی متن و زمان، یافتن یا ساخت گروه پیام مستقیم، ثبت ویرایش و قالب رویداد | Django با افزونهٔ اختیاری Rust | Django |
 | `GET /api/v1/realm/linkifiers` و alias وب با `HEAD` متناظر                              | خواندن لینک‌سازهای سازمان با ترتیب اولویت از PostgreSQL              | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
 | `GET /api/v1/realm/domains` و alias وب با `HEAD` متناظر                                 | خواندن دامنه‌های مجاز ایمیل سازمان از PostgreSQL                     | Rust مستقیم یا هدایت اختیاری در پروکسی توسعه و nginx آزمایشی    | Django               |
@@ -67,6 +67,13 @@
 برای محل پیاده‌سازی و تست‌های هر مؤلفه به [مستند تحویل](MIGRATION_HANDOFF.md) رجوع کنید.
 
 ## قرارداد ایجاد پیش‌نویس
+
+listener مستقل با `ZULIP_RUST_DRAFT_POSTS=1` هر دو مسیر ایجاد را
+می‌پذیرد. پس از احراز هویت و بررسی همگام‌سازی، Rust شکل کل بسته را
+قبل از اثر جانبی بررسی می‌کند. قواعد گیرنده و ثبت گروه با افزونهٔ
+Django مشترک‌اند. ساخت گروه تراکنش جداگانه دارد. درج پیش‌نویس‌ها و
+ساخت دادهٔ رویداد یک تراکنش دارند و انتشار `drafts/add` فقط برای
+مالک و پس از commit انجام می‌شود. [راه‌اندازی](README.md#create-drafts-through-rust)
 
 `POST /api/v1/drafts` از Basic Auth و `POST /json/drafts` از نشست و CSRF
 استفاده می‌کند. Django تنظیم همگام‌سازی را بررسی می‌کند. با

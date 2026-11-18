@@ -634,6 +634,36 @@ With a dedicated `ZULIP_RUST_ACTIVITY_TEST_VHOST`, the drafts test suite
 compares both DELETE routes and checks concurrent requests. Remove the
 `ZULIP_RUST_DRAFT_DELETES` setting and restart to disable direct deletion.
 
+## Create drafts through Rust
+
+Set `ZULIP_RUST_DRAFT_POSTS=1` and configure PostgreSQL and RabbitMQ as
+for draft deletion. Set `ZULIP_RUST_MAX_MESSAGE_LENGTH` to Django's
+`MAX_MESSAGE_LENGTH` and `ZULIP_RUST_CROSS_REALM_BOT_EMAILS` to a JSON array
+of Django's `CROSS_REALM_BOT_EMAILS`. For `POST /json/drafts`, also configure
+the Django session and `ZULIP_RUST_WEB_POST_SCHEME`.
+
+The database role needs access to channel and direct-message membership and
+permission to insert drafts, groups, recipients, and subscriptions. It also
+needs to update the new group's recipient and use the corresponding sequences.
+The response returns draft IDs in request order. After the batch commits, the
+listener publishes a `drafts/add` event to the authenticated user, including
+for an empty batch.
+
+Run the direct comparison with a dedicated RabbitMQ test vhost.
+
+```bash
+ZULIP_RUST_HTTP_BIN="$PWD/rust-backend/target/debug/zulip-http" \
+    ZULIP_RUST_ACTIVITY_TEST_VHOST=zulip-rust-test-drafts \
+    ./tools/test-backend zerver.tests.test_drafts.DraftCreateHTTPTest
+```
+
+Pass `--rust-draft-posts` alongside `--rust-http-port 9997` to enable
+creation through the development proxy. For isolated nginx staging with
+reads and deletes enabled, use `drafts-post-map.conf` in place of
+`drafts-delete-map.conf` with the existing `drafts-routes.conf`. To roll
+back creation, remove `--rust-draft-posts` or switch back to
+`drafts-delete-map.conf` and reload nginx.
+
 ## Route draft reads and deletion through proxies
 
 With [Rust draft deletion enabled](#delete-drafts-through-rust), use the two
