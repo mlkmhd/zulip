@@ -19,6 +19,7 @@ from django.contrib.sessions.backends.db import SessionStore
 from django.db import DatabaseError, IntegrityError, connection, transaction
 from django.test import LiveServerTestCase
 
+from zerver.actions.realm_settings import do_change_realm_permission_group_setting
 from zerver.actions.user_groups import check_add_user_group
 from zerver.actions.users import do_deactivate_user
 from zerver.lib.drafts import (
@@ -35,6 +36,7 @@ from zerver.models import (
     DirectMessageGroup,
     Draft,
     GroupGroupMembership,
+    NamedUserGroup,
     Realm,
     Recipient,
     Stream,
@@ -42,6 +44,7 @@ from zerver.models import (
     UserProfile,
 )
 from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
+from zerver.models.groups import SystemGroups
 from zerver.models.realms import get_realm
 from zerver.models.recipients import get_direct_message_group, get_or_create_direct_message_group
 
@@ -687,6 +690,45 @@ class DraftCreationTests(ZulipTestCase):
         self.assert_json_success(resp)
         draft = Draft.objects.get(user_profile=polonius)
         self.assertEqual(draft.to_dict()["to"], [hamlet.id])
+
+    def test_guest_direct_message_draft_validates_recipients_before_creating_group(self) -> None:
+        self.set_up_db_for_testing_user_access()
+        guest = self.example_user("polonius")
+        target = self.example_user("othello")
+        draft = {"type": "private", "topic": "", "content": "Unsent"}
+
+        def create_draft_to(*user_ids: int) -> "TestHttpResponse":
+            data = {"drafts": orjson.dumps([{**draft, "to": user_ids}]).decode()}
+            return self.api_post(guest, "/api/v1/drafts", data)
+
+        missing_id = 2**32 + target.id
+        do_deactivate_user(target, acting_user=None)
+        with self.capture_send_event_calls(expected_num_events=0):
+            self.assert_json_error(
+                create_draft_to(target.id, missing_id), f"Invalid user ID {missing_id}"
+            )
+            self.assert_json_error(
+                create_draft_to(target.id),
+                "You do not have permission to access some of the recipients.",
+            )
+        self.assertIsNone(get_direct_message_group([guest.id, target.id]))
+        self.assertFalse(Draft.objects.filter(user_profile=guest).exists())
+
+        everyone = NamedUserGroup.objects.get(
+            name=SystemGroups.EVERYONE, realm_for_sharding=guest.realm
+        )
+        do_change_realm_permission_group_setting(
+            guest.realm, "can_access_all_users_group", everyone, acting_user=None
+        )
+        self.assert_json_error(
+            create_draft_to(target.id), f"'{target.email}' is no longer using Zulip."
+        )
+        self.assertIsNone(get_direct_message_group([guest.id, target.id]))
+        self.assertFalse(Draft.objects.filter(user_profile=guest).exists())
+
+        with self.capture_send_event_calls(expected_num_events=1):
+            self.assert_json_success(create_draft_to(guest.id, guest.id))
+        self.assertEqual(Draft.objects.get(user_profile=guest).to_dict()["to"], [guest.id])
 
     def test_create_draft_with_null_bytes(self) -> None:
         draft_dicts = [

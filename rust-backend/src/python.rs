@@ -7,6 +7,7 @@ use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::draft_fields::{DraftFields, Recipients};
 use crate::draft_input::{self, DraftInput};
+use crate::draft_recipients::{DirectRecipient, DirectRecipientError, validate_direct_recipients};
 use crate::{
     alert_words, bot_storage, direct_message_group, draft_text, draft_timestamp, memcached,
     stream_color, user_status,
@@ -70,6 +71,55 @@ mod _zulip_backend {
     #[pyfunction]
     fn storage_size_difference(entries: Vec<(String, String, u64)>) -> i128 {
         bot_storage::storage_size_difference(&entries)
+    }
+
+    #[pyfunction]
+    fn validate_draft_direct_recipients(
+        cursor: &Bound<'_, PyAny>,
+        user_id: i32,
+        realm_id: i32,
+        email: &str,
+        is_guest: bool,
+        ids: Vec<i64>,
+        cross_realm_bot_emails: HashSet<String>,
+    ) -> PyResult<Option<(&'static str, String)>> {
+        cursor.call_method1(
+            "execute",
+            (
+                crate::draft_recipients::DIRECT_RECIPIENTS_SQL,
+                (user_id, realm_id, is_guest, &ids),
+            ),
+        )?;
+        type RecipientRow = (i32, i32, String, String, bool, bool);
+        let rows: Vec<RecipientRow> = cursor.call_method0("fetchall")?.extract()?;
+        let recipients: Vec<_> = rows
+            .into_iter()
+            .map(
+                |(id, realm_id, delivery_email, email, deactivated, accessible)| DirectRecipient {
+                    id,
+                    realm_id,
+                    delivery_email,
+                    email,
+                    deactivated,
+                    accessible,
+                },
+            )
+            .collect();
+        Ok(validate_direct_recipients(
+            user_id,
+            realm_id,
+            email,
+            &ids,
+            &cross_realm_bot_emails,
+            &recipients,
+        )
+        .err()
+        .map(|error| match error {
+            DirectRecipientError::InvalidId(id) => ("invalid_id", id.to_string()),
+            DirectRecipientError::Inaccessible => ("inaccessible", String::new()),
+            DirectRecipientError::Deactivated(email) => ("deactivated", email.to_owned()),
+            DirectRecipientError::CrossRealm => ("cross_realm", String::new()),
+        }))
     }
 
     #[pyfunction]

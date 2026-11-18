@@ -28,6 +28,10 @@ from zerver.lib.timestamp import timestamp_to_datetime
 from zerver.lib.typed_endpoint import RequiredStringConstraint
 from zerver.models import Draft, UserProfile
 from zerver.models.constants import MAX_TOPIC_NAME_LENGTH
+from zerver.models.recipients import (
+    get_or_create_direct_message_group,
+    get_or_create_direct_message_group_recipient_in_rust,
+)
 from zerver.tornado.django_api import send_event_on_commit
 
 ParamT = ParamSpec("ParamT")
@@ -45,6 +49,11 @@ _rust_draft_input = (
 _rust_draft_channel_access = (
     import_module("_zulip_backend")
     if os.environ.get("ZULIP_RUST_DRAFT_CHANNEL_ACCESS") == "1"
+    else None
+)
+_rust_draft_direct_access = (
+    import_module("_zulip_backend")
+    if os.environ.get("ZULIP_RUST_DRAFT_DIRECT_ACCESS") == "1"
     else None
 )
 _rust_draft_creation = (
@@ -179,6 +188,50 @@ def get_draft_channel_recipient_id(user_profile: UserProfile, channel_id: int) -
     return recipient_id
 
 
+def get_draft_direct_recipient_id(user_profile: UserProfile, to: list[int]) -> int | None:
+    user_ids = set(to)
+    if _rust_draft_direct_access is None or any(
+        not (-(2**63) <= user_id < 2**63) for user_id in user_ids
+    ):
+        to_users = get_user_profiles_by_ids(user_ids, user_profile.realm)
+        check_sender_can_access_recipients(user_profile, to_users)
+        try:
+            return recipient_for_user_profiles(
+                to_users, None, user_profile, use_rust_for_group_creation=_rust_draft_groups
+            ).id
+        except ValidationError as e:  # nocoverage
+            raise JsonableError(e.messages[0])
+
+    with connection.cursor() as cursor:
+        error = cast(
+            tuple[Literal["invalid_id", "inaccessible", "deactivated", "cross_realm"], str] | None,
+            _rust_draft_direct_access.validate_draft_direct_recipients(
+                cursor,
+                user_profile.id,
+                user_profile.realm_id,
+                user_profile.email,
+                user_profile.is_guest,
+                list(user_ids),
+                settings.CROSS_REALM_BOT_EMAILS,
+            ),
+        )
+    if error is not None:
+        kind, value = error
+        if kind == "invalid_id":
+            raise JsonableError(_("Invalid user ID {user_id}").format(user_id=value))
+        if kind == "inaccessible":
+            raise JsonableError(_("You do not have permission to access some of the recipients."))
+        if kind == "deactivated":
+            raise JsonableError(_("'{email}' is no longer using Zulip.").format(email=value))
+        raise JsonableError(_("You can't send direct messages outside of your organization."))
+
+    # Create subscriptions only after validating access to the existing users.
+    user_ids.add(user_profile.id)
+    if _rust_draft_groups:
+        return get_or_create_direct_message_group_recipient_in_rust(list(user_ids)).id
+    return get_or_create_direct_message_group(list(user_ids)).recipient_id
+
+
 def further_validated_draft_dict(
     draft_dict: DraftData, user_profile: UserProfile
 ) -> ValidatedDraftData:
@@ -204,18 +257,7 @@ def further_validated_draft_dict(
             raise JsonableError(_("Must specify exactly 1 channel ID for channel messages"))
         recipient_id = get_draft_channel_recipient_id(user_profile, to[0])
     elif draft_dict.type == "private" and len(to) != 0:
-        to_users = get_user_profiles_by_ids(set(to), user_profile.realm)
-        # Since recipient_for_user_profiles creates the
-        # DirectMessageGroup object, and thus Subscription objects
-        # granting the sender access to the recipients, we need to
-        # check access before calling it.
-        check_sender_can_access_recipients(user_profile, to_users)
-        try:
-            recipient_id = recipient_for_user_profiles(
-                to_users, None, user_profile, use_rust_for_group_creation=_rust_draft_groups
-            ).id
-        except ValidationError as e:  # nocoverage
-            raise JsonableError(e.messages[0])
+        recipient_id = get_draft_direct_recipient_id(user_profile, to)
 
     return ValidatedDraftData(
         recipient_id=recipient_id,

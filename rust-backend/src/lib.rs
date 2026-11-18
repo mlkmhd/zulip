@@ -12,6 +12,9 @@ mod draft_fields;
 #[cfg(feature = "python")]
 mod draft_input;
 
+#[cfg(feature = "python")]
+mod draft_recipients;
+
 #[cfg(feature = "http")]
 pub mod http;
 
