@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from importlib import import_module
-from typing import Annotated, Concatenate, Literal, TypedDict, cast
+from typing import Annotated, Concatenate, Literal, Never, TypedDict, cast
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -13,6 +13,7 @@ from django.db import DatabaseError, connection, transaction
 from django.http import HttpRequest, HttpResponse
 from django.utils.translation import gettext as _
 from pydantic import BaseModel, ConfigDict, Json, ValidatorFunctionWrapHandler, WrapValidator
+from pydantic import ValidationError as PydanticValidationError
 from typing_extensions import ParamSpec
 
 from zerver.lib.addressee import get_user_profiles_by_ids
@@ -145,12 +146,33 @@ class RustDraftInput(TypedDict):
     timestamp: int | float | None
 
 
+RustDraftInputError = tuple[str, list[str | int]]
+
+
+def raise_draft_input_error(error: RustDraftInputError) -> Never:
+    kind, path = error
+    context: dict[str, object] = {}
+    if kind == "model_type":
+        context["class_name"] = "DraftData"
+    elif kind == "literal_error":
+        context["expected"] = "'private', 'stream' or ''"
+    elif kind == "string_too_short":
+        context["min_length"] = 1
+    raise PydanticValidationError.from_exception_data(
+        "DraftData", [{"type": kind, "loc": tuple(path), "input": None, "ctx": context}]
+    )
+
+
 def parse_draft_input(value: object, handler: ValidatorFunctionWrapHandler) -> DraftData:
     if _rust_draft_input is not None and isinstance(value, str):
-        draft = cast(RustDraftInput | None, _rust_draft_input.parse_draft(value))
+        draft, error = cast(
+            tuple[RustDraftInput | None, RustDraftInputError | None],
+            _rust_draft_input.parse_draft(value),
+        )
+        if error is not None:
+            raise_draft_input_error(error)
         if draft is not None:
             return DraftData.model_construct(**draft)
-    # Pydantic still supplies the first validation error and its field path.
     return cast(DraftData, handler(value))
 
 
@@ -158,7 +180,12 @@ def parse_draft_batch_input(
     value: object, handler: ValidatorFunctionWrapHandler
 ) -> list[DraftData]:
     if _rust_draft_input is not None and isinstance(value, str):
-        drafts = cast(list[RustDraftInput] | None, _rust_draft_input.parse_draft_batch(value))
+        drafts, error = cast(
+            tuple[list[RustDraftInput] | None, RustDraftInputError | None],
+            _rust_draft_input.parse_draft_batch(value),
+        )
+        if error is not None:
+            raise_draft_input_error(error)
         if drafts is not None:
             return [DraftData.model_construct(**draft) for draft in drafts]
     return cast(list[DraftData], handler(value))

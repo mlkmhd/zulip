@@ -6,25 +6,42 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::draft_fields::{DraftFields, Recipients};
-use crate::draft_input::{self, DraftInput};
+use crate::draft_input::{self, DraftInput, Location, ParseError};
 use crate::draft_recipients::{DirectRecipient, DirectRecipientError, validate_direct_recipients};
 use crate::{
     alert_words, bot_storage, direct_message_group, draft_text, draft_timestamp, memcached,
     stream_color, user_status,
 };
 
+type DraftParseResult<T> = (Option<T>, Option<(&'static str, Vec<Location>)>);
+
+fn draft_parse_result<T>(
+    value: &Bound<'_, PyString>,
+    parse: impl FnOnce(&str) -> Result<T, ParseError>,
+) -> DraftParseResult<T> {
+    match value
+        .to_str()
+        .map_err(|_| ParseError::Unsupported)
+        .and_then(parse)
+    {
+        Ok(draft) => (Some(draft), None),
+        Err(ParseError::Schema(kind, path)) => (None, Some((kind, path))),
+        Err(ParseError::Unsupported) => (None, None),
+    }
+}
+
 #[pymodule]
 mod _zulip_backend {
     use super::*;
 
     #[pyfunction]
-    fn parse_draft(value: &Bound<'_, PyString>) -> Option<DraftInput> {
-        draft_input::parse_draft(value.to_str().ok()?)
+    fn parse_draft(value: &Bound<'_, PyString>) -> DraftParseResult<DraftInput> {
+        draft_parse_result(value, draft_input::parse_draft)
     }
 
     #[pyfunction]
-    fn parse_draft_batch(value: &Bound<'_, PyString>) -> Option<Vec<DraftInput>> {
-        draft_input::parse_draft_batch(value.to_str().ok()?)
+    fn parse_draft_batch(value: &Bound<'_, PyString>) -> DraftParseResult<Vec<DraftInput>> {
+        draft_parse_result(value, draft_input::parse_draft_batch)
     }
 
     #[pyfunction]

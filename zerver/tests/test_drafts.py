@@ -100,6 +100,43 @@ class DraftCreationTests(ZulipTestCase):
         resp = self.api_post(hamlet, "/api/v1/drafts", payload)
         self.assert_json_error(resp, "User has disabled synchronizing drafts.")
 
+    def test_create_drafts_reports_first_schema_error_with_field_path(self) -> None:
+        owner = self.example_user("hamlet")
+        cases = [
+            ("{}", "drafts is not a list"),
+            (
+                "[null]",
+                "Invalid drafts[0]: Input should be a valid dictionary or instance of DraftData",
+            ),
+            ('[{"content":false}]', 'drafts[0]["type"] field is missing: Field required'),
+            (
+                '[{"content":false,"to":[1,"2"],"topic":"","type":""}]',
+                'drafts[0]["to"][1] is not an integer',
+            ),
+            (
+                '[{"type":"","to":[],"topic":"","content":"  "}]',
+                'drafts[0]["content"] cannot be blank',
+            ),
+            (
+                '[{"type":"","to":[],"topic":"","content":"Draft","timestamp":true}]',
+                'drafts[0]["timestamp"]["int"] is not an integer',
+            ),
+            (
+                '[{"content":false,"اضافی":true}]',
+                'Argument "اضافی" at drafts[0]["\\u0627\\u0636\\u0627\\u0641\\u06cc"] is unexpected',
+            ),
+            (
+                '[{"type":"","to":[],"topic":"","content":"Draft","content":" "}]',
+                'drafts[0]["content"] cannot be blank',
+            ),
+        ]
+        with self.capture_send_event_calls(expected_num_events=0):
+            for body, message in cases:
+                with self.subTest(body=body):
+                    response = self.api_post(owner, "/api/v1/drafts", {"drafts": body})
+                    self.assert_json_error(response, message)
+        self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
+
     def test_create_one_stream_draft_properly(self) -> None:
         hamlet = self.example_user("hamlet")
         visible_stream_name = self.get_streams(hamlet)[0]

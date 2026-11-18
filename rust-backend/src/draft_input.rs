@@ -29,79 +29,153 @@ pub(crate) struct DraftInput {
     timestamp: Option<Timestamp>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Location {
+    Index(usize),
+    Field(String),
+}
+
+impl<'py> IntoPyObject<'py> for Location {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        match self {
+            Self::Index(value) => Ok(value.into_pyobject(py)?.into_any()),
+            Self::Field(value) => Ok(value.into_pyobject(py)?.into_any()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ParseError {
+    Schema(&'static str, Vec<Location>),
+    Unsupported,
+}
+
+impl ParseError {
+    fn at_field(kind: &'static str, field: &str) -> Self {
+        Self::Schema(kind, vec![Location::Field(field.to_owned())])
+    }
+}
+
 impl DraftInput {
-    fn from_json(value: &JsonValue<'_>) -> Option<Self> {
-        let JsonValue::Object(fields) = value else {
-            return None;
+    fn from_json(value: &JsonValue<'_>) -> Result<Self, ParseError> {
+        let JsonValue::Object(pairs) = value else {
+            return Err(ParseError::Schema("model_type", Vec::new()));
         };
-        let mut message_type = None;
-        let mut to = None;
-        let mut topic = None;
-        let mut content = None;
-        let mut timestamp = None;
-        for (key, value) in fields.iter() {
-            match (key.as_ref(), value) {
-                ("type", JsonValue::Str(value)) if message_type.is_none() => {
-                    message_type = Some(match value.as_ref() {
-                        "private" => "private",
-                        "stream" => "stream",
-                        "" => "",
-                        _ => return None,
-                    });
-                }
-                ("to", JsonValue::Array(values)) if to.is_none() => {
-                    to = Some(
-                        values
-                            .iter()
-                            .map(|value| match value {
-                                JsonValue::Int(id) => Some(*id),
-                                _ => None,
-                            })
-                            .collect::<Option<Vec<_>>>()?,
-                    );
-                }
-                ("topic", JsonValue::Str(value)) if topic.is_none() => {
-                    topic = Some(value.to_string());
-                }
-                ("content", JsonValue::Str(value)) if content.is_none() => {
-                    let trimmed = value.trim();
-                    if trimmed.is_empty() {
-                        return None;
-                    }
-                    content = Some(trimmed.to_owned());
-                }
-                ("timestamp", value) if timestamp.is_none() => {
-                    timestamp = Some(match value {
-                        JsonValue::Null => None,
-                        JsonValue::Int(value) => Some(Timestamp::Integer(*value)),
-                        JsonValue::Float(value) if value.is_finite() => {
-                            Some(Timestamp::Float(*value))
-                        }
-                        _ => return None,
-                    });
-                }
-                _ => return None,
+        let mut fields = std::collections::HashMap::with_capacity(pairs.len());
+        for (key, value) in pairs.iter() {
+            if fields.insert(key.as_ref(), value).is_some() {
+                return Err(ParseError::Unsupported);
             }
         }
-        Some(Self {
-            r#type: message_type?,
-            to: to?,
-            topic: topic?,
-            content: content?,
-            timestamp: timestamp.flatten(),
+        if let Some((field, _)) = pairs.iter().find(|(field, _)| {
+            !matches!(
+                field.as_ref(),
+                "type" | "to" | "topic" | "content" | "timestamp"
+            )
+        }) {
+            return Err(ParseError::at_field("extra_forbidden", field));
+        }
+        let required_field = |field| {
+            fields
+                .get(field)
+                .ok_or_else(|| ParseError::at_field("missing", field))
+        };
+
+        // Match the declaration order of DraftData, regardless of JSON key order.
+        let message_type = match required_field("type")? {
+            JsonValue::Str(value) => match value.as_ref() {
+                "private" => "private",
+                "stream" => "stream",
+                "" => "",
+                _ => return Err(ParseError::at_field("literal_error", "type")),
+            },
+            _ => return Err(ParseError::at_field("literal_error", "type")),
+        };
+
+        let JsonValue::Array(recipients) = required_field("to")? else {
+            return Err(ParseError::at_field("list_type", "to"));
+        };
+        let mut to = Vec::with_capacity(recipients.len());
+        for (index, value) in recipients.iter().enumerate() {
+            match value {
+                JsonValue::Int(id) => to.push(*id),
+                JsonValue::BigInt(_) => return Err(ParseError::Unsupported),
+                _ => {
+                    return Err(ParseError::Schema(
+                        "int_type",
+                        vec![Location::Field("to".into()), Location::Index(index)],
+                    ));
+                }
+            }
+        }
+
+        let JsonValue::Str(topic) = required_field("topic")? else {
+            return Err(ParseError::at_field("string_type", "topic"));
+        };
+        let JsonValue::Str(content) = required_field("content")? else {
+            return Err(ParseError::at_field("string_type", "content"));
+        };
+        let content = content.trim();
+        if content.is_empty() {
+            return Err(ParseError::at_field("string_too_short", "content"));
+        }
+
+        let timestamp = match fields.get("timestamp") {
+            None | Some(JsonValue::Null) => None,
+            Some(JsonValue::Int(value)) => Some(Timestamp::Integer(*value)),
+            Some(JsonValue::Float(value)) if value.is_finite() => Some(Timestamp::Float(*value)),
+            Some(JsonValue::BigInt(_) | JsonValue::Float(_)) => {
+                return Err(ParseError::Unsupported);
+            }
+            _ => {
+                return Err(ParseError::Schema(
+                    "int_type",
+                    vec![
+                        Location::Field("timestamp".into()),
+                        Location::Field("int".into()),
+                    ],
+                ));
+            }
+        };
+        Ok(Self {
+            r#type: message_type,
+            to,
+            topic: topic.to_string(),
+            content: content.into(),
+            timestamp,
         })
     }
 }
 
-pub(crate) fn parse_draft(value: &str) -> Option<DraftInput> {
-    DraftInput::from_json(&JsonValue::parse(value.as_bytes(), false).ok()?)
+pub(crate) fn parse_draft(value: &str) -> Result<DraftInput, ParseError> {
+    DraftInput::from_json(
+        &JsonValue::parse(value.as_bytes(), false).map_err(|_| ParseError::Unsupported)?,
+    )
 }
 
-pub(crate) fn parse_draft_batch(value: &str) -> Option<Vec<DraftInput>> {
-    let JsonValue::Array(drafts) = JsonValue::parse(value.as_bytes(), false).ok()? else {
-        return None;
+pub(crate) fn parse_draft_batch(value: &str) -> Result<Vec<DraftInput>, ParseError> {
+    let JsonValue::Array(drafts) =
+        JsonValue::parse(value.as_bytes(), false).map_err(|_| ParseError::Unsupported)?
+    else {
+        return Err(ParseError::Schema("list_type", Vec::new()));
     };
-    drafts.iter().map(DraftInput::from_json).collect()
+    drafts
+        .iter()
+        .enumerate()
+        .map(|(index, draft)| {
+            DraftInput::from_json(draft).map_err(|error| match error {
+                ParseError::Schema(kind, mut location) => {
+                    location.insert(0, Location::Index(index));
+                    ParseError::Schema(kind, location)
+                }
+                ParseError::Unsupported => error,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -130,25 +204,48 @@ mod tests {
         );
         assert_eq!(drafts[1].timestamp, Some(Timestamp::Float(42.0)));
         assert_eq!(drafts[2].timestamp, None);
-        assert_eq!(parse_draft_batch("[]"), Some(Vec::new()));
+        assert_eq!(parse_draft_batch("[]"), Ok(Vec::new()));
     }
 
     #[test]
-    fn delegates_invalid_or_ambiguous_batches_to_pydantic() {
-        let valid = r#"{"type":"","to":[],"topic":"","content":"Unsent"}"#;
+    fn reports_the_first_schema_error_in_declaration_order() {
+        let input = r#"[{"type":"","to":[],"topic":"","content":"Unsent"},
+                        {"content":false,"topic":"","type":"","to":[3,"2"]}]"#;
+        assert_eq!(
+            parse_draft_batch(input),
+            Err(ParseError::Schema(
+                "int_type",
+                vec![
+                    Location::Index(1),
+                    Location::Field("to".into()),
+                    Location::Index(1),
+                ]
+            ))
+        );
+        assert_eq!(
+            parse_draft("null"),
+            Err(ParseError::Schema("model_type", Vec::new()))
+        );
+        assert_eq!(
+            parse_draft(r#"{"content":false,"extra":true}"#),
+            Err(ParseError::at_field("extra_forbidden", "extra"))
+        );
+    }
+
+    #[test]
+    fn delegates_ambiguous_or_unsupported_values_to_pydantic() {
         for unsupported in [
-            r#"{"type":"","to":["2"],"topic":"","content":"Unsent"}"#,
-            r#"{"type":"","to":[true],"topic":"","content":"Unsent"}"#,
-            r#"{"type":"","to":[],"topic":"","content":"  "}"#,
-            r#"{"type":"","to":[],"content":"Unsent"}"#,
-            r#"{"type":"","to":[],"topic":"","content":"Unsent","extra":true}"#,
             r#"{"type":"","to":[],"topic":"","content":"Unsent","timestamp":null,"timestamp":1}"#,
             r#"{"type":"","to":[],"topic":"","content":"Unsent","timestamp":1e999}"#,
             r#"{"type":"","to":[],"topic":"","content":"Unsent","timestamp":9223372036854775808}"#,
-            "null",
+            r#"{"type":"","to":[9223372036854775808],"topic":"","content":"Unsent"}"#,
+            "",
         ] {
-            assert!(parse_draft(unsupported).is_none(), "{unsupported}");
-            assert!(parse_draft_batch(&format!("[{valid},{unsupported}]")).is_none());
+            assert_eq!(
+                parse_draft(unsupported),
+                Err(ParseError::Unsupported),
+                "{unsupported}"
+            );
         }
     }
 }
