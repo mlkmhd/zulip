@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::{io, net::SocketAddr};
 
+use jiter::NumberInt;
 use pyo3::exceptions::{PyConnectionError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::draft_fields::{DraftFields, Recipients};
-use crate::draft_input::{self, DraftInput, Location, ParseError};
+use crate::draft_input::{self, DraftInput, Location, ParseError, Timestamp};
 use crate::draft_recipients::{DirectRecipient, DirectRecipientError, validate_direct_recipients};
 use crate::{
     alert_words, bot_storage, direct_message_group, draft_text, draft_timestamp, memcached,
@@ -14,6 +15,66 @@ use crate::{
 };
 
 type DraftParseResult<T> = (Option<T>, Option<(&'static str, Vec<Location>)>);
+
+struct PythonDraftInteger(NumberInt);
+
+impl<'py> IntoPyObject<'py> for PythonDraftInteger {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        match self.0 {
+            NumberInt::Int(value) => Ok(value.into_pyobject(py)?.into_any()),
+            NumberInt::BigInt(value) => Ok(value.into_pyobject(py)?.into_any()),
+        }
+    }
+}
+
+impl<'py> IntoPyObject<'py> for Timestamp {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        match self {
+            Self::Integer(value) => PythonDraftInteger(value).into_pyobject(py),
+            Self::Float(value) => Ok(value.into_pyobject(py)?.into_any()),
+        }
+    }
+}
+
+impl<'py> IntoPyObject<'py> for DraftInput {
+    type Target = PyDict;
+    type Output = Bound<'py, PyDict>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        let draft = PyDict::new(py);
+        draft.set_item("type", self.r#type)?;
+        draft.set_item(
+            "to",
+            PyList::new(py, self.to.into_iter().map(PythonDraftInteger))?,
+        )?;
+        draft.set_item("topic", self.topic)?;
+        draft.set_item("content", self.content)?;
+        draft.set_item("timestamp", self.timestamp)?;
+        Ok(draft)
+    }
+}
+
+impl<'py> IntoPyObject<'py> for Location {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        match self {
+            Self::Index(value) => Ok(value.into_pyobject(py)?.into_any()),
+            Self::Field(value) => Ok(value.into_pyobject(py)?.into_any()),
+        }
+    }
+}
 
 fn draft_parse_result<T>(
     value: &Bound<'_, PyString>,

@@ -1,67 +1,24 @@
 use jiter::{JsonValue, NumberInt};
-use pyo3::prelude::*;
 
 #[derive(Debug, PartialEq)]
-struct DraftInteger(NumberInt);
-
-impl<'py> IntoPyObject<'py> for DraftInteger {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-        match self.0 {
-            NumberInt::Int(value) => Ok(value.into_pyobject(py)?.into_any()),
-            NumberInt::BigInt(value) => Ok(value.into_pyobject(py)?.into_any()),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-enum Timestamp {
-    Integer(DraftInteger),
+pub(crate) enum Timestamp {
+    Integer(NumberInt),
     Float(f64),
 }
 
-impl<'py> IntoPyObject<'py> for Timestamp {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-        match self {
-            Self::Integer(value) => value.into_pyobject(py),
-            Self::Float(value) => Ok(value.into_pyobject(py)?.into_any()),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, pyo3::IntoPyObject)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct DraftInput {
-    r#type: &'static str,
-    to: Vec<DraftInteger>,
-    topic: String,
-    content: String,
-    timestamp: Option<Timestamp>,
+    pub r#type: &'static str,
+    pub to: Vec<NumberInt>,
+    pub topic: String,
+    pub content: String,
+    pub timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Location {
     Index(usize),
     Field(String),
-}
-
-impl<'py> IntoPyObject<'py> for Location {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
-        match self {
-            Self::Index(value) => Ok(value.into_pyobject(py)?.into_any()),
-            Self::Field(value) => Ok(value.into_pyobject(py)?.into_any()),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -117,8 +74,8 @@ impl DraftInput {
         let mut to = Vec::with_capacity(recipients.len());
         for (index, value) in recipients.iter().enumerate() {
             match value {
-                JsonValue::Int(id) => to.push(DraftInteger(NumberInt::Int(*id))),
-                JsonValue::BigInt(id) => to.push(DraftInteger(NumberInt::BigInt(id.clone()))),
+                JsonValue::Int(id) => to.push(NumberInt::Int(*id)),
+                JsonValue::BigInt(id) => to.push(NumberInt::BigInt(id.clone())),
                 _ => {
                     return Err(ParseError::Schema(
                         "int_type",
@@ -141,12 +98,10 @@ impl DraftInput {
 
         let timestamp = match fields.get("timestamp") {
             None | Some(JsonValue::Null) => None,
-            Some(JsonValue::Int(value)) => {
-                Some(Timestamp::Integer(DraftInteger(NumberInt::Int(*value))))
+            Some(JsonValue::Int(value)) => Some(Timestamp::Integer(NumberInt::Int(*value))),
+            Some(JsonValue::BigInt(value)) => {
+                Some(Timestamp::Integer(NumberInt::BigInt(value.clone())))
             }
-            Some(JsonValue::BigInt(value)) => Some(Timestamp::Integer(DraftInteger(
-                NumberInt::BigInt(value.clone()),
-            ))),
             Some(JsonValue::Float(value)) => Some(Timestamp::Float(*value)),
             _ => {
                 return Err(ParseError::Schema(
@@ -223,14 +178,10 @@ mod tests {
             drafts[0],
             DraftInput {
                 r#type: "private",
-                to: [3, 2, 3]
-                    .into_iter()
-                    .map(NumberInt::Int)
-                    .map(DraftInteger)
-                    .collect(),
+                to: [3, 2, 3].into_iter().map(NumberInt::Int).collect(),
                 topic: " old ".into(),
                 content: "Unsent".into(),
-                timestamp: Some(Timestamp::Integer(DraftInteger(NumberInt::Int(42)))),
+                timestamp: Some(Timestamp::Integer(NumberInt::Int(42))),
             }
         );
         assert_eq!(drafts[1].timestamp, Some(Timestamp::Float(42.0)));
@@ -273,11 +224,11 @@ mod tests {
         assert_eq!(draft.content, "Unsent");
         assert!(matches!(
             draft.to.as_slice(),
-            [DraftInteger(NumberInt::BigInt(value))] if value.to_string() == "9223372036854775808"
+            [NumberInt::BigInt(value)] if value.to_string() == "9223372036854775808"
         ));
         assert!(matches!(
             draft.timestamp,
-            Some(Timestamp::Integer(DraftInteger(NumberInt::BigInt(value))))
+            Some(Timestamp::Integer(NumberInt::BigInt(value)))
                 if value.to_string() == "9223372036854775809"
         ));
         assert_eq!(parse_draft(""), Err(ParseError::Unsupported));
