@@ -23,7 +23,7 @@ use super::{
     alert_word_cache, alert_words, attachments, bot_storage, channel_folders,
     custom_profile_fields,
     database::Database,
-    draft_creation, drafts,
+    draft_writes, drafts,
     form::{Form, FormError},
     linkifiers,
     locale::Locales,
@@ -642,7 +642,7 @@ enum ApiError {
     DraftSyncDisabled,
     DraftNotFound,
     DraftSchema(drafts::SchemaError),
-    DraftCreation(draft_creation::CreateError),
+    DraftCreation(draft_writes::CreateError),
     ScheduledJobNotFound(JobKind),
     RateLimited(f64),
 }
@@ -1119,9 +1119,9 @@ async fn respond(
                     .ok_or(ApiError::NotificationUnavailable)?;
                 let (ids, fields) = {
                     let mut writer = state.database.writer().await.map_err(ApiError::database_unavailable)?;
-                    draft_creation::create(&mut writer, user_id, realm_id, input, config.max_message_length,
+                    draft_writes::create(&mut writer, user_id, realm_id, input, config.max_message_length,
                         &config.cross_realm_bot_emails).await.map_err(|error| match error {
-                            draft_creation::CreateError::Database(error) => ApiError::from(error),
+                            draft_writes::CreateError::Database(error) => ApiError::from(error),
                             other => ApiError::DraftCreation(other),
                         })?
                 };

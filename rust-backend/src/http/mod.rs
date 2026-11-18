@@ -18,7 +18,7 @@ mod compatibility;
 mod csrf;
 mod custom_profile_fields;
 mod database;
-mod draft_creation;
+mod draft_writes;
 mod drafts;
 mod form;
 mod linkifiers;
