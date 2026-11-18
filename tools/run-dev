@@ -87,6 +87,11 @@ parser.add_argument(
     help="Forward draft GET and HEAD requests to the Rust HTTP server",
 )
 parser.add_argument(
+    "--rust-draft-posts",
+    action="store_true",
+    help="Forward draft POST requests to the Rust HTTP server",
+)
+parser.add_argument(
     "--rust-draft-deletes",
     action="store_true",
     help="Forward draft DELETE requests to the Rust HTTP server",
@@ -306,6 +311,8 @@ if options.rust_alert_word_posts and options.rust_http_port is None:
     parser.error("--rust-alert-word-posts requires --rust-http-port")
 if options.rust_draft_reads and options.rust_http_port is None:
     parser.error("--rust-draft-reads requires --rust-http-port")
+if options.rust_draft_posts and options.rust_http_port is None:
+    parser.error("--rust-draft-posts requires --rust-http-port")
 if options.rust_draft_deletes and options.rust_http_port is None:
     parser.error("--rust-draft-deletes requires --rust-http-port")
 if options.rust_attachment_reads and options.rust_http_port is None:
@@ -657,9 +664,12 @@ build step and rerun `run-dev`.""")
                 alert_word_methods.add(hdrs.METH_POST)
             rust_routes["/api/v1/users/me/alert_words"] = alert_word_methods
             rust_routes["/json/users/me/alert_words"] = alert_word_methods
-        if options.rust_draft_reads:
-            rust_routes["/api/v1/drafts"] = read_methods
-            rust_routes["/json/drafts"] = read_methods
+        if options.rust_draft_reads or options.rust_draft_posts:
+            draft_methods = read_methods.copy() if options.rust_draft_reads else set()
+            if options.rust_draft_posts:
+                draft_methods.add(hdrs.METH_POST)
+            rust_routes["/api/v1/drafts"] = draft_methods
+            rust_routes["/json/drafts"] = draft_methods
         if options.rust_draft_deletes:
             rust_routes["/api/v1/drafts/{draft_id:[0-9]+}"] = {hdrs.METH_DELETE}
             rust_routes["/json/drafts/{draft_id:[0-9]+}"] = {hdrs.METH_DELETE}
