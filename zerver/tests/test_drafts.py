@@ -137,6 +137,26 @@ class DraftCreationTests(ZulipTestCase):
                     self.assert_json_error(response, message)
         self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
 
+    def test_create_drafts_uses_last_duplicate_field_and_preserves_large_ids(self) -> None:
+        owner = self.example_user("hamlet")
+        large_id = 2**80 + owner.id
+        body = (
+            '{"type":"private","to":[],"topic":"","content":false,'
+            f'"content":"Unsent","to":[{large_id}]}}'
+        )
+        with self.capture_send_event_calls(expected_num_events=0):
+            response = self.api_post(owner, "/api/v1/drafts", {"drafts": f"[{body}]"})
+            self.assert_json_error(response, f"Invalid user ID {large_id}")
+        self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
+
+        body = body.replace(str(large_id), str(owner.id))
+        with self.capture_send_event_calls(expected_num_events=1):
+            response = self.api_post(owner, "/api/v1/drafts", {"drafts": f"[{body}]"})
+            self.assert_json_success(response)
+        draft = Draft.objects.get(user_profile=owner)
+        self.assertEqual(draft.content, "Unsent")
+        self.assertEqual(draft.to_dict()["to"], [owner.id])
+
     def test_create_one_stream_draft_properly(self) -> None:
         hamlet = self.example_user("hamlet")
         visible_stream_name = self.get_streams(hamlet)[0]

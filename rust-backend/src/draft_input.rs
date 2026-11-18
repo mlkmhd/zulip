@@ -1,9 +1,25 @@
-use jiter::JsonValue;
+use jiter::{JsonValue, NumberInt};
 use pyo3::prelude::*;
 
 #[derive(Debug, PartialEq)]
+struct DraftInteger(NumberInt);
+
+impl<'py> IntoPyObject<'py> for DraftInteger {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
+        match self.0 {
+            NumberInt::Int(value) => Ok(value.into_pyobject(py)?.into_any()),
+            NumberInt::BigInt(value) => Ok(value.into_pyobject(py)?.into_any()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 enum Timestamp {
-    Integer(i64),
+    Integer(DraftInteger),
     Float(f64),
 }
 
@@ -14,7 +30,7 @@ impl<'py> IntoPyObject<'py> for Timestamp {
 
     fn into_pyobject(self, py: Python<'py>) -> PyResult<Self::Output> {
         match self {
-            Self::Integer(value) => Ok(value.into_pyobject(py)?.into_any()),
+            Self::Integer(value) => value.into_pyobject(py),
             Self::Float(value) => Ok(value.into_pyobject(py)?.into_any()),
         }
     }
@@ -23,7 +39,7 @@ impl<'py> IntoPyObject<'py> for Timestamp {
 #[derive(Debug, PartialEq, pyo3::IntoPyObject)]
 pub(crate) struct DraftInput {
     r#type: &'static str,
-    to: Vec<i64>,
+    to: Vec<DraftInteger>,
     topic: String,
     content: String,
     timestamp: Option<Timestamp>,
@@ -65,12 +81,11 @@ impl DraftInput {
         let JsonValue::Object(pairs) = value else {
             return Err(ParseError::Schema("model_type", Vec::new()));
         };
-        let mut fields = std::collections::HashMap::with_capacity(pairs.len());
-        for (key, value) in pairs.iter() {
-            if fields.insert(key.as_ref(), value).is_some() {
-                return Err(ParseError::Unsupported);
-            }
-        }
+        // Pydantic uses the last value for a repeated declared field.
+        let fields: std::collections::HashMap<_, _> = pairs
+            .iter()
+            .map(|(key, value)| (key.as_ref(), value))
+            .collect();
         if let Some((field, _)) = pairs.iter().find(|(field, _)| {
             !matches!(
                 field.as_ref(),
@@ -102,8 +117,8 @@ impl DraftInput {
         let mut to = Vec::with_capacity(recipients.len());
         for (index, value) in recipients.iter().enumerate() {
             match value {
-                JsonValue::Int(id) => to.push(*id),
-                JsonValue::BigInt(_) => return Err(ParseError::Unsupported),
+                JsonValue::Int(id) => to.push(DraftInteger(NumberInt::Int(*id))),
+                JsonValue::BigInt(id) => to.push(DraftInteger(NumberInt::BigInt(id.clone()))),
                 _ => {
                     return Err(ParseError::Schema(
                         "int_type",
@@ -126,11 +141,13 @@ impl DraftInput {
 
         let timestamp = match fields.get("timestamp") {
             None | Some(JsonValue::Null) => None,
-            Some(JsonValue::Int(value)) => Some(Timestamp::Integer(*value)),
-            Some(JsonValue::Float(value)) if value.is_finite() => Some(Timestamp::Float(*value)),
-            Some(JsonValue::BigInt(_) | JsonValue::Float(_)) => {
-                return Err(ParseError::Unsupported);
+            Some(JsonValue::Int(value)) => {
+                Some(Timestamp::Integer(DraftInteger(NumberInt::Int(*value))))
             }
+            Some(JsonValue::BigInt(value)) => Some(Timestamp::Integer(DraftInteger(
+                NumberInt::BigInt(value.clone()),
+            ))),
+            Some(JsonValue::Float(value)) => Some(Timestamp::Float(*value)),
             _ => {
                 return Err(ParseError::Schema(
                     "int_type",
@@ -151,16 +168,26 @@ impl DraftInput {
     }
 }
 
+fn parse_json(value: &str) -> Result<JsonValue<'_>, ParseError> {
+    let bytes = value.as_bytes();
+    // jiter and Pydantic can differ on whether the sign counts toward
+    // the JSON integer length limit. Keep Pydantic's error near the limit.
+    if bytes.len() >= 4_300
+        && bytes
+            .split(|byte| !byte.is_ascii_digit())
+            .any(|digits| digits.len() >= 4_300)
+    {
+        return Err(ParseError::Unsupported);
+    }
+    JsonValue::parse(bytes, true).map_err(|_| ParseError::Unsupported)
+}
+
 pub(crate) fn parse_draft(value: &str) -> Result<DraftInput, ParseError> {
-    DraftInput::from_json(
-        &JsonValue::parse(value.as_bytes(), false).map_err(|_| ParseError::Unsupported)?,
-    )
+    DraftInput::from_json(&parse_json(value)?)
 }
 
 pub(crate) fn parse_draft_batch(value: &str) -> Result<Vec<DraftInput>, ParseError> {
-    let JsonValue::Array(drafts) =
-        JsonValue::parse(value.as_bytes(), false).map_err(|_| ParseError::Unsupported)?
-    else {
+    let JsonValue::Array(drafts) = parse_json(value)? else {
         return Err(ParseError::Schema("list_type", Vec::new()));
     };
     drafts
@@ -196,10 +223,14 @@ mod tests {
             drafts[0],
             DraftInput {
                 r#type: "private",
-                to: vec![3, 2, 3],
+                to: [3, 2, 3]
+                    .into_iter()
+                    .map(NumberInt::Int)
+                    .map(DraftInteger)
+                    .collect(),
                 topic: " old ".into(),
                 content: "Unsent".into(),
-                timestamp: Some(Timestamp::Integer(42)),
+                timestamp: Some(Timestamp::Integer(DraftInteger(NumberInt::Int(42)))),
             }
         );
         assert_eq!(drafts[1].timestamp, Some(Timestamp::Float(42.0)));
@@ -233,19 +264,29 @@ mod tests {
     }
 
     #[test]
-    fn delegates_ambiguous_or_unsupported_values_to_pydantic() {
-        for unsupported in [
-            r#"{"type":"","to":[],"topic":"","content":"Unsent","timestamp":null,"timestamp":1}"#,
-            r#"{"type":"","to":[],"topic":"","content":"Unsent","timestamp":1e999}"#,
-            r#"{"type":"","to":[],"topic":"","content":"Unsent","timestamp":9223372036854775808}"#,
-            r#"{"type":"","to":[9223372036854775808],"topic":"","content":"Unsent"}"#,
-            "",
-        ] {
-            assert_eq!(
-                parse_draft(unsupported),
-                Err(ParseError::Unsupported),
-                "{unsupported}"
-            );
-        }
+    fn preserves_large_integers_and_uses_the_last_duplicate() {
+        let draft = parse_draft(
+            r#"{"type":"","to":[9223372036854775808],"topic":"","content":false,
+                "timestamp":null,"timestamp":9223372036854775809,"content":"Unsent"}"#,
+        )
+        .unwrap();
+        assert_eq!(draft.content, "Unsent");
+        assert!(matches!(
+            draft.to.as_slice(),
+            [DraftInteger(NumberInt::BigInt(value))] if value.to_string() == "9223372036854775808"
+        ));
+        assert!(matches!(
+            draft.timestamp,
+            Some(Timestamp::Integer(DraftInteger(NumberInt::BigInt(value))))
+                if value.to_string() == "9223372036854775809"
+        ));
+        assert_eq!(parse_draft(""), Err(ParseError::Unsupported));
+        assert_eq!(
+            parse_draft(&format!(
+                r#"{{"type":"","to":[-{}],"topic":"","content":"Unsent"}}"#,
+                "9".repeat(4_300)
+            )),
+            Err(ParseError::Unsupported)
+        );
     }
 }
