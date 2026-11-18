@@ -35,6 +35,7 @@ def rust_http_service(
     env.pop("ZULIP_RUST_ALERT_WORD_LOWERCASE_FILE", None)
     env.pop("ZULIP_RUST_ALERT_WORD_POSTS", None)
     env.pop("ZULIP_RUST_DRAFT_DELETES", None)
+    env.pop("ZULIP_RUST_DRAFT_POSTS", None)
     env.pop("ZULIP_RUST_REMINDER_DELETES", None)
     env.pop("ZULIP_RUST_SCHEDULED_MESSAGE_DELETES", None)
     env.pop("ZULIP_RUST_BOT_STORAGE_DELETES", None)

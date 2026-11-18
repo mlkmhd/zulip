@@ -1,3 +1,21 @@
+#[cfg(any(feature = "python", feature = "http"))]
+pub(crate) const INSERT_DRAFTS_SQL: &str = "
+WITH drafts AS MATERIALIZED (
+    SELECT nextval(pg_get_serial_sequence('zulip.zerver_draft', 'id')) AS id,
+           recipient_id, topic, content, last_edit_time, position
+    FROM unnest(%s::integer[], %s::text[], %s::text[], %s::timestamptz[])
+         WITH ORDINALITY AS input(recipient_id, topic, content, last_edit_time, position)
+    ORDER BY position
+), inserted AS (
+    INSERT INTO zulip.zerver_draft
+        (id, user_profile_id, recipient_id, topic, content, last_edit_time)
+    SELECT id, %s, recipient_id, topic, content, last_edit_time FROM drafts
+    RETURNING id
+)
+SELECT inserted.id FROM inserted JOIN drafts USING (id)
+ORDER BY drafts.position
+";
+
 pub(crate) enum Recipients {
     Unset,
     Channel(i32),

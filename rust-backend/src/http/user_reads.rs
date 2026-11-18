@@ -18,12 +18,12 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use tokio_postgres::Client;
 
 use super::{
-    UserReadConfig, WebPostScheme,
+    DraftPostConfig, UserReadConfig, WebPostScheme,
     activity::{ActivityPublisher, client_name},
     alert_word_cache, alert_words, attachments, bot_storage, channel_folders,
     custom_profile_fields,
     database::Database,
-    drafts,
+    draft_creation, drafts,
     form::{Form, FormError},
     linkifiers,
     locale::Locales,
@@ -35,6 +35,8 @@ use super::{
     session::{SessionLookup, Sessions},
     unicode_lowercase::UnicodeLowercase,
 };
+
+use crate::draft_input::{self, ParseError};
 
 pub(super) const ALERT_WORDS_PATH: &str = "/api/v1/users/me/alert_words";
 pub(super) const ALERT_WORDS_SESSION_PATH: &str = "/json/users/me/alert_words";
@@ -62,6 +64,7 @@ enum Endpoint {
 #[derive(Clone, Copy)]
 enum WriteOperation<'a> {
     CreateSnippet,
+    CreateDrafts,
     CreateNavigationView,
     EditNavigationView(&'a str),
     DeleteNavigationView(&'a str),
@@ -79,7 +82,10 @@ impl WriteOperation<'_> {
     fn is_post(self) -> bool {
         matches!(
             self,
-            Self::CreateSnippet | Self::CreateNavigationView | Self::AddAlertWords
+            Self::CreateSnippet
+                | Self::CreateDrafts
+                | Self::CreateNavigationView
+                | Self::AddAlertWords
         )
     }
 }
@@ -281,6 +287,7 @@ pub(super) struct UserReads {
     web_post_scheme: Option<WebPostScheme>,
     saved_snippet_max_content_length: Option<usize>,
     bot_storage_size_limit: Option<u64>,
+    draft_posts: Option<Arc<DraftPostConfig>>,
 }
 
 impl UserReads {
@@ -325,6 +332,7 @@ impl UserReads {
                     config,
                     saved_snippet_writes
                         || settings.draft_deletes
+                        || settings.draft_posts.is_some()
                         || settings.reminder_deletes
                         || settings.scheduled_message_deletes
                         || settings.navigation_view_posts
@@ -338,6 +346,9 @@ impl UserReads {
             }
             None if saved_snippet_writes => {
                 return Err("Saved snippet writes require ZULIP_RUST_AMQP_URL".into());
+            }
+            None if settings.draft_posts.is_some() => {
+                return Err("Draft POST requires ZULIP_RUST_AMQP_URL".into());
             }
             None if settings.draft_deletes => {
                 return Err("Draft DELETE requires ZULIP_RUST_AMQP_URL".into());
@@ -366,6 +377,7 @@ impl UserReads {
             web_post_scheme: settings.web_post_scheme,
             saved_snippet_max_content_length: settings.saved_snippet_max_content_length,
             bot_storage_size_limit: settings.bot_storage_size_limit,
+            draft_posts: settings.draft_posts.map(Arc::new),
         })
     }
 
@@ -629,6 +641,8 @@ enum ApiError {
     SnippetNotFound,
     DraftSyncDisabled,
     DraftNotFound,
+    DraftSchema(drafts::SchemaError),
+    DraftCreation(draft_creation::CreateError),
     ScheduledJobNotFound(JobKind),
     RateLimited(f64),
 }
@@ -758,6 +772,14 @@ pub(super) async fn update_bot_storage(
     respond_write(state, peer, request, WriteOperation::UpdateBotStorage).await
 }
 
+pub(super) async fn create_drafts(
+    State(state): State<UserReads>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    request: Request,
+) -> Response {
+    respond_write(state, peer, request, WriteOperation::CreateDrafts).await
+}
+
 pub(super) async fn delete_draft(
     State(state): State<UserReads>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
@@ -879,6 +901,7 @@ async fn respond(
             _ => requested_write,
         };
         let activity_name = match write {
+            Some(WriteOperation::CreateDrafts) => "create_drafts",
             Some(WriteOperation::CreateSnippet) => "create_saved_snippet",
             Some(WriteOperation::CreateNavigationView) => "add_navigation_view",
             Some(WriteOperation::EditNavigationView(_)) => "update_navigation_view",
@@ -1083,6 +1106,36 @@ async fn respond(
                 let extra = ignored_parameters(&form, &["fragment", "is_pinned", "name", "client"]);
                 return Ok(format!("{{\"result\":\"success\",\"msg\":\"\"{extra}}}\n"));
             }
+            if matches!(write, WriteOperation::CreateDrafts) {
+                require_draft_synchronization(&database, user_id).await?;
+                let input = form.value("drafts").ok_or(ApiError::Form(FormError::Missing("drafts")))?;
+                let input = draft_input::parse_http_draft_batch(input).map_err(|error| match error {
+                    ParseError::Unsupported => ApiError::Form(FormError::InvalidJson("drafts")),
+                    ParseError::Schema(kind, path) => ApiError::DraftSchema(drafts::SchemaError::new(kind, path)),
+                })?;
+                let config = state.draft_posts.as_ref().expect("draft POST configured");
+                let activity = state.activity.as_ref().expect("draft creation requires RabbitMQ");
+                let queue = activity.notification_queue(realm_id, user_id).await
+                    .ok_or(ApiError::NotificationUnavailable)?;
+                let (ids, fields) = {
+                    let mut writer = state.database.writer().await.map_err(ApiError::database_unavailable)?;
+                    draft_creation::create(&mut writer, user_id, realm_id, input, config.max_message_length,
+                        &config.cross_realm_bot_emails).await.map_err(|error| match error {
+                            draft_creation::CreateError::Database(error) => ApiError::from(error),
+                            other => ApiError::DraftCreation(other),
+                        })?
+                };
+                activity.notify_user(
+                    queue, user_id, serde_json::json!({"type": "drafts", "op": "add", "drafts": fields}),
+                ).await.map_err(|error| {
+                    eprintln!("Could not confirm draft creation notification for user {user_id}: {error}");
+                    ApiError::NotificationUnavailable
+                })?;
+                let processed: &[_] = if form.has_query_client() { &["drafts", "client"] } else { &["drafts"] };
+                let extra = ignored_parameters(&form, processed);
+                let ids = serde_json::to_string(&ids).expect("IDs can serialize to JSON");
+                return Ok(format!("{{\"result\":\"success\",\"msg\":\"\",\"ids\":{ids}{extra}}}\n"));
+            }
             if let WriteOperation::DeleteDraft(id) = write {
                 require_draft_synchronization(&database, user_id).await?;
                 let id = id.ok_or(ApiError::DraftNotFound)?;
@@ -1220,6 +1273,7 @@ async fn respond(
                 | WriteOperation::CreateNavigationView
                 | WriteOperation::EditNavigationView(_)
                 | WriteOperation::DeleteNavigationView(_)
+                | WriteOperation::CreateDrafts
                 | WriteOperation::DeleteDraft(_)
                 | WriteOperation::DeleteScheduledJob(..)
                 | WriteOperation::DeleteBotStorage
@@ -1494,6 +1548,10 @@ fn error_response(
             "Request exceeds storage limit by {excess} characters. The limit is {limit} characters.",
         ),
         ApiError::DraftNotFound => (StatusCode::NOT_FOUND, "BAD_REQUEST", "Draft does not exist"),
+        ApiError::DraftSchema(ref error) => {
+            (StatusCode::BAD_REQUEST, "BAD_REQUEST", error.template())
+        }
+        ApiError::DraftCreation(ref error) => error.response(),
         ApiError::ScheduledJobNotFound(JobKind::Reminder) => (
             StatusCode::NOT_FOUND,
             "BAD_REQUEST",
@@ -1523,6 +1581,8 @@ fn error_response(
     let translated = locales.gettext(language, message);
     let message = match &error {
         ApiError::Csrf(reason) => translated.replace("{reason}", reason),
+        ApiError::DraftSchema(error) => error.format(translated),
+        ApiError::DraftCreation(error) => error.format(translated),
         ApiError::Form(
             FormError::Missing(name)
             | FormError::Blank(name)
@@ -1572,6 +1632,8 @@ fn error_response(
         | ApiError::BotStorageKeyNotFound
         | ApiError::BotStorageLimitExceeded { .. }
         | ApiError::DraftNotFound
+        | ApiError::DraftSchema(_)
+        | ApiError::DraftCreation(_)
         | ApiError::ScheduledJobNotFound(_) => (String::new(), "Accept-Language"),
         _ => (String::new(), "Accept-Language, Cookie"),
     };

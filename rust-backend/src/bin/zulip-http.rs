@@ -6,8 +6,8 @@ use std::{
 };
 
 use _zulip_backend::http::{
-    ActivityConfig, ClientIpSource, RateLimitConfig, SessionConfig, UserReadConfig, WebPostScheme,
-    router, router_with_user_reads,
+    ActivityConfig, ClientIpSource, DraftPostConfig, RateLimitConfig, SessionConfig,
+    UserReadConfig, WebPostScheme, router, router_with_user_reads,
 };
 use axum::Router;
 use tokio::net::TcpListener;
@@ -52,6 +52,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Err(env::VarError::NotPresent) => {
             if optional_env("ZULIP_RUST_EMOJI_URL_BASE")?.is_some() {
                 return Err("Custom emoji reads require ZULIP_RUST_DATABASE_URL".into());
+            }
+            if enabled("ZULIP_RUST_DRAFT_POSTS")? {
+                return Err("Draft POST requires ZULIP_RUST_DATABASE_URL".into());
             }
             if draft_deletes {
                 return Err("Draft DELETE requires ZULIP_RUST_DATABASE_URL".into());
@@ -134,6 +137,16 @@ async fn user_read_router(
             ),
             Some(_) => return Err("ZULIP_RUST_SAVED_SNIPPET_WRITES must be 0 or 1".into()),
         };
+    let draft_posts = if enabled("ZULIP_RUST_DRAFT_POSTS")? {
+        Some(DraftPostConfig {
+            max_message_length: env::var("ZULIP_RUST_MAX_MESSAGE_LENGTH")?.parse()?,
+            cross_realm_bot_emails: serde_json::from_str(&env::var(
+                "ZULIP_RUST_CROSS_REALM_BOT_EMAILS",
+            )?)?,
+        })
+    } else {
+        None
+    };
     let bot_storage_size_limit = if enabled("ZULIP_RUST_BOT_STORAGE_UPDATES")? {
         Some(env::var("ZULIP_RUST_USER_STATE_SIZE_LIMIT")?.parse()?)
     } else {
@@ -163,6 +176,7 @@ async fn user_read_router(
             alert_word_lowercase_file,
             alert_word_posts,
             draft_deletes,
+            draft_posts,
             reminder_deletes: enabled("ZULIP_RUST_REMINDER_DELETES")?,
             scheduled_message_deletes: enabled("ZULIP_RUST_SCHEDULED_MESSAGE_DELETES")?,
             bot_storage_deletes: enabled("ZULIP_RUST_BOT_STORAGE_DELETES")?,

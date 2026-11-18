@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any
 from unittest import skipUnless
 from unittest.mock import patch
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import orjson
 import pika
@@ -1514,4 +1514,236 @@ class DraftDeleteHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
             user.enable_drafts_synchronization = original_sync
             user.save(update_fields=["enable_drafts_synchronization"])
             Draft.objects.filter(id__in=[victim.id, private.id]).delete()
+            session.delete()
+
+
+@skipUnless(os.environ.get("ZULIP_RUST_ACTIVITY_TEST_VHOST"), "RabbitMQ test vhost is unavailable")
+class DraftCreateHTTPTest(ZulipTransactionTestCase, LiveServerTestCase):
+    def test_batch_response_persistence_and_notification(self) -> None:
+        vhost = os.environ["ZULIP_RUST_ACTIVITY_TEST_VHOST"]
+        assert vhost.startswith("zulip-rust-test-")
+        password = settings.RABBITMQ_PASSWORD
+        assert password is not None
+        amqp_url = (
+            f"amqp://{quote(settings.RABBITMQ_USERNAME, safe='')}:{quote(password, safe='')}"
+            f"@{settings.RABBITMQ_HOST}:{settings.RABBITMQ_PORT}/{quote(vhost, safe='')}"
+        )
+        owner = self.example_user("hamlet")
+        other = self.example_user("othello")
+        third = self.example_user("cordelia")
+        foreign = self.mit_user("starnine")
+        system_bot = self.notification_bot(get_realm(settings.SYSTEM_BOT_REALM))
+        bot_members = [owner.id, system_bot.id]
+        members = [owner.id, other.id, third.id]
+        self.assertIsNone(get_direct_message_group(members))
+        self.assertIsNone(get_direct_message_group(bot_members))
+        stream = Stream.objects.get(realm=owner.realm, name="Denmark")
+        original_sync = owner.enable_drafts_synchronization
+        secret_stream = self.make_stream("Rust draft access fixture", invite_only=True)
+        bot_draft = {
+            "type": "private",
+            "to": [system_bot.id],
+            "content": "System bot draft",
+            "topic": "",
+            "timestamp": 42,
+        }
+        session = SessionStore()
+        session.update(
+            {
+                "_auth_user_id": str(owner.id),
+                "_auth_user_backend": "zproject.backends.DevAuthBackend",
+                "_auth_user_hash": owner.get_session_auth_hash(),
+            }
+        )
+        session.create()
+        token = "a" * 32
+        basic = {
+            "Authorization": "Basic "
+            + b64encode(f"{owner.delivery_email}:{owner.api_key}".encode()).decode()
+        }
+        web = {
+            "Cookie": f"{settings.SESSION_COOKIE_NAME}={session.session_key}; {settings.CSRF_COOKIE_NAME}={token}",
+            "X-CSRFToken": token,
+            "Origin": f"http://{owner.realm.host}",
+        }
+        group_draft = {
+            "type": "private",
+            "to": [third.id, other.id, third.id],
+            "content": "Unsent group draft",
+            "topic": "Ignored",
+            "timestamp": 1.9999996,
+        }
+        stream_draft = {
+            "type": "stream",
+            "to": [stream.id],
+            "content": "  سلام  ",
+            "topic": "Topic",
+            "timestamp": 0.0078125,
+        }
+
+        try:
+            with (
+                self.settings(USING_RABBITMQ=True, RABBITMQ_VHOST=vhost, TORNADO_PROCESSES=1),
+                pika.BlockingConnection(pika.URLParameters(amqp_url)) as broker,
+                TemporaryDirectory() as directory,
+            ):
+                secret = Path(directory) / "secret"
+                secret.write_text(settings.SECRET_KEY)
+                env = {
+                    "ZULIP_RUST_DRAFT_POSTS": "1",
+                    "ZULIP_RUST_MAX_MESSAGE_LENGTH": str(settings.MAX_MESSAGE_LENGTH),
+                    "ZULIP_RUST_CROSS_REALM_BOT_EMAILS": orjson.dumps(
+                        sorted(settings.CROSS_REALM_BOT_EMAILS)
+                    ).decode(),
+                    "ZULIP_RUST_AMQP_URL": amqp_url,
+                    "ZULIP_RUST_DJANGO_SECRET_KEY_FILE": str(secret),
+                    "ZULIP_RUST_DJANGO_AUTH_BACKENDS": orjson.dumps(
+                        settings.AUTHENTICATION_BACKENDS
+                    ).decode(),
+                    "ZULIP_RUST_WEB_POST_SCHEME": "http",
+                }
+                channel = broker.channel()
+                queues = ("notify_tornado", "user_activity")
+                for queue in queues:
+                    channel.queue_declare(queue, durable=True)
+                    channel.queue_purge(queue)
+                django_port = urlsplit(self.live_server_url).port
+                assert django_port is not None
+
+                def check(port: int, path: str, auth: dict[str, str]) -> list[object]:
+                    outcomes: list[object] = []
+
+                    def send(
+                        payload: str, status: int, headers: dict[str, str] = auth
+                    ) -> dict[str, Any]:
+                        response, body, _, _ = request_test_http(
+                            port,
+                            "POST",
+                            owner.realm.host,
+                            {"Content-Type": "application/x-www-form-urlencoded", **headers},
+                            path,
+                            body=payload,
+                        )
+                        self.assertEqual(response, status, body)
+                        return orjson.loads(body)
+
+                    if path == "/api/v1/drafts":
+                        outcomes.append(send("drafts=%5B%5D", 401, {}))
+                    else:
+                        outcomes.append(
+                            send(
+                                "drafts=%5B%5D",
+                                403,
+                                {key: value for key, value in auth.items() if key != "X-CSRFToken"},
+                            )
+                        )
+                    owner.enable_drafts_synchronization = False
+                    owner.save(update_fields=["enable_drafts_synchronization"])
+                    outcomes.append(send("drafts=invalid", 400))
+                    owner.enable_drafts_synchronization = True
+                    owner.save(update_fields=["enable_drafts_synchronization"])
+                    outcomes.append(send("ignored=1", 400))
+                    outcomes.append(send("drafts=%5B", 400))
+                    outcomes.append(
+                        send(
+                            urlencode(
+                                {"drafts": orjson.dumps([group_draft, {"اضافی😀": True}]).decode()}
+                            ),
+                            400,
+                        )
+                    )
+                    inaccessible_drafts = (
+                        {**stream_draft, "to": [secret_stream.id]},
+                        {**bot_draft, "to": [system_bot.id, foreign.id]},
+                    )
+                    outcomes.extend(
+                        send(urlencode({"drafts": orjson.dumps([draft]).decode()}), 400)
+                        for draft in inaccessible_drafts
+                    )
+                    self.assertIsNone(get_direct_message_group(members))
+                    self.assertIsNone(get_direct_message_group([*bot_members, foreign.id]))
+                    outcomes.append(
+                        send(
+                            urlencode(
+                                {
+                                    "drafts": orjson.dumps(
+                                        [group_draft, {**stream_draft, "timestamp": -1}]
+                                    ).decode()
+                                }
+                            ),
+                            400,
+                        )
+                    )
+                    group = get_direct_message_group(members)
+                    assert group is not None
+                    assert group.recipient_id is not None
+                    self.assertCountEqual(
+                        Subscription.objects.filter(recipient_id=group.recipient_id).values_list(
+                            "user_profile_id", flat=True
+                        ),
+                        members,
+                    )
+                    self.assertFalse(Draft.objects.filter(user_profile=owner).exists())
+                    self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+
+                    for drafts in ([], [group_draft, stream_draft, bot_draft]):
+                        result = send(
+                            urlencode({"drafts": orjson.dumps(drafts).decode(), "ignored": "1"}),
+                            200,
+                        )
+                        ids = result.pop("ids")
+                        self.assert_length(ids, len(drafts))
+                        stored = [Draft.objects.get(id=id, user_profile=owner) for id in ids]
+                        if stored:
+                            self.assertEqual(stored[0].content, group_draft["content"])
+                            self.assertEqual(stored[0].last_edit_time.microsecond, 0)
+                            self.assertEqual(stored[1].content, "سلام")
+                            self.assertEqual(stored[1].last_edit_time.microsecond, 7812)
+                            bot_group = get_direct_message_group(bot_members)
+                            assert bot_group is not None
+                            self.assertEqual(stored[2].recipient_id, bot_group.recipient_id)
+                        message = channel.basic_get("notify_tornado", auto_ack=True)[2]
+                        assert message is not None
+                        event = orjson.loads(message)
+                        self.assertEqual(event["users"], [owner.id])
+                        self.assertEqual(
+                            event["event"],
+                            {
+                                "type": "drafts",
+                                "op": "add",
+                                "drafts": [draft.to_dict() for draft in stored],
+                            },
+                        )
+                        self.assertIsNone(channel.basic_get("notify_tornado", auto_ack=True)[2])
+                        outcomes.append(result)
+
+                    Draft.objects.filter(user_profile=owner).delete()
+                    for group_members in (members, bot_members):
+                        created = get_direct_message_group(group_members)
+                        assert created is not None
+                        assert created.recipient_id is not None
+                        Recipient.objects.filter(id=created.recipient_id).delete()
+                        created.delete()
+                    return outcomes
+
+                for path, auth in (("/api/v1/drafts", basic), ("/json/drafts", web)):
+                    with self.subTest(path=path):
+                        expected = check(django_port, path, auth)
+                        if os.environ.get("ZULIP_RUST_HTTP_BIN"):
+                            with rust_http_service(env) as port:
+                                self.assertEqual(check(port, path, auth), expected)
+                for queue in queues:
+                    channel.queue_purge(queue)
+        finally:
+            owner.enable_drafts_synchronization = original_sync
+            owner.save(update_fields=["enable_drafts_synchronization"])
+            Draft.objects.filter(user_profile=owner).delete()
+            for group_members in (members, bot_members):
+                if (group := get_direct_message_group(group_members)) is not None:
+                    assert group.recipient_id is not None
+                    Recipient.objects.filter(id=group.recipient_id).delete()
+                    group.delete()
+            assert secret_stream.recipient_id is not None
+            Recipient.objects.filter(id=secret_stream.recipient_id).delete()
+            secret_stream.delete()
             session.delete()

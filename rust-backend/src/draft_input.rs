@@ -123,6 +123,7 @@ impl DraftInput {
     }
 }
 
+#[cfg(any(feature = "python", test))]
 fn parse_json(value: &str) -> Result<JsonValue<'_>, ParseError> {
     let bytes = value.as_bytes();
     // jiter and Pydantic can differ on whether the sign counts toward
@@ -137,12 +138,61 @@ fn parse_json(value: &str) -> Result<JsonValue<'_>, ParseError> {
     JsonValue::parse(bytes, true).map_err(|_| ParseError::Unsupported)
 }
 
+#[cfg(any(feature = "python", test))]
 pub(crate) fn parse_draft(value: &str) -> Result<DraftInput, ParseError> {
     DraftInput::from_json(&parse_json(value)?)
 }
 
+#[cfg(any(feature = "python", test))]
 pub(crate) fn parse_draft_batch(value: &str) -> Result<Vec<DraftInput>, ParseError> {
-    let JsonValue::Array(drafts) = parse_json(value)? else {
+    drafts_from_json(parse_json(value)?)
+}
+
+#[cfg(feature = "http")]
+pub(crate) fn parse_http_draft_batch(value: &str) -> Result<Vec<DraftInput>, ParseError> {
+    let bytes = value.as_bytes();
+    if negative_magnitude_exceeds_limit(bytes) {
+        return Err(ParseError::Unsupported);
+    }
+    drafts_from_json(JsonValue::parse(bytes, true).map_err(|_| ParseError::Unsupported)?)
+}
+
+#[cfg(feature = "http")]
+fn negative_magnitude_exceeds_limit(bytes: &[u8]) -> bool {
+    const LIMIT: usize = 4_300;
+    if bytes.len() <= LIMIT {
+        return false;
+    }
+
+    // Pydantic's JSON decoder counts a leading minus sign toward its
+    // limit. jiter counts only the digits before the decimal or exponent.
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if quoted {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                quoted = false;
+            }
+        } else if byte == b'"' {
+            quoted = true;
+        } else if byte == b'-'
+            && (index == 0 || !matches!(bytes[index - 1], b'e' | b'E'))
+            && bytes
+                .get(index + 1..index + 1 + LIMIT)
+                .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn drafts_from_json(value: JsonValue<'_>) -> Result<Vec<DraftInput>, ParseError> {
+    let JsonValue::Array(drafts) = value else {
         return Err(ParseError::Schema("list_type", Vec::new()));
     };
     drafts
@@ -239,5 +289,32 @@ mod tests {
             )),
             Err(ParseError::Unsupported)
         );
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+#[test]
+fn http_batch_matches_pydantic_at_the_json_number_limit() {
+    for (sign, length, valid) in [
+        ("", 4299, true),
+        ("", 4300, true),
+        ("", 4301, false),
+        ("-", 4299, true),
+        ("-", 4300, false),
+        ("-", 4301, false),
+    ] {
+        let number = format!("{sign}{}", "9".repeat(length));
+        for suffix in ["", ".0", "e-5000"] {
+            let input = format!(
+                r#"[{{"type":"","to":[],"topic":"","content":"Draft","timestamp":{number}{suffix}}}]"#
+            );
+            assert_eq!(
+                parse_http_draft_batch(&input).is_ok(),
+                valid,
+                "{sign}{length}{suffix}"
+            );
+        }
+        let input = format!(r#"[{{"type":"","to":[],"topic":"","content":"\"{number}"}}]"#);
+        assert!(parse_http_draft_batch(&input).is_ok());
     }
 }

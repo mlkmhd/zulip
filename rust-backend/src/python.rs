@@ -117,30 +117,8 @@ mod _zulip_backend {
         cursor.call_method1(
             "execute",
             (
-                "WITH RECURSIVE member_groups(id) AS (
-                     SELECT m.user_group_id FROM zulip.zerver_usergroupmembership AS m
-                     WHERE m.user_profile_id = %s
-                     UNION
-                     SELECT m.supergroup_id FROM zulip.zerver_groupgroupmembership AS m
-                     JOIN member_groups AS g ON g.id = m.subgroup_id
-                 )
-                 SELECT s.recipient_id FROM zulip.zerver_stream AS s
-                 WHERE s.id = %s AND s.realm_id = %s AND NOT s.deactivated
-                   AND CASE
-                       WHEN s.is_web_public THEN TRUE
-                       WHEN EXISTS (
-                           SELECT 1 FROM zulip.zerver_subscription AS sub
-                           WHERE sub.recipient_id = s.recipient_id
-                             AND sub.user_profile_id = %s AND sub.active
-                       ) THEN TRUE
-                       WHEN %s THEN FALSE
-                       WHEN NOT s.invite_only THEN TRUE
-                       ELSE EXISTS (
-                           SELECT 1 FROM member_groups AS g
-                           WHERE g.id IN (s.can_subscribe_group_id, s.can_add_subscribers_group_id)
-                       )
-                   END",
-                (user_id, stream_id, realm_id, user_id, is_guest),
+                crate::draft_recipients::CHANNEL_RECIPIENT_SQL,
+                (user_id, stream_id, realm_id, is_guest),
             ),
         )?;
         cursor.call_method0("fetchone")?.extract()
@@ -214,8 +192,7 @@ mod _zulip_backend {
             cursor.call_method1(
                 "execute",
                 (
-                    "SELECT id, recipient_id FROM zulip.zerver_huddle
-                     WHERE huddle_hash = %s AND group_size = %s",
+                    direct_message_group::FIND_GROUP_SQL,
                     (&member_hash, group_size),
                 ),
             )?;
@@ -228,8 +205,7 @@ mod _zulip_backend {
         cursor.call_method1(
             "execute",
             (
-                "INSERT INTO zulip.zerver_huddle (huddle_hash, group_size)
-                 VALUES (%s, %s) ON CONFLICT (huddle_hash) DO NOTHING RETURNING id",
+                direct_message_group::INSERT_GROUP_SQL,
                 (&member_hash, group_size),
             ),
         )?;
@@ -244,22 +220,7 @@ mod _zulip_backend {
         cursor.call_method1(
             "execute",
             (
-                "WITH recipient AS (
-                     INSERT INTO zulip.zerver_recipient (type_id, type)
-                     VALUES (%s, %s) RETURNING id, type_id
-                 ), initialized_group AS (
-                     UPDATE zulip.zerver_huddle AS h SET recipient_id = recipient.id
-                     FROM recipient WHERE h.id = recipient.type_id
-                     RETURNING h.recipient_id
-                 ), subscriptions AS (
-                     INSERT INTO zulip.zerver_subscription
-                         (recipient_id, user_profile_id, active, is_user_active,
-                          is_muted, color, pin_to_top)
-                     SELECT recipient_id, u.id, TRUE, u.is_active, FALSE, %s, FALSE
-                     FROM initialized_group CROSS JOIN zulip.zerver_userprofile AS u
-                     WHERE u.id = ANY(%s::integer[])
-                 )
-                 SELECT recipient_id FROM initialized_group",
+                direct_message_group::INITIALIZE_GROUP_SQL,
                 (group_id, recipient_type, default_color, member_ids),
             ),
         )?;
@@ -324,20 +285,7 @@ mod _zulip_backend {
         cursor.call_method1(
             "execute",
             (
-                "WITH drafts AS MATERIALIZED (
-                     SELECT nextval(pg_get_serial_sequence('zulip.zerver_draft', 'id')) AS id,
-                            recipient_id, topic, content, last_edit_time, position
-                     FROM unnest(%s::integer[], %s::text[], %s::text[], %s::timestamptz[])
-                          WITH ORDINALITY AS input(recipient_id, topic, content, last_edit_time, position)
-                     ORDER BY position
-                 ), inserted AS (
-                     INSERT INTO zulip.zerver_draft
-                         (id, user_profile_id, recipient_id, topic, content, last_edit_time)
-                     SELECT id, %s, recipient_id, topic, content, last_edit_time FROM drafts
-                     RETURNING id
-                 )
-                 SELECT inserted.id FROM inserted JOIN drafts USING (id)
-                 ORDER BY drafts.position",
+                crate::draft_fields::INSERT_DRAFTS_SQL,
                 (recipients, topics, contents, edit_times, user_id),
             ),
         )?;

@@ -9,10 +9,10 @@ pub mod user_status;
 #[cfg(any(feature = "http", feature = "python"))]
 mod draft_fields;
 
-#[cfg(feature = "python")]
+#[cfg(any(feature = "http", feature = "python"))]
 mod draft_input;
 
-#[cfg(feature = "python")]
+#[cfg(any(feature = "http", feature = "python"))]
 mod draft_recipients;
 
 #[cfg(feature = "http")]

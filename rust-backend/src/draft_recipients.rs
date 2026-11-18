@@ -1,5 +1,34 @@
 use std::collections::{HashMap, HashSet};
 
+// Drafts require channel content access, even for realm administrators.
+pub(crate) const CHANNEL_RECIPIENT_SQL: &str = "
+    WITH RECURSIVE actor AS (
+        SELECT %s::integer AS id
+    ), member_groups(id) AS (
+        SELECT m.user_group_id FROM zulip.zerver_usergroupmembership AS m
+        JOIN actor ON actor.id = m.user_profile_id
+        UNION
+        SELECT m.supergroup_id FROM zulip.zerver_groupgroupmembership AS m
+        JOIN member_groups AS g ON g.id = m.subgroup_id
+    )
+    SELECT s.recipient_id FROM zulip.zerver_stream AS s CROSS JOIN actor
+    WHERE s.id = %s::bigint AND s.realm_id = %s::integer AND NOT s.deactivated
+      AND CASE
+          WHEN s.is_web_public THEN TRUE
+          WHEN EXISTS (
+              SELECT 1 FROM zulip.zerver_subscription AS sub
+              WHERE sub.recipient_id = s.recipient_id
+                AND sub.user_profile_id = actor.id AND sub.active
+          ) THEN TRUE
+          WHEN %s::boolean THEN FALSE
+          WHEN NOT s.invite_only THEN TRUE
+          ELSE EXISTS (
+              SELECT 1 FROM member_groups AS g
+              WHERE g.id IN (s.can_subscribe_group_id, s.can_add_subscribers_group_id)
+          )
+      END
+";
+
 pub(crate) const DIRECT_RECIPIENTS_SQL: &str = "
     WITH RECURSIVE actor AS (
         SELECT %s::integer AS id, %s::integer AS realm_id, %s::boolean AS is_guest

@@ -1,4 +1,4 @@
-use std::{error::Error, path::Path};
+use std::{collections::HashSet, error::Error, path::Path};
 
 use axum::{
     Router,
@@ -18,6 +18,7 @@ mod compatibility;
 mod csrf;
 mod custom_profile_fields;
 mod database;
+mod draft_creation;
 mod drafts;
 mod form;
 mod linkifiers;
@@ -48,6 +49,7 @@ pub struct UserReadConfig<'a> {
     pub alert_word_lowercase_file: Option<&'a Path>,
     pub alert_word_posts: bool,
     pub draft_deletes: bool,
+    pub draft_posts: Option<DraftPostConfig>,
     pub reminder_deletes: bool,
     pub scheduled_message_deletes: bool,
     pub bot_storage_deletes: bool,
@@ -57,6 +59,11 @@ pub struct UserReadConfig<'a> {
     pub session: Option<SessionConfig<'a>>,
     pub web_post_scheme: Option<WebPostScheme>,
     pub saved_snippet_max_content_length: Option<usize>,
+}
+
+pub struct DraftPostConfig {
+    pub max_message_length: usize,
+    pub cross_realm_bot_emails: HashSet<String>,
 }
 
 pub struct SessionConfig<'a> {
@@ -91,6 +98,7 @@ pub async fn router_with_user_reads(
     let alert_word_writes = config.alert_word_lowercase_file.is_some();
     let alert_word_posts = config.alert_word_posts;
     let draft_deletes = config.draft_deletes;
+    let draft_posts = config.draft_posts.is_some();
     let reminder_deletes = config.reminder_deletes;
     let scheduled_message_deletes = config.scheduled_message_deletes;
     let bot_storage_deletes = config.bot_storage_deletes;
@@ -106,6 +114,7 @@ pub async fn router_with_user_reads(
             && (saved_snippet_writes
                 || alert_word_writes
                 || draft_deletes
+                || draft_posts
                 || reminder_deletes
                 || scheduled_message_deletes
                 || bot_storage_deletes
@@ -140,6 +149,11 @@ pub async fn router_with_user_reads(
         bot_storage_route = bot_storage_route.put(user_reads::update_bot_storage);
     }
     let bot_storage_route = bot_storage_route.layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
+    let draft_read_route = get(user_reads::get);
+    let draft_post_route = draft_read_route
+        .clone()
+        .post(user_reads::create_drafts)
+        .layer(DefaultBodyLimit::max(form::FORM_BODY_LIMIT));
     let mut routes = Router::new()
         .route(
             user_reads::ALERT_WORDS_PATH,
@@ -150,7 +164,14 @@ pub async fn router_with_user_reads(
             },
         )
         .route(saved_snippets::PATH, snippet_route)
-        .route(drafts::PATH, get(user_reads::get))
+        .route(
+            drafts::PATH,
+            if draft_posts {
+                draft_post_route.clone()
+            } else {
+                draft_read_route.clone()
+            },
+        )
         .route(attachments::PATH, get(user_reads::get))
         .route(linkifiers::PATH, get(user_reads::get))
         .route(realm_domains::PATH, get(user_reads::get))
@@ -260,7 +281,14 @@ pub async fn router_with_user_reads(
                     alert_word_route
                 },
             )
-            .route(drafts::SESSION_PATH, get(user_reads::get))
+            .route(
+                drafts::SESSION_PATH,
+                if web_writes_enabled && draft_posts {
+                    draft_post_route
+                } else {
+                    draft_read_route
+                },
+            )
             .route(attachments::SESSION_PATH, get(user_reads::get))
             .route(linkifiers::SESSION_PATH, get(user_reads::get))
             .route(realm_domains::SESSION_PATH, get(user_reads::get))
